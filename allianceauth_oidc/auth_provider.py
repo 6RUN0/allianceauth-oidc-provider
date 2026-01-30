@@ -81,7 +81,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         character_id = getattr(main_character, "character_id", None)
         if character_id:
             out["picture"] = (
-                f"https://images.evetech.net/characters/{character_id}/portrait?size=128"
+                f"https://images.evetech.net/characters/{character_id}/portrait?size=128"  # noqa E501
             )
         # name
         character_name = getattr(main_character, "character_name", None)
@@ -98,4 +98,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             groups_list.append(state_name)
         if groups_list:
             out["groups"] = groups_list
+        # locale
+        locale = getattr(profile, "language", None)
+        if locale is not None:
+            out["locale"] = locale
         return out
