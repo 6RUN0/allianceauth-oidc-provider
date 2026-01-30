@@ -2,19 +2,16 @@
 Alliance Auth Test Suite Django settings.
 """
 
-from allianceauth.project_template.project_name.settings.base import *  # noqa
+from allianceauth.project_template.project_name.settings.base import *  # noqa F403
 
 # Celery configuration
 CELERY_ALWAYS_EAGER = True  # Forces celery to run locally for testing
 
-INSTALLED_APPS += [
-    'allianceauth_oidc',
-    'oauth2_provider'
-]
+INSTALLED_APPS += ["allianceauth_oidc", "oauth2_provider"]  # type: ignore[name-defined] # noqa F405
 
-ROOT_URLCONF = 'tests.urls'
+ROOT_URLCONF = "tests.urls"
 
-NOSE_ARGS = [
+NOSE_ARGS: list[str] = [
     # '--with-coverage',
     # '--cover-package=',
     # '--exe',  # If your tests need this to be found/run, check they py files are not chmodded +x
@@ -22,7 +19,7 @@ NOSE_ARGS = [
 
 
 PASSWORD_HASHERS = [
-    'django.contrib.auth.hashers.MD5PasswordHasher',
+    "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
 
 # LOGGING = None  # Comment out to enable logging for debugging
@@ -32,9 +29,9 @@ PASSWORD_HASHERS = [
 # to https://example.com/sso/callback substituting your domain for example.com
 # Logging in to auth requires the publicData scope (can be overridden through the
 # LOGIN_TOKEN_SCOPES setting). Other apps may require more (see their docs).
-ESI_SSO_CLIENT_ID = '123'
-ESI_SSO_CLIENT_SECRET = '123'
-ESI_SSO_CALLBACK_URL = '123'
+ESI_SSO_CLIENT_ID = "123"
+ESI_SSO_CLIENT_SECRET = "123"  # nosec B105
+ESI_SSO_CALLBACK_URL = "123"
 
 CACHES = {
     "default": {
@@ -47,6 +44,6 @@ CACHES = {
         "LOCATION": "redis://localhost:6379/1",
         "OPTIONS": {
             "COMPRESSOR": "django_redis.compressors.lzma.LzmaCompressor",
-        }
+        },
     }
 }

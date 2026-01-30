@@ -1,49 +1,71 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
+requires = [ "flit-core>=3.2,<4" ]
 
 [project]
 name = "allianceauth-oidc-provider"
-authors = [{name = "AaronKable", email = "aaronkable@gmail.com"}]
 readme = "README.md"
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
+authors = [ { name = "AaronKable", email = "aaronkable@gmail.com" } ]
+requires-python = ">=3.10,<3.13"
 classifiers = [
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 4.0",
+    "Framework :: Django :: 4.2",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
-dependencies = [
-    "allianceauth>=4.0.0",
-    "django-oauth-toolkit>=3.2.0,<4.0.0"
+dynamic = [ "description", "version" ]
+
+dependencies = [ "allianceauth>=4,<5", "django-oauth-toolkit>=3.2,<4" ]
+
+urls.Homepage = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
+urls.Source = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
+urls.Tracker = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider/issues"
+
+[dependency-groups]
+dev = [
+    "django-stubs>=5.2.9",
+    "pre-commit>=4.5.1",
+    "tox>=4.34.1",
 ]
-
-dynamic = ["version", "description"]
-
-[project.urls]
-Homepage = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
-Source = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
-Tracker = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider/issues"
 
 [tool.flit.module]
 name = "allianceauth_oidc"
 
+#[tool.uv.build-backend]
+#module-name = ["allianceauth_oidc"]
+#module-root = ""
+
+[tool.black]
+line-length = 79
+target-version = [ "py310", "py311", "py312" ]
+
 [tool.isort]
-profile = "django"
-sections = [
-    "FUTURE",
-    "STDLIB",
-    "THIRDPARTY",
-    "DJANGO",
-    "ESI",
-    "FIRSTPARTY",
-    "LOCALFOLDER"
+profile = "black"
+line_length = 79
+multi_line_output = 3
+include_trailing_comma = true
+
+[tool.flake8]
+max-line-length = 79
+max-complexity = 10
+per-file-ignores = [
+    "tests/celery.py:E501",
+    "tests/test_settingsAA3.py:E501",
+    "tests/test_settingsAA4.py:E501",
 ]
-known_esi = ["esi"]
-known_django = ["django"]
-skip_gitignore = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pyright]
+venv = ".venv"
+venvPath = "."
