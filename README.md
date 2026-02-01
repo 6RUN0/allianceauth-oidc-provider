@@ -22,12 +22,16 @@
 ## Setup/Install
 
 1. `pip install allianceauth-oidc-provider`
-1. add to INSTALLED_APPS
+1. add to `INSTALLED_APPS` in your `local.py`
 
-   ```
-       'allianceauth_oidc',
-       'oauth2_provider',
-   ```
+```python
+INSTALLED_APPS += [
+    # your other apps #
+    'allianceauth_oidc',
+    'oauth2_provider',
+    # your other apps #
+]
+```
 
 1. Extra Settings Required
 
@@ -98,10 +102,20 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 
 1. Add the endpoints to your `urls.py`
 
-```
+```python
+from .settings.local import INSTALLED_APPS
 
-       path('o/', include('allianceauth_oidc.urls', namespace='oauth2_provider')),
+# ...
+# Here your other imports and urlpatterns
+# ...
 
+if "allianceauth_oidc" in INSTALLED_APPS and "oauth2_provider" in INSTALLED_APPS:
+    urlpatterns.append(
+        path(
+            "o/",
+            include("allianceauth_oidc.urls", namespace="oauth2_provider"),
+        )
+    )
 ```
 
 1. run migrations
@@ -122,10 +136,12 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 
 ### Claim key mapping
 
-- `name` Eve Main Character Name ( Profile Grant? )
+- `name` Eve Main Character Name ( Profile Grant )
 - `email` Registered email on auth ( Email Grant )
 - `groups` List of all groups with the members state thrown in too ( Profile Grant )
 - `sub` PK of user model
+- `picture` URL to the main character avatar ( Profile Grant )
+- `locale` User preferred language ( Profile Grant )
 
 ### Create an application
 
@@ -186,8 +202,8 @@ api_url = https://<your.auth.url>/o/userinfo/
 1. Enable _Debug Mode_ for the specific application in the auth admin site.
 1. then in your `gunicorn.log` look for long lines similar to this after you attempt to log in,
 
-```
-[01/Jan/2099 00:00:05] WARNING [allianceauth_oidc.signals:12] {"access_token": "abcdefghijklmnopqrstuvwxyz", "expires_in": 60, "token_type": "Bearer", "scope": "openid profile email", "refresh_token": "abcdefghijklmnopqrstuvwxyz", "id_token": "long ass string here"}
+```text
+[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued app_id='...' client_id='...' user_id='...' meta={'grant_type': 'authorization_code', 'scope': 'openid email profile', 'client_id': '...', 'redirect_uri': '...', 'code': '<redacted>', 'refresh_token_req': None, 'client_secret': None, 'assertion': None, 'token_type': 'Bearer', 'expires_in': 111, 'scope_resp': 'openid email profile', 'access_token': '<redacted>', 'refresh_token': '<redacted>', 'id_token': '<redacted>'}
 ```
 
 1. take the `id_token` field and paste it into https://jwt.io/ to debug the data being sent to the application. it should be fairly self explanitory expect for these 2 fields.

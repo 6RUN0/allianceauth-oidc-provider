@@ -16,7 +16,7 @@ class AllianceAuthApplication(AbstractApplication):
     active = models.BooleanField(default=True)
     debug_mode = models.BooleanField(
         default=False,
-        help_text="Prints token-post request to logging for debuging purposes. These logs are at the Warning Level.",  # noqa E501
+        help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",  # noqa E501
     )
 
     def is_usable(self, request):
