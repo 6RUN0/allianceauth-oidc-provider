@@ -24,43 +24,43 @@
 1. `pip install allianceauth-oidc-provider`
 1. add to `INSTALLED_APPS` in your `local.py`
 
-```python
-INSTALLED_APPS += [
-    # your other apps #
-    'allianceauth_oidc',
-    'oauth2_provider',
-    # your other apps #
-]
-```
+   ```python
+   INSTALLED_APPS += [
+       # your other apps #
+       'allianceauth_oidc',
+       'oauth2_provider',
+       # your other apps #
+   ]
+   ```
 
 1. Extra Settings Required
 
-```python
+   ```python
 
-# at the top of the file
-from pathlib import Path
+   # at the top of the file
+   from pathlib import Path
 
-# Add these to the file further down
-if 'allianceauth_oidc' in INSTALLED_APPS and 'oauth2_provider' in INSTALLED_APPS:
-    OAUTH2_PROVIDER_APPLICATION_MODEL='allianceauth_oidc.AllianceAuthApplication'
-    OAUTH2_PROVIDER = {
-        # https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key
-        "OIDC_ENABLED": True,
-        # Load your private key
-        "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key/file").read_text(),
-        "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
-        "SCOPES": {
-            "openid": "User Profile",
-            "email": "Registered email",
-            "profile": "Main Character affiliation and Auth groups"
-        },
-        "PKCE_REQUIRED": False,
-        "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
-        'ACCESS_TOKEN_EXPIRE_SECONDS': 60,
-        'REFRESH_TOKEN_EXPIRE_SECONDS': 24*60*60,
-        'ROTATE_REFRESH_TOKEN': True,
-    }
-```
+   # Add these to the file further down
+   if 'allianceauth_oidc' in INSTALLED_APPS and 'oauth2_provider' in INSTALLED_APPS:
+       OAUTH2_PROVIDER_APPLICATION_MODEL='allianceauth_oidc.AllianceAuthApplication'
+       OAUTH2_PROVIDER = {
+           # https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key
+           "OIDC_ENABLED": True,
+           # Load your private key
+           "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key/file").read_text(),
+           "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
+           "SCOPES": {
+               "openid": "User Profile",
+               "email": "Registered email",
+               "profile": "Main Character affiliation and Auth groups"
+           },
+           "PKCE_REQUIRED": False,
+           "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
+           'ACCESS_TOKEN_EXPIRE_SECONDS': 60,
+           'REFRESH_TOKEN_EXPIRE_SECONDS': 24*60*60,
+           'ROTATE_REFRESH_TOKEN': True,
+       }
+   ```
 
 Please see [this](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key)
 for more info on creating and managing a private key
@@ -102,21 +102,21 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 
 1. Add the endpoints to your `urls.py`
 
-```python
-from .settings.local import INSTALLED_APPS
+   ```python
+   from .settings.local import INSTALLED_APPS
 
-# ...
-# Here your other imports and urlpatterns
-# ...
+   # ...
+   # Here your other imports and urlpatterns
+   # ...
 
-if "allianceauth_oidc" in INSTALLED_APPS and "oauth2_provider" in INSTALLED_APPS:
-    urlpatterns.append(
-        path(
-            "o/",
-            include("allianceauth_oidc.urls", namespace="oauth2_provider"),
-        )
-    )
-```
+   if "allianceauth_oidc" in INSTALLED_APPS and "oauth2_provider" in INSTALLED_APPS:
+       urlpatterns.append(
+           path(
+               "o/",
+               include("allianceauth_oidc.urls", namespace="oauth2_provider"),
+           )
+       )
+   ```
 
 1. run migrations
 1. restart auth
@@ -214,7 +214,7 @@ api_url = https://<your.auth.url>/o/userinfo/
 If you want to check the token signature on jwt.io and lost your public key your can use:
 
 ```sh
- ssh-keygen -y -e -m pem -f /path/to/key/file
+ssh-keygen -y -e -m pem -f /path/to/key/file
 ```
 
 This will output the public key in the PEM format for jwt.io to check the signature.
