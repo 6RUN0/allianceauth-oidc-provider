@@ -43,6 +43,7 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=10000]
       - id: detect-private-key
+        exclude: ^tests/oidc-test\.key$
       - id: check-case-conflict
       # Python checks
       - id: check-docstring-first

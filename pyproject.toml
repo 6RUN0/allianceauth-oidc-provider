@@ -29,7 +29,12 @@ urls.Source = "https://github.com/Solar-Helix-Independent-Transport/allianceauth
 urls.Tracker = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider/issues"
 
 [dependency-groups]
-dev = [ "django-stubs>=5.2.9", "pre-commit>=4.5.1", "tox>=4.34.1" ]
+dev = [
+    "django-stubs>=5.2.9",
+    "fakeredis>=2.33",
+    "pre-commit>=4.5.1",
+    "tox>=4.34.1",
+]
 
 [tool.flit.module]
 name = "allianceauth_oidc"
