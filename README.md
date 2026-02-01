@@ -62,8 +62,29 @@
        }
    ```
 
-Please see [this](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key)
-for more info on creating and managing a private key
+   Please see [this](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key)
+   for more info on creating and managing a private key
+
+1. Add the endpoints to your `urls.py`
+
+   ```python
+   from .settings.local import INSTALLED_APPS
+
+   # ...
+   # Here your other imports and urlpatterns
+   # ...
+
+   if "allianceauth_oidc" in INSTALLED_APPS and "oauth2_provider" in INSTALLED_APPS:
+       urlpatterns.append(
+           path(
+               "o/",
+               include("allianceauth_oidc.urls", namespace="oauth2_provider"),
+           )
+       )
+   ```
+
+1. run migrations
+1. restart auth
 
 ## Optional settings (recommended)
 
@@ -99,27 +120,6 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
     "apply_offset": True,
 }
 ```
-
-1. Add the endpoints to your `urls.py`
-
-   ```python
-   from .settings.local import INSTALLED_APPS
-
-   # ...
-   # Here your other imports and urlpatterns
-   # ...
-
-   if "allianceauth_oidc" in INSTALLED_APPS and "oauth2_provider" in INSTALLED_APPS:
-       urlpatterns.append(
-           path(
-               "o/",
-               include("allianceauth_oidc.urls", namespace="oauth2_provider"),
-           )
-       )
-   ```
-
-1. run migrations
-1. restart auth
 
 ## Application setup
 
