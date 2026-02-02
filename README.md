@@ -219,7 +219,7 @@ ssh-keygen -y -e -m pem -f /path/to/key/file
 
 This will output the public key in the PEM format for jwt.io to check the signature.
 
-> [!NOTE] Note for custom login templates
+> [!NOTE]
 > If you are using a custom theme (or have overridden the public login template),
 > please double-check your login page template at:
 > `authentication/templates/public/login.html`
