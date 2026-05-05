@@ -72,8 +72,13 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         if user is None:
             return out
         # email — Django sets a blank string when no email is registered;
-        # only emit the claim when there's a real value.
+        # only emit the claim when there's a real value. Strip whitespace
+        # so accidental "  " entries (from copy-paste or buggy admin
+        # imports) don't leak into the claim and break RFC 5321 contracts
+        # downstream.
         email = getattr(user, "email", None)
+        if isinstance(email, str):
+            email = email.strip() or None
         if email:
             out["email"] = email
         groups = getattr(user, "groups", None)

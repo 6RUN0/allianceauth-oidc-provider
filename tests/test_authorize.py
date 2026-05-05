@@ -163,25 +163,47 @@ class TestAuthorizeGate(OIDCTestCase):
 
     # ---------------------------- multi-alt and state-precedence scenarios
 
-    def test_state_is_determined_by_main_character_not_by_alts(self):
+    def test_alt_membership_in_member_state_does_not_grant_user_state(self):
         """
-        Multi-alt scenario: user3's main char5 is in corp3/alli2 with no
-        State assigned, even though user3 owns char7 in corp4/alli2.
+        Adversarial multi-alt scenario.
 
-        AA's state determination cares about the *main* character only —
-        alts in other corps/alliances must not grant Member access.
+        Set up a user whose ``main_character`` has no State affiliation,
+        and whose alt is **explicitly** added to ``Member.member_characters``.
+        If AA's state determination naively used "any character is Member
+        ⇒ user is Member", this user would gain access to a Member-gated
+        app through the alt. The contract is: state is decided by the
+        main character only, alts are ignored.
+
+        This is the *real* multi-alt test — the previous version under
+        the same name passed by accident because user3 simply had no
+        state at all.
         """
+        from ._factories import make_character, make_user
+
+        # main in corp1 (no alliance, no state); alt in corp2.
+        main_char = make_character("alice-main", self.corp1)
+        alt_char = make_character("alice-alt", self.corp2)
+        adv_user = make_user(
+            "alice-multi-alt", main=main_char, alts=[alt_char]
+        )
+        # Adversarial step: put the *alt* into Member's member_characters.
+        # If AA looked at any owned character, this would set the user's
+        # state to Member.
+        State.objects.get(name="Member").member_characters.add(alt_char)
+        adv_user.refresh_from_db()
+
         self.oauth_app.states.add(State.objects.get(name="Member"))
-        self.grant_oidc_access(self.user3)
+        self.grant_oidc_access(adv_user)
+
         params = {
             "response_type": "code",
             "client_id": self.oauth_id,
             "redirect_uri": "http://localhost/redir/",
             "scope": "openid profile",
-            "state": "alt-must-not-grant-state",
+            "state": "alt-must-not-leak-state",
         }
-        response = self.authorize_get(self.user3, params=params)
-        self.assertDeniedApp(response, self.user3, self.oauth_app)
+        response = self.authorize_get(adv_user, params=params)
+        self.assertDeniedApp(response, adv_user, self.oauth_app)
 
     def test_main_character_state_grants_access_independent_of_alt_alliance(
         self,

@@ -86,6 +86,32 @@ class TestUserinfoClaims(OIDCTestCase):
         resp = self.client.get("/o/userinfo/")
         self.assertIn(resp.status_code, (401, 403))
 
+    def test_email_claim_omitted_when_user_email_is_whitespace(self):
+        """
+        Regression: ``User.email = "   "`` is truthy and would have
+        leaked into the email claim under a naive ``if email:`` check.
+        The provider strips whitespace and treats whitespace-only
+        emails as absent.
+        """
+        # Need to bypass the helper's `user1.email = "user1@example.com"`
+        # so we can test the whitespace case directly.
+        self.grant_oidc_access(self.user1)
+        self.user1.email = "   "
+        self.user1.save()
+        self.user1.refresh_from_db()
+
+        tokens = self.run_code_flow(
+            self.user1,
+            scope="openid email",
+            state="whitespace-email",
+        )
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        info = json.loads(resp.content.decode("utf-8"))
+        self.assertNotIn("email", info)
+
     # -------------------------------------------------- multi-alt / edge cases
 
     def test_name_and_picture_come_from_main_character_not_alts(self):
