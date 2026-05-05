@@ -23,6 +23,14 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     oidc_claim_scope = OAuth2Validator.oidc_claim_scope.copy()
     oidc_claim_scope.update({"groups": "profile"})
 
+    # Cap the `groups` claim payload. JWTs are URL-encoded in headers /
+    # cookies and a pathological 10k-group user would produce a 200KB
+    # token nobody can use. The state name still gets appended after
+    # truncation so consumers that rely on the state being present don't
+    # silently lose it. Override via subclassing if your deployment
+    # genuinely needs more.
+    MAX_GROUPS_IN_CLAIM = 256
+
     @staticmethod
     def _enforce_policy(request, client) -> bool:
         """
@@ -148,6 +156,15 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             groups_list = []
         else:
             groups_list = sorted(groups.all().values_list("name", flat=True))
+        if len(groups_list) > self.MAX_GROUPS_IN_CLAIM:
+            logger.warning(
+                "OIDC: groups claim truncated for user_id=%s "
+                "(%d groups, cap=%d)",
+                getattr(user, "id", None),
+                len(groups_list),
+                self.MAX_GROUPS_IN_CLAIM,
+            )
+            groups_list = groups_list[: self.MAX_GROUPS_IN_CLAIM]
         if state_name is not None:
             groups_list.append(state_name)
         if groups_list:

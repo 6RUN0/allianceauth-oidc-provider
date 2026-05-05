@@ -171,6 +171,46 @@ class TestUserinfoClaims(OIDCTestCase):
         joined = "\n".join(cm.output)
         self.assertIn("ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE", joined)
 
+    def test_groups_claim_is_capped_for_pathological_users(self):
+        """
+        A user with a runaway number of group memberships used to produce an
+        unbounded ``groups`` claim — JWTs are URL-encoded into headers and
+        cookies, so a 200KB token from a 10k-group user is effectively
+        unusable downstream.
+
+        The validator caps the list at ``MAX_GROUPS_IN_CLAIM`` and emits a
+        warning so operators see the truncation. The state name must still
+        appear at the tail (it is appended after truncation).
+        """
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        cap = AllianceAuthOAuth2Validator.MAX_GROUPS_IN_CLAIM
+        # Two extra so the truncation branch fires; sortable as `cap_grp_NNN`.
+        extras = [
+            Group.objects.create(name=f"cap_grp_{i:04d}")
+            for i in range(cap + 2)
+        ]
+        for g in extras:
+            self.user1.groups.add(g)
+
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+        ) as cm:
+            info = self._userinfo_for_user1_with_scope(
+                SCOPE_PROFILE, with_test_group=False
+            )
+
+        groups = info["groups"]
+        # cap groups + 1 trailing state name. The implicit test group is
+        # excluded by `with_test_group=False`.
+        self.assertEqual(cap + 1, len(groups))
+        # State must remain at the tail regardless of truncation.
+        self.assertEqual(self.user1.profile.state.name, groups[-1])
+        joined = "\n".join(cm.output)
+        self.assertIn("groups claim truncated", joined)
+
     def test_user_without_main_character_omits_name_and_picture(self):
         """
         User4 is set up without a main_character.
