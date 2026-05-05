@@ -147,15 +147,20 @@ class AuthAuthorizationView(AuthorizationView):
 
     def _get_app(self, request: HttpRequest) -> AbstractApplication | None:
         """
-        Retrieve the OAuth2 Application object by client_id from GET or POST
-        parameters.
+        Retrieve the active OAuth2 Application by ``client_id``.
+
+        Disabled applications (``active=False``) intentionally return None so
+        the policy gate doesn't render their name into the 403 page; DOT's
+        ``AuthorizationView`` then handles the missing-client_id case with
+        its generic error response. This keeps the per-tenant denial reason
+        consistent regardless of whether the app exists, is disabled, or
+        the user simply lacks access.
 
         Args:
             request (HttpRequest): The user's HTTP request.
 
         Returns:
-            AbstractApplication | None: Application instance if found,
-            otherwise None.
+            AbstractApplication | None: Active application, or None.
         """
         client_id = request.GET.get("client_id") or request.POST.get(
             "client_id"
@@ -163,7 +168,9 @@ class AuthAuthorizationView(AuthorizationView):
         if not client_id:
             return None
         return (
-            get_application_model().objects.filter(client_id=client_id).first()
+            get_application_model()
+            .objects.filter(client_id=client_id, active=True)
+            .first()
         )
 
     def _access_denied_response(

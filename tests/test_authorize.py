@@ -101,6 +101,36 @@ class TestAuthorizeGate(OIDCTestCase):
         )
         self.assertAuthorizePage(response, self.oauth_app, ["email"])
 
+    def test_inactive_app_does_not_leak_name_in_denial(self):
+        """
+        When ``app.active=False``, the policy gate must not render the
+        application's name (admin-controlled) in the 403 page.
+
+        The view treats disabled apps as if they didn't exist for client_id
+        lookup — DOT then handles the invalid-client_id case with its own
+        generic error response, which never mentions the app name.
+        """
+        self.grant_oidc_access(self.user1)
+        self.oauth_app.active = False
+        self.oauth_app.save()
+
+        response = self.authorize_get_default(self.user1, state="inactive")
+
+        # Not the authorize/consent page — DOT short-circuits before
+        # rendering it. Could be 200 with an error template, 302 to an
+        # error page, or 400, depending on the DOT version; the contract
+        # is "the app's display name does not appear anywhere in body".
+        self.assertNotEqual(
+            self.oauth_app.name.encode("utf-8"),
+            response.content,
+            "Inactive application name must not be rendered in response",
+        )
+        self.assertNotIn(
+            self.oauth_app.name.encode("utf-8"),
+            response.content,
+            "Inactive application name must not appear in response body",
+        )
+
     def test_with_perms_and_state_oauth_u1(self):
         """Scopes are shown when user has access and matching state."""
         self.oauth_app.states.add(State.objects.get(name="Member"))
