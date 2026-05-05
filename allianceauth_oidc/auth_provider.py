@@ -10,8 +10,11 @@ from .security import check_user_state_and_groups
 class AllianceAuthOAuth2Validator(OAuth2Validator):
     """Wrap DOT's validator with state/group checks and AA-specific claims."""
 
-    # Extend the standard scopes to add a new "permissions" scope
-    # which returns a "permissions" claim:
+    # Bind the AA-specific "groups" claim to the standard "profile" scope
+    # so consumers don't need to request a separate scope to receive it.
+    # (DOT's get_oidc_claims filters claims by oidc_claim_scope; any new
+    # claim added to get_additional_claims must have a matching entry here
+    # or it will silently never reach userinfo / id_token.)
     oidc_claim_scope = OAuth2Validator.oidc_claim_scope.copy()
     oidc_claim_scope.update({"groups": "profile"})
 
