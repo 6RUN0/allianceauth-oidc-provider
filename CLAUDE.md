@@ -25,6 +25,7 @@ uv run nox                            # both
 uv run nox -s tests -- tests.test_token.TestCodeFlowAndTokenPolicy
 uv run nox -s tests -- tests.test_token.TestCodeFlowAndTokenPolicy.test_full_chain_u1_with_perms_and_state
 uv run nox -s tests -- --keepdb         # skip migrations on reruns
+uv run nox -s tests -- --parallel 1     # disable parallelism (default is auto)
 
 # run against a real Redis instead of the fakeredis monkey-patch
 AA_USE_FAKE_REDIS=0 uv run nox -s tests
@@ -42,6 +43,8 @@ make package
 ```
 
 `tests/_fakeredis.py` is invoked from the test settings module *before* Alliance Auth is imported. It monkey-patches `django_redis.get_redis_connection` with a `fakeredis`-backed shim and stubs `info()['redis_version']` to `7.4.0`, which AA's startup feature-detection probes. Set `AA_USE_FAKE_REDIS=0` to skip the patch and run against a real Redis.
+
+The `tests` nox session runs Django's test runner with `--parallel=auto`, which forks one worker per CPU core and gives each its own SQLite-in-memory database. The `coverage` session stays single-process — `coverage combine` for forked workers is more pipeline plumbing than the sub-second saving is worth on this suite. Pass `-- --parallel 1` to disable parallelism for a debugging session; Django's argparse honours the last `--parallel` flag.
 
 All tests live in `tests/` at the repo root, deliberately outside the `allianceauth_oidc/` package so `flit build` does not ship them in the wheel/sdist:
 - `tests/test_*.py` — actual test cases (Django `unittest.TestCase`-based).
