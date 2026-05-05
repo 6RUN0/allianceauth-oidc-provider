@@ -161,6 +161,53 @@ class TestAuthorizeGate(OIDCTestCase):
         response = self.authorize_get(self.user1, params=params)
         self.assertDeniedApp(response, self.user1, self.oauth_app)
 
+    # ---------------------------- multi-alt and state-precedence scenarios
+
+    def test_state_is_determined_by_main_character_not_by_alts(self):
+        """
+        Multi-alt scenario: user3's main char5 is in corp3/alli2 with no
+        State assigned, even though user3 owns char7 in corp4/alli2.
+
+        AA's state determination cares about the *main* character only —
+        alts in other corps/alliances must not grant Member access.
+        """
+        self.oauth_app.states.add(State.objects.get(name="Member"))
+        self.grant_oidc_access(self.user3)
+        params = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": "http://localhost/redir/",
+            "scope": "openid profile",
+            "state": "alt-must-not-grant-state",
+        }
+        response = self.authorize_get(self.user3, params=params)
+        self.assertDeniedApp(response, self.user3, self.oauth_app)
+
+    def test_main_character_state_grants_access_independent_of_alt_alliance(
+        self,
+    ):
+        """
+        User1's main char1 is in corp1 (no alliance) and has State=Member. Even
+        though user1's alt char2 is also in corp1 (and the app has a Member
+        state restriction), access depends on user1.profile.state, not on the
+        alts' affiliations.
+
+        This is the positive counterpart of the test above.
+        """
+        self.oauth_app.states.add(State.objects.get(name="Member"))
+        self.grant_oidc_access(self.user1)
+        params = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": "http://localhost/redir/",
+            "scope": "openid profile",
+            "state": "main-state-grants",
+        }
+        response = self.authorize_get(self.user1, params=params)
+        self.assertAuthorizePage(
+            response, self.oauth_app, ["openid", "profile"]
+        )
+
     def test_authorize_denies_when_neither_state_nor_group_matches(self):
         """When the app requires both a state AND a group, and the user matches
         neither, the authorize gate denies.

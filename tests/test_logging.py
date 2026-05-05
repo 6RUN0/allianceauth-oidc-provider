@@ -1,7 +1,6 @@
-"""
-Tests for OIDC debug-logging — `app.debug_mode` flag and the contract
-that no raw tokens or secrets are ever written to logs, even when
-debug logging is enabled.
+"""Tests for OIDC debug-logging — `app.debug_mode` flag and the contract that
+no raw tokens or secrets are ever written to logs, even when debug logging is
+enabled.
 """
 
 from ._oidc_testcase import OIDCTestCase

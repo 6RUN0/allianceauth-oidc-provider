@@ -1,5 +1,4 @@
-"""
-Tests for /o/logout/ — RP-initiated logout and post_logout_redirect_uri
+"""Tests for /o/logout/ — RP-initiated logout and post_logout_redirect_uri
 allowlist enforcement.
 """
 
