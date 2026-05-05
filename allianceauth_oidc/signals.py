@@ -44,7 +44,7 @@ def audit_oidc_token_issued(
             meta = {k: body.get(k) for k in ("grant_type", "scope")}
             meta = {k: v for k, v in meta.items() if v is not None} or None
         logger.info(
-            "OIDC token issued client_id=%s app_id=%s user_id=%s username=%s scope=%s meta=%s",  # noqa 501
+            "OIDC token issued client_id=%s app_id=%s user_id=%s username=%s scope=%s meta=%s",  # noqa: E501
             getattr(app, "client_id", None),
             getattr(app, "id", None),
             getattr(user, "id", None),

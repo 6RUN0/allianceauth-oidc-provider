@@ -16,4 +16,4 @@ class AllianceAuthOIDC(AppConfig):
     def ready(self):
         """Connect the default audit receiver to ``oidc_token_issued``."""
         # Side-effect import: connects oidc_token_issued signal receivers.
-        import allianceauth_oidc.signals  # noqa: F401  # pyright: ignore[reportUnusedImport]
+        from . import signals as _signals  # noqa: F401

@@ -97,7 +97,7 @@ def check_user_state_and_groups(user: object, app: object) -> None:
             # In debug_mode we intentionally log at INFO
             # for admin convenience.
             logger.info(
-                "OAUTH STATE: user_state=%s app_states=%s",
+                "OIDC STATE: user_state=%s app_states=%s",
                 user_state,
                 list(app_states.values_list("name", flat=True)),
             )
@@ -109,7 +109,7 @@ def check_user_state_and_groups(user: object, app: object) -> None:
             # so only log when INFO is enabled.
             if debug_mode and logger.isEnabledFor(logging.INFO):
                 logger.info(
-                    "OAUTH GROUP: user_groups=%s app_groups=%s",
+                    "OIDC GROUP: user_groups=%s app_groups=%s",
                     list(user_groups.values_list("name", flat=True)),
                     list(app_groups.values_list("name", flat=True)),
                 )
@@ -133,7 +133,7 @@ def check_user_state_and_groups(user: object, app: object) -> None:
         return
 
     logger.warning(
-        "OIDC DENIED: app restrictions user=%s app=%s group_access=%s state_access=%s",  # noqa E501
+        "OIDC DENIED: app restrictions user=%s app=%s group_access=%s state_access=%s",  # noqa: E501
         user,
         app,
         group_access,

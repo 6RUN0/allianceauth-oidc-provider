@@ -261,7 +261,7 @@ class AuthAuthorizationView(AuthorizationView):
                 check_user_state_and_groups(user, app)
             except PermissionDenied:
                 logger.warning(
-                    "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa E501
+                    "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501
                     user,
                     app,
                     getattr(app, "client_id", None),

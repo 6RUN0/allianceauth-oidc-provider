@@ -20,7 +20,7 @@ class AllianceAuthApplication(AbstractApplication):
     active = models.BooleanField(default=True)
     debug_mode = models.BooleanField(
         default=False,
-        help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",  # noqa E501
+        help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",  # noqa: E501
     )
 
     def is_usable(self, request):
