@@ -21,20 +21,17 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
             self.captured.append(kwargs)
 
         self._receiver = receiver
-        oidc_token_issued.connect(
-            receiver, dispatch_uid="test-signal-capture"
-        )
+        oidc_token_issued.connect(receiver, dispatch_uid="test-signal-capture")
         self.addCleanup(
             oidc_token_issued.disconnect,
             dispatch_uid="test-signal-capture",
         )
 
     def test_signal_fires_with_token_and_body_on_successful_exchange(self):
-        """
-        Successful authorization-code exchange must fire
-        ``oidc_token_issued`` exactly once with a payload that includes
-        the persisted ``token`` model and the request ``body`` dict
-        carrying ``grant_type``/``scope``.
+        """Successful authorization-code exchange must fire
+        ``oidc_token_issued`` exactly once with a payload that includes the
+        persisted ``token`` model and the request ``body`` dict carrying
+        ``grant_type``/``scope``.
         """
         self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="signal-success")
@@ -58,17 +55,17 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         # the token-endpoint request, so it can be None here.)
         self.assertIn("body", kw)
         request_body = kw["body"]
-        self.assertEqual(
-            "authorization_code", request_body.get("grant_type")
-        )
+        self.assertEqual("authorization_code", request_body.get("grant_type"))
         # Token model carries the granted scope.
         self.assertEqual("openid profile email", token.scope)
 
     def test_signal_does_not_fire_on_invalid_grant(self):
         """
-        Failed token exchange (revoked permission between authorize and
-        token) must NOT fire the signal. Otherwise audit sinks would
-        record successful issuance for tokens that were never minted.
+        Failed token exchange (revoked permission between authorize and token)
+        must NOT fire the signal.
+
+        Otherwise audit sinks would record successful issuance for tokens that
+        were never minted.
         """
         self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="signal-fail")
@@ -91,10 +88,9 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         )
 
     def test_signal_payload_contains_no_raw_secrets(self):
-        """
-        The signal exposes the OAuth2 request body to receivers; the
-        payload must not contain raw access/refresh/id tokens — those
-        live only on the ``token`` model that receivers can query.
+        """The signal exposes the OAuth2 request body to receivers; the payload
+        must not contain raw access/refresh/id tokens — those live only on the
+        ``token`` model that receivers can query.
         """
         self.grant_oidc_access(self.user1)
         token_body = self.run_code_flow(self.user1, state="signal-no-leak")
