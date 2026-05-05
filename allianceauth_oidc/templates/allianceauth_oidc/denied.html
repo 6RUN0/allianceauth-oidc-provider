@@ -62,7 +62,11 @@
                   <path d="M7.002 12a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 5.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995z" />
                 </svg>
               </div>
-              <h3>{{ reason }}</h3>
+              {% if app_name %}
+              <h3>{% blocktranslate %}User "{{ username }}" has no permission to use application "{{ app_name }}".{% endblocktranslate %}</h3>
+              {% else %}
+              <h3>{% blocktranslate %}User "{{ username }}" has no permission to use OIDC applications.{% endblocktranslate %}</h3>
+              {% endif %}
               <p>{% translate "If you believe this is in error please contact the administrators." %} {{ error_code }}</p>
               <p><small>{% translate "This action has been logged" %}</small></p>
               <p><span class="label label-warning">{{ request.user.username }}</span> <span class="label label-warning">oidc:authenticate</span></p>

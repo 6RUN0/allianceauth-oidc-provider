@@ -9,6 +9,7 @@ from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
+from django.utils.translation import gettext as _
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic import View
@@ -137,13 +138,28 @@ class AuthAuthorizationView(AuthorizationView):
         )
 
     def _access_denied_response(
-        self, request: HttpRequest, reason: str, error_message: str
+        self,
+        request: HttpRequest,
+        *,
+        username: str,
+        error_message: str,
+        app_name: str | None = None,
     ) -> HttpResponseBase:
+        """
+        Render the 403 denied page.
+
+        Values are passed to the template as separate context keys so the
+        template can format them under Django's auto-escape — no f-string
+        composition in Python keeps `app_name` (admin-controlled) from
+        becoming an XSS vector if a future template change introduces a
+        ``|safe`` filter.
+        """
         return render(
             request,
             "allianceauth_oidc/denied.html",
             context={
-                "reason": reason,
+                "username": username,
+                "app_name": app_name,
                 "error_code": f"(403 - {error_message})",
             },
             status=403,
@@ -175,8 +191,8 @@ class AuthAuthorizationView(AuthorizationView):
             )
             return self._access_denied_response(
                 request,
-                f'User "{user}" has no permission to use OIDC applications.',
-                "User not allowed global OIDC access",
+                username=str(user),
+                error_message=_("User not allowed global OIDC access"),
             )
 
         app = self._get_app(request)
@@ -194,8 +210,9 @@ class AuthAuthorizationView(AuthorizationView):
                 )
                 return self._access_denied_response(
                     request,
-                    f'User "{user}" has no permission to use application "{app}".',  # noqa E501
-                    "User not allowed for this application",
+                    username=str(user),
+                    app_name=str(app),
+                    error_message=_("User not allowed for this application"),
                 )
         app_log(
             logger,

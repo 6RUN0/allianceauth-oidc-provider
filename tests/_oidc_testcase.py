@@ -45,19 +45,21 @@ class OIDCTestCase(TestCase):
         """
         self.assertEqual(403, response.status_code)
         self.assertTemplateUsed(response, "allianceauth_oidc/denied.html")
-        self.assertIn('User "', response.context["reason"])
-        self.assertIn(str(user), response.context["reason"])
+        self.assertEqual(str(user), response.context["username"])
 
     def assertDeniedGlobal(self, response: Any, user: User) -> None:
         """Assert that the denial reason is the global permission gate."""
         self.assertDenied(response, user)
-        self.assertIn(
-            "has no permission to use OIDC applications",
-            response.context["reason"],
-        )
+        self.assertIsNone(response.context["app_name"])
         self.assertIn(
             "User not allowed global OIDC access",
             response.context["error_code"],
+        )
+        # Rendered message must mention the per-user / global wording so
+        # downstream support tooling can grep for it.
+        self.assertIn(
+            b"has no permission to use OIDC applications",
+            response.content,
         )
 
     def assertDeniedApp(self, response: Any, user: User, app: Any) -> None:
@@ -65,13 +67,14 @@ class OIDCTestCase(TestCase):
         (state/groups).
         """
         self.assertDenied(response, user)
-        self.assertIn(
-            "has no permission to use application", response.context["reason"]
-        )
-        self.assertIn(str(app), response.context["reason"])
+        self.assertEqual(str(app), response.context["app_name"])
         self.assertIn(
             "User not allowed for this application",
             response.context["error_code"],
+        )
+        self.assertIn(
+            b"has no permission to use application",
+            response.content,
         )
 
     def assertAuthorizePage(
