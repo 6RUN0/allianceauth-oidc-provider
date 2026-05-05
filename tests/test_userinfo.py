@@ -153,8 +153,8 @@ class TestUserinfoClaims(OIDCTestCase):
     def test_malformed_portrait_template_skips_picture_without_500(self):
         """
         A typo in the operator-supplied portrait URL template (missing the
-        ``{character_id}``/``{size}`` placeholders) used to raise inside
-        id-token signing and 500 the token endpoint.
+        ``{character_id}``/``{size}`` placeholders) used to raise inside id-
+        token signing and 500 the token endpoint.
 
         Now: degrade gracefully — the userinfo response still succeeds, the
         ``picture`` claim is simply omitted, and a warning is logged so the
@@ -175,8 +175,8 @@ class TestUserinfoClaims(OIDCTestCase):
         """
         A user with a runaway number of group memberships used to produce an
         unbounded ``groups`` claim — JWTs are URL-encoded into headers and
-        cookies, so a 200KB token from a 10k-group user is effectively
-        unusable downstream.
+        cookies, so a 200KB token from a 10k-group user is effectively unusable
+        downstream.
 
         The validator caps the list at ``MAX_GROUPS_IN_CLAIM`` and emits a
         warning so operators see the truncation. The state name must still

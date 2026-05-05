@@ -29,13 +29,15 @@ class AllianceAuthApplication(AbstractApplication):
         help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",  # noqa: E501
     )
 
-    def is_usable(self, _request):
-        """Return whether the application is usable.
+    def is_usable(self, request):
+        """
+        Return whether the application is usable.
 
-        The ``_request`` argument is required by django-oauth-toolkit's
-        ``AbstractApplication`` contract but unused here — the active
-        flag is a property of the app itself, independent of the
-        incoming ``oauthlib.common.Request``.
+        The ``request`` argument is required by django-oauth-toolkit's
+        ``AbstractApplication`` contract (parameter name must match for
+        type-checker override compatibility) but unused — the active flag
+        is a property of the app itself, independent of the incoming
+        ``oauthlib.common.Request``.
         """
         return self.active
 

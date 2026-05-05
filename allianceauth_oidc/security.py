@@ -41,7 +41,8 @@ def check_user_global_oidc_access(user: object) -> None:
 
 
 def check_user_state_and_groups(user: object, app: object) -> None:
-    """Enforce per-application state/group access for ``user``.
+    """
+    Enforce per-application state/group access for ``user``.
 
     Rules:
     - If app has no states and no groups: allow.

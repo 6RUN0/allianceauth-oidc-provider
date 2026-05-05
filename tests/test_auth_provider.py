@@ -27,8 +27,9 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         self.client_obj = self.oauth_app
 
     def test_anonymous_user_skips_policy_check(self):
-        """``AnonymousUser`` must not be funnelled through the per-app
-        state/group gate.
+        """
+        ``AnonymousUser`` must not be funnelled through the per-app state/group
+        gate.
 
         client_credentials and similar end-user-less grants present
         ``AnonymousUser`` (or ``None``) on ``request.user``. Letting
@@ -47,9 +48,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         gate.assert_not_called()
 
     def test_none_user_skips_policy_check(self):
-        """``request.user is None`` must not be funnelled either —
-        regression for the original guard before the
-        ``is_authenticated`` tightening.
+        """``request.user is None`` must not be funnelled either — regression
+        for the original guard before the ``is_authenticated`` tightening.
         """
         request = SimpleNamespace(user=None)
         with patch(
@@ -62,8 +62,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         gate.assert_not_called()
 
     def test_authenticated_user_runs_policy_check(self):
-        """Authenticated user with a permissive gate ⇒ the gate runs
-        once and the policy passes.
+        """Authenticated user with a permissive gate ⇒ the gate runs once and
+        the policy passes.
         """
         request = SimpleNamespace(user=self.user1)
         with patch(
@@ -76,8 +76,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         gate.assert_called_once_with(self.user1, self.client_obj)
 
     def test_authenticated_user_denied_returns_false(self):
-        """``PermissionDenied`` from the gate ⇒ policy returns False
-        (the OAuth flow then translates this into ``invalid_grant``).
+        """``PermissionDenied`` from the gate ⇒ policy returns False (the OAuth
+        flow then translates this into ``invalid_grant``).
         """
         request = SimpleNamespace(user=self.user1)
         with patch(
@@ -91,7 +91,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
 
 
 class TestSaveBearerTokenAuthGuard(OIDCTestCase):
-    """``save_bearer_token`` mirrors ``_enforce_policy``'s guard.
+    """
+    ``save_bearer_token`` mirrors ``_enforce_policy``'s guard.
 
     Direct unit test rather than driving the full client_credentials
     flow: we mock the DOT super() call so the test stays focused on

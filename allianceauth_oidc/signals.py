@@ -26,7 +26,8 @@ def audit_oidc_token_issued(
     *args: Any,
     **kwargs: Any,
 ) -> None:
-    """Default audit receiver — log minimal, secret-free metadata.
+    """
+    Default audit receiver — log minimal, secret-free metadata.
 
     Security note: do NOT log OAuth token responses (access/refresh/id
     tokens). Only minimal, non-secret metadata is logged here.
@@ -64,8 +65,7 @@ def audit_oidc_token_issued(
         # extracted before the failure — operators grep these to
         # figure out which receiver/path is broken.
         logger.exception(
-            "Failed to audit OIDC token issuance "
-            "(token_type=%s, application_id=%s, user_id=%s)",
+            "Failed to audit OIDC token issuance (token_type=%s, application_id=%s, user_id=%s)",  # noqa: E501
             type(token).__name__,
             getattr(getattr(token, "application", None), "id", None),
             getattr(getattr(token, "user", None), "id", None),

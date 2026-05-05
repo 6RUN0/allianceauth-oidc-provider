@@ -97,8 +97,7 @@ class TokenView(OAuthLibMixin, View):
                 and body_len > self._MAX_BODY_BYTES_FOR_AUDIT_PARSE
             ):
                 logger.warning(
-                    "OIDC audit: token response body is %d bytes "
-                    "(over %d-byte cap), skipping audit parse",
+                    "OIDC audit: token response body is %d bytes (over %d-byte cap), skipping audit parse",  # noqa: E501
                     body_len,
                     self._MAX_BODY_BYTES_FOR_AUDIT_PARSE,
                 )

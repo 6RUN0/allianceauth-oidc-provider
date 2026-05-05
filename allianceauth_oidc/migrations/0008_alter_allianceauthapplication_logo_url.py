@@ -5,15 +5,24 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('allianceauth_oidc', '0007_alter_allianceauthapplication_logo_url'),
+        ("allianceauth_oidc", "0007_alter_allianceauthapplication_logo_url"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='allianceauthapplication',
-            name='logo_url',
-            field=models.URLField(blank=True, default='', help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.", max_length=1024, validators=[django.core.validators.URLValidator(schemes=['http', 'https'])]),
+            model_name="allianceauthapplication",
+            name="logo_url",
+            field=models.URLField(
+                blank=True,
+                default="",
+                help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.",
+                max_length=1024,
+                validators=[
+                    django.core.validators.URLValidator(
+                        schemes=["http", "https"]
+                    )
+                ],
+            ),
         ),
     ]

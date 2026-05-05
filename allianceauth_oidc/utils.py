@@ -49,7 +49,8 @@ def app_log(
 
 
 def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
-    """Mask a secret value, exposing only ``head``/``tail`` characters.
+    """
+    Mask a secret value, exposing only ``head``/``tail`` characters.
 
     Why masking exists: in debug scenarios you may need to confirm a secret
     is present/non-empty (or changing), but you must never log the full value.
@@ -61,7 +62,6 @@ def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
 
     Returns:
         The masked secret string, or None if the input was None.
-
     """
     if value is None:
         return None

@@ -35,8 +35,7 @@ def clear_expired_tokens() -> None:
     # numbers diverged across DOT versions. Field naming makes the
     # scope explicit so dashboards do not over-promise.
     logger.info(
-        "OIDC cleanup: removed_access=%d "
-        "(before_access=%d, after_access=%d, duration=%.1f ms)",
+        "OIDC cleanup: removed_access=%d (before_access=%d, after_access=%d, duration=%.1f ms)",  # noqa: E501
         max(expired_before - expired_after, 0),
         expired_before,
         expired_after,

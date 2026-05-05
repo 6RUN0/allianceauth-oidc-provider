@@ -138,8 +138,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 )
             except (KeyError, IndexError, ValueError) as exc:
                 logger.warning(
-                    "OIDC: invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE "
-                    "(%s); skipping `picture` claim",
+                    "OIDC: invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE (%s); skipping `picture` claim",  # noqa: E501
                     exc,
                 )
         # name
@@ -158,8 +157,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             groups_list = sorted(groups.all().values_list("name", flat=True))
         if len(groups_list) > self.MAX_GROUPS_IN_CLAIM:
             logger.warning(
-                "OIDC: groups claim truncated for user_id=%s "
-                "(%d groups, cap=%d)",
+                "OIDC: groups claim truncated for user_id=%s (%d groups, cap=%d)",  # noqa: E501
                 getattr(user, "id", None),
                 len(groups_list),
                 self.MAX_GROUPS_IN_CLAIM,
