@@ -4,15 +4,19 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('allianceauth_oidc', '0006_alter_allianceauthapplication_debug_mode'),
+        ("allianceauth_oidc", "0006_alter_allianceauthapplication_debug_mode"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='allianceauthapplication',
-            name='logo_url',
-            field=models.URLField(blank=True, default='', help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.", max_length=1024),
+            model_name="allianceauthapplication",
+            name="logo_url",
+            field=models.URLField(
+                blank=True,
+                default="",
+                help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.",
+                max_length=1024,
+            ),
         ),
     ]
