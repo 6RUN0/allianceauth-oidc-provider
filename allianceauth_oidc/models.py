@@ -2,6 +2,7 @@
 
 from allianceauth.authentication.models import State
 from django.contrib.auth.models import Group
+from django.core.validators import URLValidator
 from django.db import models
 from oauth2_provider.models import AbstractApplication
 
@@ -13,6 +14,11 @@ class AllianceAuthApplication(AbstractApplication):
         max_length=1024,
         blank=True,
         default="",
+        # The default URLValidator allows ftp/ftps too, which are useless
+        # for an `<img src>` and only widen the surface for stored XSS via
+        # `data:`/`javascript:` hand-crafted around browser quirks.
+        # Restrict to the two schemes we actually render.
+        validators=[URLValidator(schemes=["http", "https"])],
         help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.",  # noqa: E501
     )
     states = models.ManyToManyField(State, blank=True)
