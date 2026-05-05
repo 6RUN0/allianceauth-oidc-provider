@@ -31,7 +31,17 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         try:
             user = getattr(request, "user", None)
-            if user is not None and client is not None:
+            # Treat AnonymousUser the same as None: client_credentials and
+            # similar end-user-less grants must not be funnelled through the
+            # state/group gate. A future DOT version may set
+            # request.user = AnonymousUser instead of None for those grants;
+            # `is_authenticated` is the canonical Django check that covers
+            # both cases.
+            if (
+                user is not None
+                and getattr(user, "is_authenticated", False)
+                and client is not None
+            ):
                 check_user_state_and_groups(user, client)
         except PermissionDenied:
             return False
@@ -66,7 +76,12 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             client = getattr(request, "client", None) or getattr(
                 request, "application", None
             )
-            if user is not None and client is not None:
+            # See `_enforce_policy` for the AnonymousUser rationale.
+            if (
+                user is not None
+                and getattr(user, "is_authenticated", False)
+                and client is not None
+            ):
                 check_user_state_and_groups(user, client)
         except PermissionDenied:
             # Convert to OAuth error response (no 500). `from None` suppresses
