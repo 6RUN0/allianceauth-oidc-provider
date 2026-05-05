@@ -175,6 +175,44 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 }
 ```
 
+### Operator commands
+
+Four `manage.py` commands cover the common operational tasks without
+opening the admin UI. All four accept `--format=table|json|csv`;
+destructive commands honour `--dry-run`.
+
+```sh
+# Create a new OIDC application non-interactively (CI / Ansible-friendly).
+python manage.py oidc_create_app \
+    --name="Grafana" \
+    --user-id=1 \
+    --redirect-uri="https://grafana.example/login/generic_oauth" \
+    --state=Member \
+    --group=Operators \
+    --format=json
+
+# Rotate the client_secret of a registered app. Existing tokens stay
+# valid until expiry; combine with `oidc_revoke_user_tokens` for an
+# immediate cut-off.
+python manage.py oidc_rotate_secret --client-id=abc123 --format=json
+python manage.py oidc_rotate_secret --client-id=abc123 --dry-run
+
+# Revoke every active access + refresh token for a user (off-boarding,
+# compromise response). Idempotent; safe to re-run.
+python manage.py oidc_revoke_user_tokens --username=alice
+python manage.py oidc_revoke_user_tokens --username=alice --dry-run
+
+# Read-only audit: who is currently authenticated against which app.
+python manage.py oidc_audit_tokens
+python manage.py oidc_audit_tokens --username=alice --include-expired
+python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
+```
+
+Destructive operations (`create_app`, `rotate_secret`,
+`revoke_user_tokens`) log at INFO/WARNING and `create_app` also writes
+a Django admin LogEntry so the action shows up in `/admin/`'s history
+view without code changes.
+
 ### Operational hardening (operator responsibility)
 
 This app implements OAuth2/OIDC protocol semantics, but the runtime
