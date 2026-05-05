@@ -359,6 +359,87 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
             {"invalid_client", "invalid_grant", "invalid_request"},
         )
 
+    def test_refresh_token_denied_when_app_becomes_inactive(self):
+        """
+        A refresh_token minted while the app was active must NOT issue a new
+        access_token after the app is flipped to active=False.
+
+        Hardens the gap exposed by AllianceAuthApplication.is_usable(): without
+        this guard, deactivating an app would not stop already issued sessions.
+        """
+        self.grant_oidc_access(self.user1)
+        data = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": "http://localhost/redir/",
+            "scope": "openid profile email",
+            "state": "inactive-after-issue",
+            "allow": True,
+        }
+        code, _, _ = self.authorize_post_and_extract_code(
+            self.user1,
+            data=data,
+            expected_redirect_uri="http://localhost/redir/",
+        )
+        token_resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri="http://localhost/redir/",
+            expected_status=200,
+        )
+        body = self.assertTokenResponse(token_resp)
+        refresh = body["refresh_token"]
+
+        # Flip the app inactive and try to refresh.
+        self.oauth_app.active = False
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+
+        resp = self.refresh_token(
+            refresh_token=refresh, expected_status=(400, 401, 403)
+        )
+        body = json.loads(resp.content.decode("utf-8"))
+        self.assertIsInstance(body, dict)
+        # DOT or our validator may surface this as invalid_grant or
+        # invalid_client; either is correct, but it must NOT succeed.
+        self.assertIn(
+            body.get("error"),
+            {"invalid_grant", "invalid_client", "invalid_request"},
+        )
+
+    def test_token_response_omits_id_token_when_scope_lacks_openid(self):
+        """
+        DOT only emits an `id_token` when the scope contains `openid`.
+
+        For OAuth-only flows (scope=`email` or any non-openid set), the
+        token response must skip id_token entirely. Hardens the contract
+        that assertTokenResponse's default expectation must be opted out
+        of for non-OIDC flows.
+        """
+        self.grant_oidc_access(self.user1)
+        data = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": "http://localhost/redir/",
+            "scope": "email",
+            "state": "no-openid-scope",
+            "allow": True,
+        }
+        code, _, _ = self.authorize_post_and_extract_code(
+            self.user1,
+            data=data,
+            expected_redirect_uri="http://localhost/redir/",
+        )
+        token_resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri="http://localhost/redir/",
+            expected_status=200,
+        )
+        body = self.assertTokenResponse(
+            token_resp, expected_scope="email", expect_id_token=False
+        )
+        # access_token still present (it's not OIDC-only).
+        self.assertIn("access_token", body)
+
     def test_inactive_app_cannot_issue_code(self):
         """
         AllianceAuthApplication.active=False must make the app unusable.

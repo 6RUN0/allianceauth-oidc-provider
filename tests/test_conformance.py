@@ -34,8 +34,8 @@ def _b64url(raw: bytes) -> str:
 
 class TestDiscoveryAndJWKS(OIDCTestCase):
     def test_openid_configuration_advertises_required_endpoints(self):
-        """OIDC discovery document must list the standard endpoints
-        and the issuer.
+        """OIDC discovery document must list the standard endpoints and the
+        issuer.
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
@@ -67,9 +67,11 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
             self.assertTrue(doc[endpoint_key].startswith("http"))
 
     def test_jwks_advertises_an_rsa_key_with_kid_and_alg(self):
-        """JWKS must contain at least one RSA key with the fields downstream
-        verifiers need (kty, kid, n, e). DOT advertises alg=RS256 only when
-        an app uses RS256.
+        """
+        JWKS must contain at least one RSA key with the fields downstream
+        verifiers need (kty, kid, n, e).
+
+        DOT advertises alg=RS256 only when an app uses RS256.
         """
         resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, resp.status_code)
@@ -241,7 +243,9 @@ class TestPKCEFlow(OIDCTestCase):
     def test_pkce_s256_round_trip(self):
         """
         Even with PKCE_REQUIRED=False, the code+verifier exchange must work
-        when a client opts into PKCE. Smoke test: generate a verifier,
+        when a client opts into PKCE.
+
+        Smoke test: generate a verifier,
         derive S256 challenge, run the full flow.
         """
         verifier = _b64url(os.urandom(32))

@@ -213,13 +213,23 @@ class OIDCTestCase(TestCase):
         *,
         expected_scope: str | None = None,
         expected_expires_in: int | None = None,
+        expect_id_token: bool = True,
     ) -> Any:
-        """Assert that a successful token response contains required fields."""
+        """
+        Assert that a successful token response contains required fields.
+
+        Pass ``expect_id_token=False`` for OAuth-only flows whose scope does
+        not include ``openid`` — DOT correctly omits the id_token in that
+        case, and the default ``True`` would produce a misleading failure.
+        """
         body = json.loads(response.content.decode("utf-8"))
         self.assertIsInstance(body, dict)
         self.assertIn("access_token", body)
         self.assertIn("refresh_token", body)
-        self.assertIn("id_token", body)
+        if expect_id_token:
+            self.assertIn("id_token", body)
+        else:
+            self.assertNotIn("id_token", body)
 
         if expected_scope is not None:
             got = body.get("scope") or ""
