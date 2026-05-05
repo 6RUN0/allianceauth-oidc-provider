@@ -156,6 +156,50 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
             f"expected hashed-storage mention in logs, got {cm.output}",
         )
 
+    def test_audit_skipped_when_body_exceeds_size_cap(self):
+        """
+        A response body larger than the audit-parse cap (64 KiB) skips the
+        parse entirely with a warning, instead of feeding json.loads an
+        unbounded blob.
+
+        Defence-in-depth: a normal DOT response is
+        ~1 KiB; anything orders of magnitude larger indicates upstream
+        misconfiguration and is not worth parsing.
+        """
+        from allianceauth_oidc.views import TokenView
+
+        self.grant_oidc_access(self.user1)
+
+        # Replace TokenView.create_token_response with a stub that
+        # returns a >64 KiB body containing a fake access_token.
+        oversized_body = (
+            '{"access_token": "x", "padding": "' + ("A" * 70_000) + '"}'
+        )
+        with (
+            patch.object(
+                TokenView,
+                "create_token_response",
+                return_value=(None, {}, oversized_body, 200),
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.views", level="WARNING"
+            ) as cm,
+        ):
+            self.client.post(
+                "/o/token/",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.oauth_id,
+                    "client_secret": self.oauth_secret,
+                },
+            )
+
+        # Signal NOT dispatched: parse skipped, no token model fetched.
+        self.assertEqual([], self.captured)
+        joined = "\n".join(cm.output)
+        self.assertIn("over", joined)
+        self.assertIn("byte cap", joined)
+
     def test_signal_payload_contains_no_raw_secrets(self):
         """The signal exposes the OAuth2 request body to receivers; the payload
         must not contain raw access/refresh/id tokens — those live only on the

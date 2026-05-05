@@ -66,6 +66,12 @@ class TokenView(OAuthLibMixin, View):
             response[k] = v
         return response
 
+    # Defence-in-depth cap on the body we'll JSON-parse. A correctly
+    # behaving DOT response is ~1KB; this leaves three orders of magnitude
+    # of headroom while preventing a misconfigured upstream from feeding
+    # an unbounded payload to json.loads.
+    _MAX_BODY_BYTES_FOR_AUDIT_PARSE = 64 * 1024
+
     def _emit_audit(self, request: HttpRequest, body: Any) -> None:
         """
         Emit the ``oidc_token_issued`` signal without leaking failures.
@@ -77,6 +83,18 @@ class TokenView(OAuthLibMixin, View):
         """
         payload: dict[str, Any] = {}
         if body:
+            body_len = len(body) if hasattr(body, "__len__") else None
+            if (
+                body_len is not None
+                and body_len > self._MAX_BODY_BYTES_FOR_AUDIT_PARSE
+            ):
+                logger.warning(
+                    "OIDC audit: token response body is %d bytes "
+                    "(over %d-byte cap), skipping audit parse",
+                    body_len,
+                    self._MAX_BODY_BYTES_FOR_AUDIT_PARSE,
+                )
+                return
             try:
                 parsed = json.loads(body)
             except (TypeError, ValueError):
