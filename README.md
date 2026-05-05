@@ -54,11 +54,19 @@
                "email": "Registered email",
                "profile": "Main Character affiliation and Auth groups"
            },
-           "PKCE_REQUIRED": False,
+           # PKCE is mandatory for public clients per RFC 9700 (OAuth 2.0
+           # Security BCP) and recommended for confidential ones; only
+           # disable it if you know all your registered clients support
+           # PKCE and you have a documented reason.
+           "PKCE_REQUIRED": True,
            "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
            'ACCESS_TOKEN_EXPIRE_SECONDS': 60,
            'REFRESH_TOKEN_EXPIRE_SECONDS': 24*60*60,
+           # Rotate refresh tokens on every use AND detect reuse — if a
+           # refresh token is presented twice, DOT revokes the entire
+           # token family (RFC 6819 §5.2.2.3 replay defence).
            'ROTATE_REFRESH_TOKEN': True,
+           'REFRESH_TOKEN_REUSE_PROTECTION': True,
        }
    ```
 
