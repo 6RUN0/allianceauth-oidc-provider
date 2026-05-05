@@ -1,3 +1,5 @@
+"""Django admin registration for ``AllianceAuthApplication``."""
+
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 
@@ -5,6 +7,8 @@ has_email = hasattr(get_user_model(), "email")
 
 
 class ApplicationAdmin(admin.ModelAdmin):
+    """ModelAdmin shown via ``OAUTH2_PROVIDER['APPLICATION_ADMIN_CLASS']``."""
+
     list_display = (
         "id",
         "name",

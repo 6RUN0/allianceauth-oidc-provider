@@ -1,6 +1,6 @@
 """
-Unit tests for `allianceauth_oidc.utils` — the secret-masking and
-debug-meta helpers used by the audit/log paths.
+Unit tests for `allianceauth_oidc.utils` — the secret-masking and debug-meta
+helpers used by the audit/log paths.
 
 These are pure functions; tests don't need the OIDCTestCase fixture
 or a database. Kept in the same `tests/` directory so the suite stays
@@ -37,9 +37,7 @@ class TestMaskSecret(SimpleTestCase):
 
     def test_custom_head_tail(self):
         self.assertEqual("a…z", mask_secret("abcdefxyz", head=1, tail=1))
-        self.assertEqual(
-            "abc…xyz", mask_secret("abcdefghxyz", head=3, tail=3)
-        )
+        self.assertEqual("abc…xyz", mask_secret("abcdefghxyz", head=3, tail=3))
 
     def test_zero_head_tail_returns_ellipsis(self):
         self.assertEqual("...", mask_secret("abcdef", head=0, tail=0))
@@ -82,9 +80,7 @@ class TestRedactSecret(SimpleTestCase):
         importlib.reload(app_settings)
         importlib.reload(utils)
         try:
-            self.assertEqual(
-                "su…et", utils.redact_secret("super-secret")
-            )
+            self.assertEqual("su…et", utils.redact_secret("super-secret"))
         finally:
             # Reload back so other tests see the default again.
             importlib.reload(app_settings)
@@ -197,9 +193,7 @@ class TestBuildOidcDebugMeta(SimpleTestCase):
                 "id_token": "id-GGGG",
             },
         )
-        haystack = " ".join(
-            v for v in meta.values() if isinstance(v, str)
-        )
+        haystack = " ".join(v for v in meta.values() if isinstance(v, str))
         for raw in (
             *secrets.values(),
             "at-EEEE",

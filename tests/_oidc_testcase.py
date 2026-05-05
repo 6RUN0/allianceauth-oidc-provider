@@ -362,8 +362,7 @@ class OIDCTestCase(TestCase):
 
     @classmethod
     def setUpTestData(cls) -> None:
-        """
-        Build the shared fixture: 2 alliances, 4 corps, 10 characters, 4
+        """Build the shared fixture: 2 alliances, 4 corps, 10 characters, 4
         users with varied affiliations, a confidential OIDC app, and two
         test groups.
 

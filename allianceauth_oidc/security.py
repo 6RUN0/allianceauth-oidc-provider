@@ -1,3 +1,5 @@
+"""Per-user / per-application OIDC access policy checks."""
+
 import logging
 
 from django.core.exceptions import PermissionDenied
@@ -13,14 +15,15 @@ logger = logging.getLogger(f"extensions.{__name__}")
 
 
 def is_superuser(user: object) -> bool:
-    """Helper to check if user is superuser."""
+    """Return whether ``user`` is a superuser (defensive against mocks)."""
     return getattr(user, "is_superuser", False)
 
 
 def check_user_global_oidc_access(user: object) -> None:
     """
-    Global gate: user must have the allianceauth_oidc.access_oidc permission,
-    unless they are superuser.
+    Enforce the global ``allianceauth_oidc.access_oidc`` permission gate.
+
+    Superusers bypass; everyone else needs the explicit permission.
     """
     if is_superuser(user):
         logger.debug("OIDC ALLOWED: superuser user=%s", user)
@@ -38,8 +41,7 @@ def check_user_global_oidc_access(user: object) -> None:
 
 
 def check_user_state_and_groups(user: object, app: object) -> None:
-    """
-    App gate:
+    """App gate:
     - If app has no states and no groups: allow.
     - If app has states and/or groups: allow if (state matches)
       OR (any group matches).

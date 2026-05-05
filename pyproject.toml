@@ -53,27 +53,47 @@ target-version = "py310"
 extend-exclude = [ ".tox", ".venv", "htmlcov", "dist", "build" ]
 
 [tool.ruff.lint]
-select = [ "E", "F", "I", "B", "UP", "N", "SIM", "C4", "PIE", "RUF" ]
+select = [ "E", "F", "I", "B", "UP", "N", "SIM", "C4", "PIE", "RUF", "D" ]
 ignore = [
     "B008", # function-call-in-default-argument — common in Django (e.g. timezone.now)
+    "D205", # docformatter and D205 disagree on blank line after summary
+    "D401", # imperative mood is subjective for descriptive helpers
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+# D100-D107 are missing-docstring rules; the per-file blocks below opt out
+# for code where docstrings would be boilerplate (tests, migrations, Django
+# nested Meta classes).
 [tool.ruff.lint.per-file-ignores]
 # Django migrations are auto-generated; class attrs intentionally use literal
-# lists/dicts (RUF012) and operations are long lines (E501).
-"allianceauth_oidc/migrations/*" = [ "E501", "RUF012", "N806" ]
+# lists/dicts (RUF012), operations are long lines (E501), and migration
+# modules carry no docstring.
+"allianceauth_oidc/migrations/*" = [
+    "E501", "RUF012", "N806",
+    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
+]
 # Django ModelAdmin and Model.Meta use class-level mutable attributes by
-# design (admin lists, Meta.permissions, etc.).
-"allianceauth_oidc/admin.py" = [ "RUF012" ]
-"allianceauth_oidc/models.py" = [ "RUF012" ]
+# design (admin lists, Meta.permissions, etc.) and the nested Meta class
+# is a Django convention without docstring.
+"allianceauth_oidc/admin.py" = [ "RUF012", "D106" ]
+"allianceauth_oidc/models.py" = [ "RUF012", "D106" ]
 # Test docstrings and assertions are routinely long; custom assertXxx methods
 # follow unittest.TestCase camelCase convention (N802); some test files use
 # hardcoded "secrets" intentionally (covered by `# nosec`/inline noqa).
 # N806: factory functions like get_access_token_model() return classes and
 # are conventionally bound to PascalCase locals.
-"tests/*" = [ "E501", "N802", "N806" ]
+# D1xx: a test method's name is its primary documentation.
+"tests/*" = [
+    "E501", "N802", "N806",
+    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
+]
 # Django test settings module name has a legacy uppercase suffix (AA4).
-"tests/test_settingsAA4.py" = [ "E501", "N802", "N999" ]
+"tests/test_settingsAA4.py" = [
+    "E501", "N802", "N999",
+    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = [ "allianceauth_oidc" ]

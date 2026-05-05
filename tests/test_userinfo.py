@@ -49,11 +49,7 @@ class TestUserinfoClaims(OIDCTestCase):
         return json.loads(resp.content.decode("utf-8"))
 
     def test_userinfo_returns_expected_claims(self):
-        """
-        /o/userinfo/ returns additional claims:
-
-        name, picture, groups (+ email if set).
-        """
+        """/o/userinfo/ returns name, picture, groups (+ email if set)."""
         info = self._userinfo_for_user1_with_scope(SCOPE_FULL)
 
         self.assertEqual(self.char1.character_name, info.get("name"))
@@ -83,8 +79,7 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertEqual("user1@example.com", info["email"])
 
     def test_locale_claim_omitted_when_user_language_is_blank(self):
-        """
-        Regression: `UserProfile.language` is a CharField with default="";
+        """Regression: `UserProfile.language` is a CharField with default="";
         the locale claim must not be emitted as an empty string.
         """
         self.user1.profile.language = ""
@@ -107,8 +102,7 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertIn(resp.status_code, (401, 403))
 
     def test_email_claim_omitted_when_user_email_is_whitespace(self):
-        """
-        Regression: ``User.email = "   "`` is truthy and would have
+        """Regression: ``User.email = "   "`` is truthy and would have
         leaked into the email claim under a naive ``if email:`` check.
         The provider strips whitespace and treats whitespace-only
         emails as absent.

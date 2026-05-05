@@ -1,3 +1,5 @@
+"""Resolved Django settings for the OIDC provider with safe defaults."""
+
 from typing import Final
 
 from django.conf import settings

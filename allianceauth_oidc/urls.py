@@ -1,3 +1,5 @@
+"""URL routing: re-publishes DOT's URLs with our policy-aware overrides."""
+
 from django.urls import path, re_path
 from oauth2_provider import views
 

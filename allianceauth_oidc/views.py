@@ -1,3 +1,5 @@
+"""HTTP views: policy-aware AuthorizationView and audit-emitting TokenView."""
+
 import json
 import logging
 from typing import Any
@@ -51,6 +53,7 @@ class TokenView(OAuthLibMixin, View):
     def post(
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponse:
+        """Issue an OAuth2/OIDC token and emit the audit signal on success."""
         _, headers, body, status = self.create_token_response(request)
         # Access enforcement is handled in the OAuth2 validator
         # before token persistence.
@@ -108,6 +111,8 @@ class TokenView(OAuthLibMixin, View):
 
 @method_decorator(login_required, name="dispatch")
 class AuthAuthorizationView(AuthorizationView):
+    """OIDC authorization endpoint with global + per-app access policy."""
+
     template_name = "allianceauth_oidc/authorize.html"
 
     def _get_app(self, request: HttpRequest) -> AbstractApplication | None:
@@ -147,6 +152,12 @@ class AuthAuthorizationView(AuthorizationView):
     def dispatch(
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponseBase:
+        """
+        Run the access policy gate on every request, GET or POST.
+
+        Centralising the check here closes the POST-bypass that arises
+        if the gate lives in ``get()``/``post()`` separately.
+        """
         # IMPORTANT: must run for BOTH GET and POST to prevent POST-bypass.
         # Why in dispatch():
         # - Django OAuth Toolkit AuthorizationView may handle GET/POST

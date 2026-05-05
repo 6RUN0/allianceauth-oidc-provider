@@ -1,3 +1,5 @@
+"""Utility helpers: per-app logging and secret-safe debug-meta builders."""
+
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -44,8 +46,7 @@ def app_log(
 
 
 def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
-    """
-    Mask a secret value by showing only the first `head`
+    """Mask a secret value by showing only the first `head`
     and last `tail` characters.
     Why masking exists: in debug scenarios you may need to confirm a secret
     is present/non-empty (or changing), but you must never log the full value.
@@ -54,8 +55,10 @@ def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
         value: The secret value to mask.
         head: Number of characters to show at the start.
         tail: Number of characters to show at the end.
+
     Returns:
         The masked secret string, or None if the input was None.
+
     """
     if value is None:
         return None
@@ -87,6 +90,7 @@ def redact_secret(value: object) -> str | None:
 
     Args:
         value: The secret value to redact.
+
     Returns:
         Redacted secret string, or None if the input was None.
     """
@@ -120,6 +124,7 @@ def build_oidc_debug_meta(
     Args:
         request: The HTTP request object.
         payload: The response payload mapping.
+
     Returns:
         Safe dict for logging.
     """

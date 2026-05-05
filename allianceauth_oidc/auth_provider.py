@@ -1,3 +1,5 @@
+"""Custom DOT OAuth2Validator that enforces Alliance Auth access policy."""
+
 from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
@@ -6,6 +8,8 @@ from .security import check_user_state_and_groups
 
 
 class AllianceAuthOAuth2Validator(OAuth2Validator):
+    """Wrap DOT's validator with state/group checks and AA-specific claims."""
+
     # Extend the standard scopes to add a new "permissions" scope
     # which returns a "permissions" claim:
     oidc_claim_scope = OAuth2Validator.oidc_claim_scope.copy()
@@ -46,8 +50,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         return True
 
     def save_bearer_token(self, token, request, *args, **kwargs):
-        """
-        Final guard: block persistence if policy fails.
+        """Final guard: block persistence if policy fails.
         This prevents "token issued then denied" races/500s.
         """
         try:
@@ -67,6 +70,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         return super().save_bearer_token(token, request, *args, **kwargs)
 
     def get_additional_claims(self, request):
+        """Augment DOT's id_token/userinfo claims with AA-specific values."""
         out = super().get_additional_claims(request)
         user = getattr(request, "user", None)
         if user is None:

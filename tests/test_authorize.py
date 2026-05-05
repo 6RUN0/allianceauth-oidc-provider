@@ -117,8 +117,7 @@ class TestAuthorizeGate(OIDCTestCase):
     # ---------------------------- multi-alt and state-precedence scenarios
 
     def test_alt_membership_in_member_state_does_not_grant_user_state(self):
-        """
-        Adversarial multi-alt: user's main has no State affiliation, alt is
+        """Adversarial multi-alt: user's main has no State affiliation, alt is
         **explicitly** added to ``Member.member_characters``. If AA naively
         used "any owned character is Member ⇒ user is Member", this user
         would gain Member access through the alt. The contract: state is

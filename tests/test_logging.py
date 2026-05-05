@@ -71,8 +71,7 @@ class TestDebugLogging(OIDCTestCase):
         self.assertNotIn(self.oauth_secret, log_text)
 
     def test_debug_logging_emits_no_info_when_debug_mode_is_false(self):
-        """
-        Negative counterpart: with debug_mode=False (the default),
+        """Negative counterpart: with debug_mode=False (the default),
         TokenView must not emit the OIDC DEBUG INFO line at all.
 
         Catches a regression where the per-app gate is accidentally
@@ -120,8 +119,7 @@ class TestDebugLogging(OIDCTestCase):
         self.assertIn("OIDC DEBUG token issued", log_text)
 
     def test_debug_logging_disappears_when_toggled_off_between_steps(self):
-        """
-        Symmetric negative case: ``True → False`` between authorize and
+        """Symmetric negative case: ``True → False`` between authorize and
         exchange must suppress the INFO line on exchange. Closes the
         symmetry gap surfaced by the second-pass review.
         """

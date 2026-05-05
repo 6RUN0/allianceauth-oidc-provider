@@ -1,3 +1,5 @@
+"""Custom OAuth2 Application model with AA state/group access policy."""
+
 from allianceauth.authentication.models import State
 from django.contrib.auth.models import Group
 from django.db import models
@@ -5,6 +7,8 @@ from oauth2_provider.models import AbstractApplication
 
 
 class AllianceAuthApplication(AbstractApplication):
+    """OAuth2 Application restricted by Alliance Auth states and groups."""
+
     logo_url = models.TextField(
         max_length=1024,
         blank=True,
@@ -21,7 +25,7 @@ class AllianceAuthApplication(AbstractApplication):
 
     def is_usable(self, request):
         """
-        Determines whether the application can be used.
+        Return whether the application is usable for ``request``.
 
         :param request: The oauthlib.common.Request being processed.
         """

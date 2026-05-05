@@ -1,3 +1,5 @@
+"""``oidc_token_issued`` audit signal and the default audit receiver."""
+
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -24,8 +26,7 @@ def audit_oidc_token_issued(
     *args: Any,
     **kwargs: Any,
 ) -> None:
-    """
-    Security note:
+    """Security note:
     Do NOT log OAuth token responses (access/refresh/id tokens).
     Only log minimal metadata for auditing.
 

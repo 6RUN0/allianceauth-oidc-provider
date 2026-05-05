@@ -92,8 +92,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
             self.assertIn(field, first)
 
     def test_id_token_is_signed_and_verifiable_against_jwks(self):
-        """
-        Round-trip: run the authorization-code flow, decode `id_token` with
+        """Round-trip: run the authorization-code flow, decode `id_token` with
         the public key from /o/.well-known/jwks.json, and assert both the
         critical claims (iss, sub, aud, exp, iat) and the JWT header
         (alg=RS256, kid present).
@@ -244,46 +243,93 @@ class TestRevokeAndIntrospect(OIDCTestCase):
 
 
 class TestPKCEFlow(OIDCTestCase):
-    def test_pkce_s256_round_trip(self):
-        """
-        Even with PKCE_REQUIRED=False, the code+verifier exchange must work
-        when a client opts into PKCE.
-
-        Smoke test: generate a verifier,
-        derive S256 challenge, run the full flow.
-        """
+    @staticmethod
+    def _make_verifier_and_challenge() -> tuple[str, str]:
         verifier = _b64url(os.urandom(32))
         challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+        return verifier, challenge
 
-        self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid",
-            "state": "pkce-test",
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+    def _authorize_with_pkce(self, *, challenge: str, state: str) -> str:
+        """Issue an authorization code with a code_challenge attached."""
+        return self.authorize_to_code(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-
-        resp = self.client.post(
-            "/o/token/",
-            data={
-                "grant_type": "authorization_code",
-                "client_id": self.oauth_id,
-                "client_secret": self.oauth_secret,
-                "redirect_uri": "http://localhost/redir/",
-                "code": code,
-                "code_verifier": verifier,
+            scope=SCOPE_OPENID,
+            state=state,
+            extra_authorize_params={
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
             },
         )
-        self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+
+    def _exchange_with_verifier(
+        self, *, code: str, verifier: str | None
+    ) -> tuple[int, dict]:
+        """POST /o/token/ with the given code and (optional) verifier."""
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": self.oauth_id,
+            "client_secret": self.oauth_secret,
+            "redirect_uri": "http://localhost/redir/",
+            "code": code,
+        }
+        if verifier is not None:
+            payload["code_verifier"] = verifier
+        resp = self.client.post("/o/token/", data=payload)
+        return resp.status_code, json.loads(resp.content.decode("utf-8"))
+
+    def test_pkce_s256_round_trip(self):
+        """Happy path: with PKCE_REQUIRED=False, a client opting into S256
+        PKCE still gets a working code + verifier exchange.
+        """
+        verifier, challenge = self._make_verifier_and_challenge()
+        self.grant_oidc_access(self.user1)
+        code = self._authorize_with_pkce(
+            challenge=challenge, state="pkce-happy"
+        )
+        status, body = self._exchange_with_verifier(
+            code=code, verifier=verifier
+        )
+        self.assertEqual(200, status)
         self.assertIn("access_token", body)
         self.assertIn("id_token", body)
+
+    def test_pkce_with_wrong_verifier_is_rejected(self):
+        """RFC 7636: presenting a verifier that does NOT hash to the
+        previously-supplied challenge must be rejected with
+        invalid_grant. Otherwise PKCE provides no protection.
+        """
+        _, challenge = self._make_verifier_and_challenge()
+        wrong_verifier = _b64url(os.urandom(32))  # unrelated random bytes
+        self.grant_oidc_access(self.user1)
+        code = self._authorize_with_pkce(
+            challenge=challenge, state="pkce-wrong-verifier"
+        )
+        status, body = self._exchange_with_verifier(
+            code=code, verifier=wrong_verifier
+        )
+        self.assertEqual(400, status)
+        self.assertIn(
+            body.get("error"),
+            {"invalid_grant", "invalid_request"},
+        )
+
+    def test_pkce_missing_verifier_when_challenge_provided_is_rejected(
+        self,
+    ):
+        """
+        RFC 7636 §4.6: if the authorize request used PKCE, the token request
+        MUST include code_verifier.
+
+        Omitting it must fail.
+        """
+        _, challenge = self._make_verifier_and_challenge()
+        self.grant_oidc_access(self.user1)
+        code = self._authorize_with_pkce(
+            challenge=challenge, state="pkce-missing-verifier"
+        )
+        status, body = self._exchange_with_verifier(code=code, verifier=None)
+        self.assertEqual(400, status)
+        self.assertIn(
+            body.get("error"),
+            {"invalid_grant", "invalid_request"},
+        )
