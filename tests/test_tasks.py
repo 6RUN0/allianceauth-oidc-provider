@@ -125,8 +125,13 @@ class TestClearExpiredTokensTask(OIDCTestCase):
 
         joined = "\n".join(cm.output)
         self.assertIn("OIDC cleanup", joined)
-        self.assertIn("removed", joined)
-        # Duration is reported in ms.
+        # Field names are explicit about scope (access-token only) so
+        # dashboards built off this log line cannot accidentally claim
+        # to count grants/refresh-tokens too.
+        self.assertIn("removed_access=", joined)
+        self.assertIn("before_access=", joined)
+        self.assertIn("after_access=", joined)
+        self.assertIn("duration=", joined)
         self.assertIn("ms", joined)
 
     def test_task_is_idempotent_on_clean_database(self):

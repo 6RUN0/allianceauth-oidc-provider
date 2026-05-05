@@ -29,9 +29,14 @@ def clear_expired_tokens() -> None:
     expired_after = access_token_model.objects.filter(
         expires__lt=timezone.now()
     ).count()
+    # The before/after delta is access-token-only by design — DOT's
+    # `clear_expired()` also drops grants and refresh tokens, but
+    # counting those is best-effort and would mislead operators if the
+    # numbers diverged across DOT versions. Field naming makes the
+    # scope explicit so dashboards do not over-promise.
     logger.info(
-        "OIDC cleanup: removed %d expired access tokens "
-        "(before=%d, after=%d, %.1f ms)",
+        "OIDC cleanup: removed_access=%d "
+        "(before_access=%d, after_access=%d, duration=%.1f ms)",
         max(expired_before - expired_after, 0),
         expired_before,
         expired_after,
