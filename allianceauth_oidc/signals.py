@@ -6,6 +6,8 @@ from typing import Any
 
 from django.dispatch import Signal
 
+from .constants import AUDIT_DISPATCH_UID
+
 logger = logging.getLogger(f"extensions.{__name__}")
 
 # Custom signal instead of direct logging inside TokenView:
@@ -74,5 +76,5 @@ def audit_oidc_token_issued(
 
 oidc_token_issued.connect(
     audit_oidc_token_issued,
-    dispatch_uid="allianceauth_oidc.audit_oidc_token_issued",
+    dispatch_uid=AUDIT_DISPATCH_UID,
 )

@@ -7,10 +7,12 @@ from celery import shared_task
 from django.utils import timezone
 from oauth2_provider.models import clear_expired, get_access_token_model
 
+from .constants import TASK_CLEAR_EXPIRED_TOKENS
+
 logger = logging.getLogger(f"extensions.{__name__}")
 
 
-@shared_task(name="allianceauth_oidc.clear_expired_tokens")
+@shared_task(name=TASK_CLEAR_EXPIRED_TOKENS)
 def clear_expired_tokens() -> None:
     """
     Delete expired access/refresh/id tokens and grants via DOT.
