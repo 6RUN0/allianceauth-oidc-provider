@@ -19,58 +19,30 @@ from allianceauth.authentication.models import State
 
 from ._oidc_testcase import OIDCTestCase
 
+DEFAULT_SCOPES = "openid profile email"
+
 
 class TestCodeFlowAndTokenPolicy(OIDCTestCase):
-    def _issue_code_user1_with_group_access(self) -> str:
+    def _grant_user1_with_test_grp(self) -> None:
+        """Common setup: grant OIDC perm, add user1 + app to test_grp."""
         self.oauth_app.groups.add(self.test_grp)
         self.grant_oidc_access(self.user1)
         self.user1.groups.add(self.test_grp)
         self.user1.refresh_from_db()
 
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "policy-test",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        return code
-
-    # ---------------------------------------------------------------- code-flow
+    # -------------------------------------------------------- code-flow happy paths
 
     def test_full_chain_u1_with_perms_and_state(self):
         """Authorization-code flow succeeds when user matches app's required
         state.
         """
         self.oauth_app.states.add(State.objects.get(name="Member"))
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.refresh_from_db()
-        state = "test_full_chain_u1_with_perms_and_state"
-        scopes = "openid profile email"
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scopes,
-            "state": state,
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        self.grant_oidc_access(self.user1)
+        self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        response = self.exchange_code_for_token(
-            code=code, state=state, redirect_uri="http://localhost/redir/"
-        )
-        self.assertTokenResponse(
-            response, expected_scope=scopes, expected_expires_in=60
+            state="full-chain-state",
+            expected_scope=DEFAULT_SCOPES,
+            expected_expires_in=60,
         )
 
     def test_full_chain_u1_with_perms_and_wrong_state_and_group(self):
@@ -78,89 +50,33 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         match the user's state.
         """
         self.oauth_app.states.add(State.objects.get(name="Guest"))
-        self.oauth_app.groups.add(self.test_grp)
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.groups.add(self.test_grp)
-        self.user1.refresh_from_db()
-        state = "test_full_chain_u1_with_perms_and_wrong_state"
-        scopes = "openid profile email"
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scopes,
-            "state": state,
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        self._grant_user1_with_test_grp()
+        self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        response = self.exchange_code_for_token(
-            code=code, state=state, redirect_uri="http://localhost/redir/"
-        )
-        self.assertTokenResponse(
-            response, expected_scope=scopes, expected_expires_in=60
+            state="full-chain-wrong-state-right-group",
+            expected_scope=DEFAULT_SCOPES,
+            expected_expires_in=60,
         )
 
     def test_full_chain_u1_with_perms_and_group_and_state(self):
         """Both state and group match — straightforward success."""
-        self.oauth_app.groups.add(self.test_grp)
         self.oauth_app.states.add(State.objects.get(name="Member"))
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.groups.add(self.test_grp)
-        self.user1.refresh_from_db()
-        state = "test_full_chain_u1_with_perms_and_group_and_state"
-        scopes = "openid profile email"
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scopes,
-            "state": state,
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        self._grant_user1_with_test_grp()
+        self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        response = self.exchange_code_for_token(
-            code=code, state=state, redirect_uri="http://localhost/redir/"
-        )
-        self.assertTokenResponse(
-            response, expected_scope=scopes, expected_expires_in=60
+            state="full-chain-state-and-group",
+            expected_scope=DEFAULT_SCOPES,
+            expected_expires_in=60,
         )
 
     def test_full_chain_u1_with_perms_and_group(self):
-        """App requires a group but no state — group match alone grants
-        access.
-        """
-        self.oauth_app.groups.add(self.test_grp)
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.groups.add(self.test_grp)
-        self.user1.refresh_from_db()
-        state = "test_full_chain_u1_with_perms_and_group"
-        scopes = "openid profile email"
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scopes,
-            "state": state,
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        """App requires a group but no state — group match grants access."""
+        self._grant_user1_with_test_grp()
+        self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        response = self.exchange_code_for_token(
-            code=code, state=state, redirect_uri="http://localhost/redir/"
-        )
-        self.assertTokenResponse(
-            response, expected_scope=scopes, expected_expires_in=60
+            state="full-chain-group-only",
+            expected_scope=DEFAULT_SCOPES,
+            expected_expires_in=60,
         )
 
     def test_full_chain_u1_with_perms_and_wrong_group_and_state(self):
@@ -172,56 +88,25 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.user1.user_permissions.add(self.access_oauth)
         self.user1.groups.add(self.test_grp)
         self.user1.refresh_from_db()
-        state = "test_full_chain_u1_with_perms_and_wrong_group_and_state"
-        scopes = "openid profile email"
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scopes,
-            "state": state,
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        response = self.exchange_code_for_token(
-            code=code, state=state, redirect_uri="http://localhost/redir/"
-        )
-        self.assertTokenResponse(
-            response, expected_scope=scopes, expected_expires_in=60
+            state="full-chain-right-state-wrong-group",
+            expected_scope=DEFAULT_SCOPES,
+            expected_expires_in=60,
         )
 
     def test_full_chain_u1_with_su(self):
         """Superusers bypass state/group restrictions entirely."""
-        # Apply a state restriction the user does NOT match — superuser still
-        # gets through.
+        # State the user does NOT match — superuser still gets through.
         self.oauth_app.states.add(State.objects.get(name="Blue"))
         self.user1.is_superuser = True
         self.user1.save()
         self.user1.refresh_from_db()
-        state = "test_full_chain_u1_with_su"
-        scopes = "openid profile email"
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scopes,
-            "state": state,
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        response = self.exchange_code_for_token(
-            code=code, state=state, redirect_uri="http://localhost/redir/"
-        )
-        self.assertTokenResponse(
-            response, expected_scope=scopes, expected_expires_in=60
+            state="full-chain-su-bypass",
+            expected_scope=DEFAULT_SCOPES,
+            expected_expires_in=60,
         )
 
     # -------------------------------------------------------------- token policy
@@ -230,7 +115,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         """If the user stops matching policy (group/state) after code issuance,
         /o/token/ must fail with invalid_grant.
         """
-        code = self._issue_code_user1_with_group_access()
+        self._grant_user1_with_test_grp()
+        code = self.authorize_to_code(self.user1, state="policy-test")
 
         self.user1.groups.clear()
         self.user1.refresh_from_db()
@@ -247,17 +133,11 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         """Refresh token exchange must enforce policy and deny if access was
         removed.
         """
-        code = self._issue_code_user1_with_group_access()
-
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            state="policy-test",
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        body = self.assertTokenResponse(
-            token_resp,
-            expected_scope="openid profile email",
+        self._grant_user1_with_test_grp()
+        body = self.run_code_flow(
+            self.user1,
+            state="refresh-policy-test",
+            expected_scope=DEFAULT_SCOPES,
             expected_expires_in=60,
         )
         refresh = body["refresh_token"]
@@ -273,25 +153,7 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         refresh_token, refresh must fail with invalid_grant.
         """
         self.grant_oidc_access(self.user1)
-
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "perm-removed-refresh",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1, data=data
-        )
-
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        body = self.assertTokenResponse(token_resp)
+        body = self.run_code_flow(self.user1, state="perm-removed-refresh")
         refresh = body["refresh_token"]
 
         self.user1.user_permissions.remove(self.access_oauth)
@@ -305,18 +167,7 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         /o/authorize/, token exchange must fail (typically invalid_grant).
         """
         self.grant_oidc_access(self.user1)
-
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "redir-mismatch",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1, data=data
-        )
+        code = self.authorize_to_code(self.user1, state="redir-mismatch")
 
         resp = self.exchange_code_for_token(
             code=code,
@@ -333,17 +184,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         client_secret.
         """
         self.grant_oidc_access(self.user1)
-
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid",
-            "state": "bad-secret",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1, data=data
+        code = self.authorize_to_code(
+            self.user1, scope="openid", state="bad-secret"
         )
 
         resp = self.exchange_code_for_token(
@@ -368,25 +210,7 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         this guard, deactivating an app would not stop already issued sessions.
         """
         self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "inactive-after-issue",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        body = self.assertTokenResponse(token_resp)
+        body = self.run_code_flow(self.user1, state="inactive-after-issue")
         refresh = body["refresh_token"]
 
         # Flip the app inactive and try to refresh.
@@ -410,34 +234,19 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         """
         DOT only emits an `id_token` when the scope contains `openid`.
 
-        For OAuth-only flows (scope=`email` or any non-openid set), the
-        token response must skip id_token entirely. Hardens the contract
-        that assertTokenResponse's default expectation must be opted out
-        of for non-OIDC flows.
+        For
+        OAuth-only flows (scope=`email` or any non-openid set), the token
+        response must skip id_token entirely.
         """
         self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "email",
-            "state": "no-openid-scope",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
+        body = self.run_code_flow(
             self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
+            scope="email",
+            state="no-openid-scope",
+            expect_id_token=False,
+            expected_scope="email",
         )
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        body = self.assertTokenResponse(
-            token_resp, expected_scope="email", expect_id_token=False
-        )
-        # access_token still present (it's not OIDC-only).
+        # access_token still present (OAuth-only flow remains valid).
         self.assertIn("access_token", body)
 
     def test_inactive_app_cannot_issue_code(self):

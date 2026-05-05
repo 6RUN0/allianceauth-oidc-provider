@@ -18,29 +18,13 @@ def _enable_rp_logout():
 
 class TestRPInitiatedLogout(OIDCTestCase):
     def _issue_id_token(self) -> str:
-        """Run the auth-code flow to get an id_token usable as
+        """Run the auth-code flow to get an id_token for use as
         id_token_hint.
         """
         self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile",
-            "state": "logout-issue",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        return self.assertTokenResponse(token_resp)["id_token"]
+        return self.run_code_flow(
+            self.user1, scope="openid profile", state="logout-issue"
+        )["id_token"]
 
     def test_logout_allows_only_configured_post_logout_redirect_uri(self):
         """

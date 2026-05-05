@@ -207,6 +207,83 @@ class OIDCTestCase(TestCase):
         self.assertEqual(expected_error, body.get("error"))
         return body
 
+    def authorize_to_code(
+        self,
+        user: User,
+        *,
+        scope: str = "openid profile email",
+        state: str = "test",
+        redirect_uri: str = "http://localhost/redir/",
+        extra_authorize_params: dict | None = None,
+    ) -> str:
+        """
+        Issue an authorization code without performing the token exchange.
+
+        Use this when a test needs to mutate state (groups, permissions,
+        debug_mode, app.active) between authorize and token endpoints.
+        For end-to-end happy paths, prefer ``run_code_flow``.
+        """
+        data = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "state": state,
+            "allow": True,
+        }
+        if extra_authorize_params:
+            data.update(extra_authorize_params)
+        code, _, _ = self.authorize_post_and_extract_code(
+            user, data=data, expected_redirect_uri=redirect_uri
+        )
+        return code
+
+    def run_code_flow(
+        self,
+        user: User,
+        *,
+        scope: str = "openid profile email",
+        state: str = "test",
+        redirect_uri: str = "http://localhost/redir/",
+        extra_authorize_params: dict | None = None,
+        expect_status: int | tuple[int, ...] = 200,
+        expect_id_token: bool = True,
+        expected_scope: str | None = None,
+        expected_expires_in: int | None = None,
+    ) -> dict:
+        """
+        Run the full authorization-code flow and return the parsed token body.
+
+        Combines authorize_post_and_extract_code + exchange_code_for_token
+        into one call. Default scope/state match the most common test
+        setup; pass overrides for edge cases.
+
+        Pass ``expect_id_token=False`` for OAuth-only flows (scope without
+        ``openid``); ``assertTokenResponse`` will then assert the id_token
+        is *absent*. ``expected_scope``/``expected_expires_in`` are forwarded
+        to ``assertTokenResponse`` for happy-path checks.
+        """
+        code = self.authorize_to_code(
+            user,
+            scope=scope,
+            state=state,
+            redirect_uri=redirect_uri,
+            extra_authorize_params=extra_authorize_params,
+        )
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=redirect_uri,
+            expected_status=expect_status,
+        )
+        if expect_status == 200:
+            return self.assertTokenResponse(
+                resp,
+                expect_id_token=expect_id_token,
+                expected_scope=expected_scope,
+                expected_expires_in=expected_expires_in,
+            )
+        return json.loads(resp.content.decode("utf-8"))
+
     def assertTokenResponse(
         self,
         response: Any,

@@ -89,13 +89,16 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         character_name = getattr(main_character, "character_name", None)
         if character_name:
             out["name"] = character_name
-        # groups + state
+        # groups + state. Sort the Django groups so the claim is
+        # deterministic across calls (downstream consumers hash claim
+        # payloads for caching). The state name is appended after sorting
+        # so its position in the list is stable.
         state = getattr(profile, "state", None)
         state_name = getattr(state, "name", None)
         if groups is None:
             groups_list = []
         else:
-            groups_list = list(groups.all().values_list("name", flat=True))
+            groups_list = sorted(groups.all().values_list("name", flat=True))
         if state_name is not None:
             groups_list.append(state_name)
         if groups_list:

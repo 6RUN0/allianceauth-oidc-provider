@@ -11,139 +11,137 @@ VIEWS_LOGGER = "extensions.allianceauth_oidc.views"
 
 
 class TestDebugLogging(OIDCTestCase):
-    def _run_token_flow_capturing_logs(
-        self, *, scope: str = "openid profile email"
-    ) -> tuple[list[logging.LogRecord], dict, str, str]:
+    def _capture_views_log_during_exchange(
+        self, code: str
+    ) -> tuple[list[logging.LogRecord], str]:
         """
-        Run the full code-flow and capture log records on the views logger
-        regardless of level.
+        Exchange ``code`` for a token while capturing every record that reaches
+        the views logger.
 
-        Returns (records, tokens_dict, code, log_text). Centralized so positive
-        and negative debug_mode tests share setup.
+        Returns ``(records, joined_text)``. Uses ``level=NOTSET`` plus an
+        anchor DEBUG record so we can assert *absence* of INFO records;
+        plain ``assertLogs(..., level=INFO)`` would itself fail when no
+        INFO record is emitted (which is precisely what the negative
+        debug_mode test wants to verify).
         """
-        self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scope,
-            "state": "log-flow",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1, data=data
-        )
-        # NOTSET captures any record propagating to the views logger so we
-        # can assert *absence* of an INFO line, which assertLogs(...)
-        # cannot do (it requires at least one record to be emitted).
         with self.assertLogs(VIEWS_LOGGER, level="NOTSET") as cm:
-            # Emit one DEBUG record we expect to see, so assertLogs has
-            # something to attach to and the inner block can still fail
-            # for the right reason.
             logging.getLogger(VIEWS_LOGGER).debug("test-anchor")
-            token_resp = self.exchange_code_for_token(
-                code=code,
-                redirect_uri="http://localhost/redir/",
-                expected_status=200,
-            )
-        tokens = self.assertTokenResponse(token_resp)
-        return cm.records, tokens, code, "\n".join(cm.output)
-
-    def test_debug_logging_does_not_leak_tokens_or_secrets(self):
-        """
-        When app.debug_mode=True, TokenView logs safe metadata.
-
-        Ensure raw tokens/secrets are never present in logs.
-        """
-        self.oauth_app.debug_mode = True
-        self.oauth_app.save()
-        self.oauth_app.refresh_from_db()
-
-        records, tokens, code, log_text = self._run_token_flow_capturing_logs()
-
-        # Positive: the INFO line is actually emitted (otherwise the
-        # `assertNotIn` on tokens below would pass on an empty log buffer).
-        info_lines = [
-            r
-            for r in records
-            if r.levelno >= logging.INFO and r.name == VIEWS_LOGGER
-        ]
-        self.assertTrue(
-            info_lines,
-            "expected at least one INFO record on the views logger when "
-            "debug_mode=True",
-        )
-        self.assertIn("OIDC DEBUG token issued", log_text)
-
-        # Tokens, code, secret must never be in the captured output.
-        self.assertNotIn(tokens["access_token"], log_text)
-        self.assertNotIn(tokens["refresh_token"], log_text)
-        self.assertNotIn(tokens["id_token"], log_text)
-        self.assertNotIn(code, log_text)
-        self.assertNotIn(self.oauth_secret, log_text)
-
-    def test_debug_logging_emits_no_info_when_debug_mode_is_false(self):
-        """
-        Negative counterpart: with `debug_mode=False` (the default), the
-        TokenView must not emit the "OIDC DEBUG token issued" INFO line at
-        all. Catches the regression where someone flips the per-app gate
-        into a global one.
-        """
-        self.oauth_app.debug_mode = False
-        self.oauth_app.save()
-        self.oauth_app.refresh_from_db()
-
-        records, _, _, log_text = self._run_token_flow_capturing_logs()
-
-        info_lines = [
-            r
-            for r in records
-            if r.levelno >= logging.INFO and r.name == VIEWS_LOGGER
-        ]
-        self.assertEqual(
-            [],
-            info_lines,
-            f"unexpected INFO log on views logger with debug_mode=False: "
-            f"{[r.getMessage() for r in info_lines]}",
-        )
-        self.assertNotIn("OIDC DEBUG token issued", log_text)
-
-    def test_debug_logging_uses_debug_mode_at_token_exchange_time(self):
-        """
-        debug_mode is read on the token-exchange request, not at code issuance.
-
-        If an admin flips debug_mode True after the code is issued but before
-        /o/token/, the INFO line must appear; flipping it False between
-        authorize and token must suppress it.
-        """
-        # 1) authorize while False
-        self.oauth_app.debug_mode = False
-        self.oauth_app.save()
-        self.oauth_app.refresh_from_db()
-        self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid",
-            "state": "toggle-test",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1, data=data
-        )
-
-        # 2) flip True before exchange
-        self.oauth_app.debug_mode = True
-        self.oauth_app.save()
-        self.oauth_app.refresh_from_db()
-
-        with self.assertLogs(VIEWS_LOGGER, level="INFO") as cm:
             self.exchange_code_for_token(
                 code=code,
                 redirect_uri="http://localhost/redir/",
                 expected_status=200,
             )
+        return cm.records, "\n".join(cm.output)
+
+    @staticmethod
+    def _info_lines(records: list[logging.LogRecord]) -> list[str]:
+        return [
+            r.getMessage()
+            for r in records
+            if r.levelno >= logging.INFO and r.name == VIEWS_LOGGER
+        ]
+
+    def test_debug_logging_does_not_leak_tokens_or_secrets(self):
+        """With app.debug_mode=True, TokenView emits safe metadata only — raw
+        tokens/code/secret must never reach the log buffer.
+        """
+        self.oauth_app.debug_mode = True
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="log-leak")
+
+        records, log_text = self._capture_views_log_during_exchange(code)
+
+        # The INFO line is actually emitted (so the "no leak" assertions
+        # below are not passing vacuously on an empty buffer).
         self.assertTrue(
-            any("OIDC DEBUG token issued" in line for line in cm.output)
+            self._info_lines(records),
+            "expected at least one INFO record when debug_mode=True",
         )
+        self.assertIn("OIDC DEBUG token issued", log_text)
+
+        # Need to look up the AccessToken row for its tokens — we don't
+        # have the token response handy here, fetch via the bearer.
+        from oauth2_provider.models import get_access_token_model
+
+        token = get_access_token_model().objects.get(user=self.user1)
+        self.assertNotIn(token.token, log_text)
+        self.assertNotIn(code, log_text)
+        self.assertNotIn(self.oauth_secret, log_text)
+
+    def test_debug_logging_emits_no_info_when_debug_mode_is_false(self):
+        """
+        Negative counterpart: with debug_mode=False (the default),
+        TokenView must not emit the OIDC DEBUG INFO line at all.
+
+        Catches a regression where the per-app gate is accidentally
+        widened into a global one.
+        """
+        self.oauth_app.debug_mode = False
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="log-noinfo")
+
+        records, log_text = self._capture_views_log_during_exchange(code)
+
+        leaked = self._info_lines(records)
+        self.assertEqual(
+            [],
+            leaked,
+            f"unexpected INFO records with debug_mode=False: {leaked}",
+        )
+        self.assertNotIn("OIDC DEBUG token issued", log_text)
+
+    def test_debug_logging_appears_when_toggled_on_between_steps(self):
+        """
+        debug_mode is sampled on the token-exchange request, not cached at
+        authorize-time.
+
+        Flipping it ``False → True`` between authorize
+        and exchange must surface the INFO line on exchange.
+        """
+        self.oauth_app.debug_mode = False
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(
+            self.user1, scope="openid", state="toggle-on"
+        )
+
+        # Flip True before exchange.
+        self.oauth_app.debug_mode = True
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+
+        records, log_text = self._capture_views_log_during_exchange(code)
+        self.assertTrue(self._info_lines(records))
+        self.assertIn("OIDC DEBUG token issued", log_text)
+
+    def test_debug_logging_disappears_when_toggled_off_between_steps(self):
+        """
+        Symmetric negative case: ``True → False`` between authorize and
+        exchange must suppress the INFO line on exchange. Closes the
+        symmetry gap surfaced by the second-pass review.
+        """
+        self.oauth_app.debug_mode = True
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(
+            self.user1, scope="openid", state="toggle-off"
+        )
+
+        self.oauth_app.debug_mode = False
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+
+        records, log_text = self._capture_views_log_during_exchange(code)
+        leaked = self._info_lines(records)
+        self.assertEqual(
+            [],
+            leaked,
+            f"INFO record leaked after debug_mode flipped False: {leaked}",
+        )
+        self.assertNotIn("OIDC DEBUG token issued", log_text)

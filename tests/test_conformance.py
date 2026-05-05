@@ -86,32 +86,15 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
     def test_id_token_is_signed_and_verifiable_against_jwks(self):
         """
         Round-trip: run the authorization-code flow, decode `id_token` with
-        the public key from /o/.well-known/jwks.json, and assert the
-        critical claims (iss, sub, aud).
+        the public key from /o/.well-known/jwks.json, and assert both the
+        critical claims (iss, sub, aud, exp, iat) and the JWT header
+        (alg=RS256, kid present).
 
-        Catches silent regressions where DOT's algorithm or JWKS publication
-        diverges from what we declare on the application.
+        Catches silent regressions where DOT swaps the algorithm or stops
+        publishing it on the JWKS.
         """
         self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "id-token-verify",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        tokens = self.assertTokenResponse(token_resp)
+        tokens = self.run_code_flow(self.user1, state="id-token-verify")
         id_token = tokens["id_token"]
 
         jwks_resp = self.client.get("/o/.well-known/jwks.json")
@@ -119,35 +102,48 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         verified = jwt.JWT(jwt=id_token, key=keyset)
         claims = json.loads(verified.claims)
 
+        # Header invariants — guard against a downgrade attack where the
+        # token still parses but with `alg=none` or HS256.
+        header = json.loads(verified.header)
+        self.assertEqual("RS256", header.get("alg"))
+        self.assertIn("kid", header)
+
         self.assertEqual(str(self.user1.pk), claims.get("sub"))
         self.assertEqual(self.oauth_id, claims.get("aud"))
         self.assertIn("iss", claims)
         self.assertIn("exp", claims)
+        self.assertIn("iat", claims)
+        self.assertLessEqual(claims["iat"], claims["exp"])
+
+    def test_id_token_round_trips_nonce_when_provided(self):
+        """
+        OIDC Core §3.1.2.1: if the client passes `nonce` in the authorize
+        request, it must echo back unchanged in the id_token.
+
+        Mitigates replay attacks where a stolen id_token is re-used in a
+        different authentication context.
+        """
+        self.grant_oidc_access(self.user1)
+        nonce = "n-0S6_WzA2Mj"  # arbitrary fixed value
+        tokens = self.run_code_flow(
+            self.user1,
+            state="nonce-test",
+            extra_authorize_params={"nonce": nonce},
+        )
+        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        keyset = jwk.JWKSet.from_json(jwks_resp.content.decode("utf-8"))
+        verified = jwt.JWT(jwt=tokens["id_token"], key=keyset)
+        claims = json.loads(verified.claims)
+        self.assertEqual(nonce, claims.get("nonce"))
 
 
 class TestRevokeAndIntrospect(OIDCTestCase):
     def _issue_access_token(self, *, scope: str = "openid") -> str:
         """Run the authorization-code flow and return a fresh access_token."""
         self.grant_oidc_access(self.user1)
-        data = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": scope,
-            "state": "issue-token",
-            "allow": True,
-        }
-        code, _, _ = self.authorize_post_and_extract_code(
-            self.user1,
-            data=data,
-            expected_redirect_uri="http://localhost/redir/",
-        )
-        token_resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri="http://localhost/redir/",
-            expected_status=200,
-        )
-        return json.loads(token_resp.content)["access_token"]
+        return self.run_code_flow(
+            self.user1, scope=scope, state="issue-token"
+        )["access_token"]
 
     def test_revoked_access_token_no_longer_authorizes_userinfo(self):
         """RFC 7009: after /o/revoke_token/, the token must no longer be
