@@ -1,6 +1,6 @@
 """
-Optional test-time monkey-patch that replaces ``django_redis.get_redis_connection``
-with a fakeredis-backed shim.
+Optional test-time monkey-patch that replaces
+``django_redis.get_redis_connection`` with a fakeredis-backed shim.
 
 Alliance Auth's startup probes Redis via ``info()`` for feature
 detection; without a live server (or this patch) the test process

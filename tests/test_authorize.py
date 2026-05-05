@@ -110,20 +110,9 @@ class TestAuthorizeGate(OIDCTestCase):
             response, self.oauth_app, ["email", "openid", "profile"]
         )
 
-    def test_authorize_denies_when_app_state_does_not_match_user(self):
-        """App requires a state the user doesn't have → 403 denied page."""
-        self.oauth_app.states.add(State.objects.get(name="Guest"))
-        self.grant_oidc_access(self.user1)
-        response = self.authorize_get_default(self.user1, state="wrong-state")
-        self.assertDeniedApp(response, self.user1, self.oauth_app)
-
-    def test_authorize_denies_when_app_group_does_not_match_user(self):
-        """App's required group differs from user's group → 403 denied page."""
-        self.oauth_app.groups.add(self.test_grp_2)
-        self.user1.groups.add(self.test_grp)
-        self.grant_oidc_access(self.user1)
-        response = self.authorize_get_default(self.user1, state="wrong-group")
-        self.assertDeniedApp(response, self.user1, self.oauth_app)
+    # NB: state-mismatch / group-mismatch / neither-match deny scenarios are
+    # parametrised in test_token.TestPolicyMatrix; this file keeps the
+    # consent-page (allow) cases plus anonymous and global-permission gates.
 
     # ---------------------------- multi-alt and state-precedence scenarios
 
@@ -166,15 +155,3 @@ class TestAuthorizeGate(OIDCTestCase):
         self.assertAuthorizePage(
             response, self.oauth_app, ["openid", "profile"]
         )
-
-    def test_authorize_denies_when_neither_state_nor_group_matches(self):
-        """App requires both a state AND a group, user matches neither →
-        denied.
-        """
-        self.oauth_app.groups.add(self.test_grp)
-        self.oauth_app.states.add(State.objects.get(name="Blue"))
-        self.grant_oidc_access(self.user1)
-        response = self.authorize_get_default(
-            self.user1, state="neither-matches"
-        )
-        self.assertDeniedApp(response, self.user1, self.oauth_app)

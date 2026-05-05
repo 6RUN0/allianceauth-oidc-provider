@@ -1,19 +1,25 @@
 """
 Tests for /o/token/ — full code-exchange and refresh flows.
 
-The class covers two related concerns:
+Two related concerns:
 
-1. Successful authorization-code → token → refresh chains under various
-   combinations of state/group access policy and superuser bypass.
-2. Token-policy guards: refusal to exchange or refresh tokens when the
-   user no longer matches the app's policy, on redirect_uri mismatch,
-   on wrong client_secret, and on inactive applications.
+1. Policy matrix (state x group x superuser) parametrized via
+   ``parameterized.expand`` — replaces 6 hand-written
+   ``test_full_chain_*`` methods plus 3 deny variants previously
+   scattered across test_authorize.py.
+2. Token-policy guards: refusal to exchange or refresh tokens when
+   the user no longer matches the app's policy, on redirect_uri
+   mismatch, on wrong client_secret, on inactive applications, and
+   on refresh-token rotation invalidation.
 
 Userinfo claims live in test_userinfo.py; RP-initiated logout in
 test_logout.py; debug-logging leak protection in test_logging.py.
 """
 
+import json
+
 from allianceauth.authentication.models import State
+from parameterized import parameterized
 
 from ._oidc_testcase import (
     DEFAULT_EXPIRES_IN,
@@ -23,94 +29,106 @@ from ._oidc_testcase import (
     OIDCTestCase,
 )
 
+# (name, app_states, app_groups_required, user_groups_match, is_superuser,
+#  expect)
+#
+# - ``app_states``: list of State names the app restricts to. ``[]`` = no
+#   state restriction.
+# - ``app_groups_required``: True → app requires the test group; user1 may
+#   or may not be in that group depending on ``user_groups_match``.
+# - ``user_groups_match``: only meaningful when app_groups_required=True.
+# - ``is_superuser``: bypasses all restrictions.
+# - ``expect``: "allow" runs the full code-flow + token check; "deny" hits
+#   /o/authorize/ and asserts the denial page.
+#
+# user1 has state=Member by default (set up in OIDCTestCase.setUpTestData).
+POLICY_MATRIX = [
+    # No restrictions — every authenticated user gets a token.
+    ("open_app_no_restrictions", [], False, False, False, "allow"),
+    # State-only.
+    ("state_only_match", ["Member"], False, False, False, "allow"),
+    ("state_only_mismatch_denies", ["Blue"], False, False, False, "deny"),
+    # Group-only.
+    ("group_only_match", [], True, True, False, "allow"),
+    ("group_only_mismatch_denies", [], True, False, False, "deny"),
+    # Combined: OR semantics — any single match wins.
+    (
+        "state_match_overrides_no_group",
+        ["Member"],
+        True,
+        False,
+        False,
+        "allow",
+    ),
+    (
+        "group_match_overrides_wrong_state",
+        ["Blue"],
+        True,
+        True,
+        False,
+        "allow",
+    ),
+    ("neither_matches_denies", ["Blue"], True, False, False, "deny"),
+    # Superuser bypasses everything, even neither-match.
+    ("superuser_bypasses_restrictions", ["Blue"], True, False, True, "allow"),
+]
 
-class TestCodeFlowAndTokenPolicy(OIDCTestCase):
+
+class TestPolicyMatrix(OIDCTestCase):
+    """
+    Parametrised access-policy matrix exercised end-to-end.
+
+    `parameterized.expand` synthesises individual test methods named
+    ``test_policy_matrix_<index>_<scenario>`` so failure messages
+    point at the exact row.
+    """
+
+    @parameterized.expand(POLICY_MATRIX)
+    def test_policy_matrix(
+        self,
+        name: str,
+        app_states: list[str],
+        app_groups_required: bool,
+        user_groups_match: bool,
+        is_superuser: bool,
+        expect: str,
+    ) -> None:
+        for state_name in app_states:
+            self.oauth_app.states.add(State.objects.get(name=state_name))
+        if app_groups_required:
+            self.oauth_app.groups.add(self.test_grp)
+            if user_groups_match:
+                self.user1.groups.add(self.test_grp)
+
+        if is_superuser:
+            self.user1.is_superuser = True
+            self.user1.save()
+        self.grant_oidc_access(self.user1)
+
+        if expect == "allow":
+            self.run_code_flow(
+                self.user1,
+                state=f"matrix-{name}",
+                expected_scope=SCOPE_FULL,
+                expected_expires_in=DEFAULT_EXPIRES_IN,
+            )
+        elif expect == "deny":
+            response = self.authorize_get_default(
+                self.user1, state=f"matrix-{name}"
+            )
+            self.assertDeniedApp(response, self.user1, self.oauth_app)
+        else:
+            self.fail(f"unknown expect={expect!r}")
+
+
+class TestTokenPolicyGuards(OIDCTestCase):
+    """Refusal paths on /o/token/ and /o/authorize/ when context shifts."""
+
     def _grant_user1_with_test_grp(self) -> None:
-        """Common setup: grant OIDC perm, add user1 + app to test_grp."""
         self.oauth_app.groups.add(self.test_grp)
         self.grant_oidc_access(self.user1)
         self.user1.groups.add(self.test_grp)
         self.user1.refresh_from_db()
-
-    # -------------------------------------------------------- code-flow happy paths
-
-    def test_full_chain_u1_with_perms_and_state(self):
-        """Authorization-code flow succeeds when user matches app's required
-        state.
-        """
-        self.oauth_app.states.add(State.objects.get(name="Member"))
-        self.grant_oidc_access(self.user1)
-        self.run_code_flow(
-            self.user1,
-            state="full-chain-state",
-            expected_scope=SCOPE_FULL,
-            expected_expires_in=DEFAULT_EXPIRES_IN,
-        )
-
-    def test_full_chain_u1_with_perms_and_wrong_state_and_group(self):
-        """Group match grants access even when app's required state does not
-        match the user's state.
-        """
-        self.oauth_app.states.add(State.objects.get(name="Guest"))
-        self._grant_user1_with_test_grp()
-        self.run_code_flow(
-            self.user1,
-            state="full-chain-wrong-state-right-group",
-            expected_scope=SCOPE_FULL,
-            expected_expires_in=DEFAULT_EXPIRES_IN,
-        )
-
-    def test_full_chain_u1_with_perms_and_group_and_state(self):
-        """Both state and group match — straightforward success."""
-        self.oauth_app.states.add(State.objects.get(name="Member"))
-        self._grant_user1_with_test_grp()
-        self.run_code_flow(
-            self.user1,
-            state="full-chain-state-and-group",
-            expected_scope=SCOPE_FULL,
-            expected_expires_in=DEFAULT_EXPIRES_IN,
-        )
-
-    def test_full_chain_u1_with_perms_and_group(self):
-        """App requires a group but no state — group match grants access."""
-        self._grant_user1_with_test_grp()
-        self.run_code_flow(
-            self.user1,
-            state="full-chain-group-only",
-            expected_scope=SCOPE_FULL,
-            expected_expires_in=DEFAULT_EXPIRES_IN,
-        )
-
-    def test_full_chain_u1_with_perms_and_wrong_group_and_state(self):
-        """State match grants access even when app's required group does not
-        match the user's group.
-        """
-        self.oauth_app.states.add(State.objects.get(name="Member"))
-        self.oauth_app.groups.add(self.test_grp_2)
-        self.user1.groups.add(self.test_grp)
-        self.grant_oidc_access(self.user1)
-        self.run_code_flow(
-            self.user1,
-            state="full-chain-right-state-wrong-group",
-            expected_scope=SCOPE_FULL,
-            expected_expires_in=DEFAULT_EXPIRES_IN,
-        )
-
-    def test_full_chain_u1_with_su(self):
-        """Superusers bypass state/group restrictions entirely."""
-        # State the user does NOT match — superuser still gets through.
-        self.oauth_app.states.add(State.objects.get(name="Blue"))
-        self.user1.is_superuser = True
-        self.user1.save()
-        self.user1.refresh_from_db()
-        self.run_code_flow(
-            self.user1,
-            state="full-chain-su-bypass",
-            expected_scope=SCOPE_FULL,
-            expected_expires_in=DEFAULT_EXPIRES_IN,
-        )
-
-    # -------------------------------------------------------------- token policy
 
     def test_token_exchange_denied_if_group_removed_after_code_issued(self):
         """If the user stops matching policy (group/state) after code issuance,
@@ -164,8 +182,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.assertOAuthError(resp, expected_error="invalid_grant")
 
     def test_token_exchange_denied_if_redirect_uri_mismatch(self):
-        """If redirect_uri used in /o/token/ doesn't match the one used in
-        /o/authorize/, token exchange must fail (typically invalid_grant).
+        """If redirect_uri at /o/token/ doesn't match the one used at
+        /o/authorize/, token exchange must fail.
         """
         self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="redir-mismatch")
@@ -204,18 +222,13 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         )
 
     def test_refresh_token_denied_when_app_becomes_inactive(self):
-        """
-        A refresh_token minted while the app was active must NOT issue a new
-        access_token after the app is flipped to active=False.
-
-        Hardens the gap exposed by AllianceAuthApplication.is_usable(): without
-        this guard, deactivating an app would not stop already issued sessions.
+        """A refresh_token minted while the app was active must NOT issue a new
+        access_token after ``active=False``.
         """
         self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="inactive-after-issue")
         refresh = body["refresh_token"]
 
-        # Flip the app inactive and try to refresh.
         self.oauth_app.active = False
         self.oauth_app.save()
         self.oauth_app.refresh_from_db()
@@ -223,8 +236,6 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         resp = self.refresh_token(
             refresh_token=refresh, expected_status=(400, 401, 403)
         )
-        # DOT or our validator may surface this as invalid_grant or
-        # invalid_client; either is correct, but it must NOT succeed.
         self.assertOAuthError(
             resp,
             expected_error={
@@ -234,13 +245,42 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
             },
         )
 
+    def test_old_refresh_token_invalidated_after_rotation(self):
+        """
+        ``ROTATE_REFRESH_TOKEN=True`` (test settings): once a refresh is
+        consumed and a new one is issued, the old refresh must NOT be reusable.
+
+        Regression for token-rotation contract.
+        """
+        self.grant_oidc_access(self.user1)
+        first = self.run_code_flow(self.user1, state="rotation-1")
+        old_refresh = first["refresh_token"]
+
+        # First rotation: old refresh → fresh access + (rotated) refresh.
+        rotated = self.refresh_token(refresh_token=old_refresh)
+        rotated_body = json.loads(rotated.content.decode("utf-8"))
+        self.assertIn("access_token", rotated_body)
+        new_refresh = rotated_body["refresh_token"]
+        self.assertNotEqual(
+            old_refresh,
+            new_refresh,
+            "ROTATE_REFRESH_TOKEN expected to mint a new refresh value",
+        )
+
+        # Reusing the old refresh after rotation must fail.
+        resp = self.refresh_token(
+            refresh_token=old_refresh,
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp, expected_error={"invalid_grant", "invalid_request"}
+        )
+
     def test_token_response_omits_id_token_when_scope_lacks_openid(self):
         """
-        DOT only emits an `id_token` when the scope contains `openid`.
+        DOT only emits an ``id_token`` when the scope contains ``openid``.
 
-        For
-        OAuth-only flows (scope=`email` or any non-openid set), the token
-        response must skip id_token entirely.
+        OAuth-only flows must skip id_token entirely.
         """
         self.grant_oidc_access(self.user1)
         body = self.run_code_flow(
@@ -250,17 +290,13 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
             expect_id_token=False,
             expected_scope="email",
         )
-        # access_token still present (OAuth-only flow remains valid).
         self.assertIn("access_token", body)
 
     def test_inactive_app_cannot_issue_code(self):
-        """
-        AllianceAuthApplication.active=False must make the app unusable.
-
-        It must not issue a code redirect to redirect_uri.
+        """``AllianceAuthApplication.active=False`` must make the app unusable
+        — no code redirect to redirect_uri.
         """
         self.grant_oidc_access(self.user1)
-
         self.oauth_app.active = False
         self.oauth_app.save()
 
