@@ -120,10 +120,10 @@ def make_user(
     """
     Create a User with optional main character, alts, state, and groups.
 
-    ``state`` adds the *main character* to ``State.member_characters`` for
-    that state name (Member/Blue/Guest), which is how Alliance Auth's
-    state-determination treats individual-character membership. Requires a
-    ``main`` to be set.
+    ``state`` adds the *main character* to ``State.member_characters`` for that
+    state name (Member/Blue/Guest), which is how Alliance Auth's state-
+    determination treats individual-character membership. Requires a ``main``
+    to be set.
 
     ``groups`` is a list of names; missing groups are created on demand.
     """

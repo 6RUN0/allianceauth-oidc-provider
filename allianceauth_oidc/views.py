@@ -77,9 +77,9 @@ class TokenView(OAuthLibMixin, View):
         Emit the ``oidc_token_issued`` signal without leaking failures.
 
         Each step is wrapped in its own narrow ``try`` so a misbehaving
-        component (malformed body, hashed-token storage, broken receiver)
-        never poisons the others. ``send_robust`` is used so a failing
-        SIEM/audit receiver is logged but does not propagate.
+        component (malformed body, hashed-token storage, broken receiver) never
+        poisons the others. ``send_robust`` is used so a failing SIEM/audit
+        receiver is logged but does not propagate.
         """
         payload: dict[str, Any] = {}
         if body:
@@ -242,8 +242,8 @@ class AuthAuthorizationView(AuthorizationView):
         """
         Run the access policy gate on every request, GET or POST.
 
-        Centralising the check here closes the POST-bypass that arises
-        if the gate lives in ``get()``/``post()`` separately.
+        Centralising the check here closes the POST-bypass that arises if the
+        gate lives in ``get()``/``post()`` separately.
         """
         # IMPORTANT: must run for BOTH GET and POST to prevent POST-bypass.
         # Why in dispatch():

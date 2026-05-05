@@ -2,14 +2,14 @@
 Optional test-time monkey-patch that replaces
 ``django_redis.get_redis_connection`` with a fakeredis-backed shim.
 
-Alliance Auth's startup probes Redis via ``info()`` for feature
-detection; without a live server (or this patch) the test process
-fails to boot. ``install_if_enabled()`` is invoked from the test
-settings module so it runs before ``INSTALLED_APPS`` are imported,
-which is earlier than any AppConfig.ready() that talks to Redis.
+Alliance Auth's startup probes Redis via ``info()`` for feature detection;
+without a live server (or this patch) the test process fails to boot.
+``install_if_enabled()`` is invoked from the test settings module so it runs
+before ``INSTALLED_APPS`` are imported, which is earlier than any
+AppConfig.ready() that talks to Redis.
 
-Disable explicitly with ``AA_USE_FAKE_REDIS=0`` to point tests at a
-real Redis instance.
+Disable explicitly with ``AA_USE_FAKE_REDIS=0`` to point tests at a real Redis
+instance.
 """
 
 import os
@@ -34,8 +34,9 @@ def _fake_get_redis_connection(alias="default", write=True, *args, **kwargs):
 
 def install_if_enabled() -> None:
     """
-    Activate the patch unless ``AA_USE_FAKE_REDIS=0``. Idempotent — calling
-    twice keeps the same fake server.
+    Activate the patch unless ``AA_USE_FAKE_REDIS=0``.
+
+    Idempotent — calling twice keeps the same fake server.
 
     The patch is started without a matching ``stop()`` because this runs
     at module-import time of the test settings: there is no enclosing

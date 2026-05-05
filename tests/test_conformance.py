@@ -54,7 +54,8 @@ def _b64url(raw: bytes) -> str:
 
 class TestDiscoveryAndJWKS(OIDCTestCase):
     def test_openid_configuration_advertises_required_endpoints(self):
-        """OIDC discovery document must list the standard endpoints and the
+        """
+        OIDC discovery document must list the standard endpoints and the
         issuer.
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
@@ -92,10 +93,11 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
             self.assertIn(field, first)
 
     def test_id_token_is_signed_and_verifiable_against_jwks(self):
-        """Round-trip: run the authorization-code flow, decode `id_token` with
-        the public key from /o/.well-known/jwks.json, and assert both the
-        critical claims (iss, sub, aud, exp, iat) and the JWT header
-        (alg=RS256, kid present).
+        """
+        Round-trip: run the authorization-code flow, decode `id_token` with the
+        public key from /o/.well-known/jwks.json, and assert both the critical
+        claims (iss, sub, aud, exp, iat) and the JWT header (alg=RS256, kid
+        present).
 
         Catches silent regressions where DOT swaps the algorithm or stops
         publishing it on the JWKS.
@@ -153,8 +155,9 @@ class TestRevokeAndIntrospect(OIDCTestCase):
         )["access_token"]
 
     def test_revoked_access_token_no_longer_authorizes_userinfo(self):
-        """RFC 7009: after /o/revoke_token/, the token must no longer be
-        usable on /o/userinfo/.
+        """
+        RFC 7009: after /o/revoke_token/, the token must no longer be usable
+        on /o/userinfo/.
         """
         token = self._issue_access_token()
         # Sanity — token works first.
@@ -184,8 +187,9 @@ class TestRevokeAndIntrospect(OIDCTestCase):
         self.assertIn(post_revoke.status_code, (401, 403))
 
     def test_revoke_is_idempotent(self):
-        """RFC 7009: revoking an already-revoked or unknown token must
-        still respond 200 (clients can retry safely).
+        """
+        RFC 7009: revoking an already-revoked or unknown token must still
+        respond 200 (clients can retry safely).
         """
         token = self._issue_access_token()
         for _ in range(2):
@@ -200,7 +204,8 @@ class TestRevokeAndIntrospect(OIDCTestCase):
             self.assertEqual(200, resp.status_code)
 
     def test_introspect_reports_active_for_valid_token(self):
-        """RFC 7662: /o/introspect/ must return active=true for a valid
+        """
+        RFC 7662: /o/introspect/ must return active=true for a valid
         access_token, with the matching `sub` and `scope`.
         """
         token = self._issue_access_token(scope="openid profile")
@@ -278,8 +283,9 @@ class TestPKCEFlow(OIDCTestCase):
         return resp.status_code, json.loads(resp.content.decode("utf-8"))
 
     def test_pkce_s256_round_trip(self):
-        """Happy path: with PKCE_REQUIRED=False, a client opting into S256
-        PKCE still gets a working code + verifier exchange.
+        """
+        Happy path: with PKCE_REQUIRED=False, a client opting into S256 PKCE
+        still gets a working code + verifier exchange.
         """
         verifier, challenge = self._make_verifier_and_challenge()
         self.grant_oidc_access(self.user1)
@@ -294,9 +300,11 @@ class TestPKCEFlow(OIDCTestCase):
         self.assertIn("id_token", body)
 
     def test_pkce_with_wrong_verifier_is_rejected(self):
-        """RFC 7636: presenting a verifier that does NOT hash to the
-        previously-supplied challenge must be rejected with
-        invalid_grant. Otherwise PKCE provides no protection.
+        """
+        RFC 7636: presenting a verifier that does NOT hash to the previously-
+        supplied challenge must be rejected with invalid_grant.
+
+        Otherwise PKCE provides no protection.
         """
         _, challenge = self._make_verifier_and_challenge()
         wrong_verifier = _b64url(os.urandom(32))  # unrelated random bytes

@@ -34,9 +34,9 @@ class AllianceAuthApplication(AbstractApplication):
         Return whether the application is usable.
 
         The ``request`` argument is required by django-oauth-toolkit's
-        ``AbstractApplication`` contract (parameter name must match for
-        type-checker override compatibility) but unused — the active flag
-        is a property of the app itself, independent of the incoming
+        ``AbstractApplication`` contract (parameter name must match for type-
+        checker override compatibility) but unused — the active flag is a
+        property of the app itself, independent of the incoming
         ``oauthlib.common.Request``.
         """
         return self.active

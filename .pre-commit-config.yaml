@@ -55,16 +55,13 @@ repos:
       - id: validate-pyproject
         additional_dependencies: ["validate-pyproject-schema-store[all]"]
 
-  - repo: https://github.com/PyCQA/docformatter
-    rev: v1.7.7
-    hooks:
-      - id: docformatter
-        args:
-          - --wrap-summaries=79
-          - --wrap-descriptions=79
-          - --pre-summary-newline
-          - --close-quotes-on-newline
-          - --in-place
+  # docformatter (1.7.x) hard-codes D212-style normalization and conflicts
+  # with our chosen D213 (summary on second line). Docstring shape is now
+  # owned by ruff (`extend-select = ["D213"]` in pyproject.toml).
+  # Wrap/normalize behaviour we lose: line wrapping at 79 cols and
+  # cleanup of stray whitespace inside docstrings — neither is enforced
+  # at commit time anymore; flag-set them via a one-off pass if drift
+  # accumulates.
 
   - repo: https://github.com/adamchainz/django-upgrade
     rev: 1.29.1

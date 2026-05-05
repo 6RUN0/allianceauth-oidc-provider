@@ -1,10 +1,10 @@
 """
 Tests for the ``oidc_token_issued`` Django signal.
 
-The signal is the documented extension point for SIEM/audit forwarding
-— third parties hook receivers without monkey-patching ``TokenView``.
-These tests guard the contract: the signal fires on success with a
-specific payload shape, and does NOT fire on failed token exchanges.
+The signal is the documented extension point for SIEM/audit forwarding — third
+parties hook receivers without monkey-patching ``TokenView``. These tests guard
+the contract: the signal fires on success with a specific payload shape, and
+does NOT fire on failed token exchanges.
 """
 
 from unittest.mock import patch
@@ -32,7 +32,8 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         )
 
     def test_signal_fires_with_token_and_body_on_successful_exchange(self):
-        """Successful authorization-code exchange must fire
+        """
+        Successful authorization-code exchange must fire
         ``oidc_token_issued`` exactly once with a payload that includes the
         persisted ``token`` model and the request ``body`` dict carrying
         ``grant_type``/``scope``.
@@ -65,8 +66,8 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
 
     def test_signal_does_not_fire_on_invalid_grant(self):
         """
-        Failed token exchange (revoked permission between authorize and token)
-        must NOT fire the signal.
+        Failed token exchange (revoked permission between authorize and
+        token) must NOT fire the signal.
 
         Otherwise audit sinks would record successful issuance for tokens that
         were never minted.
@@ -92,7 +93,8 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         )
 
     def test_receiver_failure_does_not_break_token_issuance(self):
-        """A misbehaving audit receiver must NOT propagate its exception:
+        """
+        A misbehaving audit receiver must NOT propagate its exception:
         token issuance succeeds, the failure is logged, other receivers
         still run. Regression for ``send_robust`` semantics in
         ``TokenView._emit_audit``.
@@ -124,8 +126,8 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
 
     def test_audit_skipped_when_access_token_not_in_db(self):
         """
-        In hashed-token storage configurations DOT persists a hashed token but
-        returns the raw value in the response body, so the
+        In hashed-token storage configurations DOT persists a hashed token
+        but returns the raw value in the response body, so the
         ``objects.get(token=...)`` lookup misses.
 
         The audit pipeline must skip silently (debug-level log), not crash and
@@ -201,7 +203,8 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         self.assertIn("byte cap", joined)
 
     def test_signal_payload_contains_no_raw_secrets(self):
-        """The signal exposes the OAuth2 request body to receivers; the payload
+        """
+        The signal exposes the OAuth2 request body to receivers; the payload
         must not contain raw access/refresh/id tokens — those live only on the
         ``token`` model that receivers can query.
         """

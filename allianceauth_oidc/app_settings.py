@@ -2,10 +2,10 @@
 Resolved Django settings for the OIDC provider with safe defaults.
 
 Accessors are functions, not module-level constants — Django's
-``@override_settings`` rebinds ``django.conf.settings`` per test, but
-import-time ``getattr(settings, ...)`` snapshots the value before the
-override runs and never sees changes. Reading via a function call keeps
-the runtime tunable from tests and from operator hot-reloads.
+``@override_settings`` rebinds ``django.conf.settings`` per test, but import-
+time ``getattr(settings, ...)`` snapshots the value before the override runs
+and never sees changes. Reading via a function call keeps the runtime tunable
+from tests and from operator hot-reloads.
 """
 
 from django.conf import settings
@@ -26,7 +26,8 @@ def log_masked_secrets() -> bool:
 
 def log_mask_head() -> int:
     """
-    Number of leading characters of a secret to show when masking is enabled.
+    Number of leading characters of a secret to show when masking is
+    enabled.
 
     Default: 2.
     """
@@ -35,7 +36,8 @@ def log_mask_head() -> int:
 
 def log_mask_tail() -> int:
     """
-    Number of trailing characters of a secret to show when masking is enabled.
+    Number of trailing characters of a secret to show when masking is
+    enabled.
 
     Default: 2.
     """
@@ -71,8 +73,8 @@ def portrait_size() -> int:
     """
     Portrait size (px) substituted into the URL template.
 
-    EVE's image server supports 32/64/128/256/512/1024. Default: 128.
-    Override via ``ALLIANCEAUTH_OIDC_PORTRAIT_SIZE``.
+    EVE's image server supports 32/64/128/256/512/1024. Default: 128. Override
+    via ``ALLIANCEAUTH_OIDC_PORTRAIT_SIZE``.
     """
     return int(
         getattr(

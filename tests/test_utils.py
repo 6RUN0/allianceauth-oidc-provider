@@ -2,9 +2,9 @@
 Unit tests for `allianceauth_oidc.utils` — the secret-masking and debug-meta
 helpers used by the audit/log paths.
 
-These are pure functions; tests don't need the OIDCTestCase fixture
-or a database. Kept in the same `tests/` directory so the suite stays
-discoverable by ``django test tests``.
+These are pure functions; tests don't need the OIDCTestCase fixture or a
+database. Kept in the same `tests/` directory so the suite stays discoverable
+by ``django test tests``.
 """
 
 import logging
@@ -173,7 +173,8 @@ class TestBuildOidcDebugMeta(SimpleTestCase):
         self.assertEqual("<redacted>", meta["id_token"])
 
     def test_returned_dict_never_contains_raw_secret_strings(self):
-        """End-to-end invariant: no raw secret value should appear as a
+        """
+        End-to-end invariant: no raw secret value should appear as a
         substring of any dict value the helper returns.
         """
         secrets = {

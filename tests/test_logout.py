@@ -1,4 +1,5 @@
-"""Tests for /o/logout/ — RP-initiated logout and post_logout_redirect_uri
+"""
+Tests for /o/logout/ — RP-initiated logout and post_logout_redirect_uri
 allowlist enforcement.
 """
 
@@ -25,7 +26,8 @@ class TestRPInitiatedLogout(OIDCTestCase):
         self.addCleanup(oauth2_settings.reload)
 
     def _issue_id_token(self) -> str:
-        """Run the auth-code flow to get an id_token for use as
+        """
+        Run the auth-code flow to get an id_token for use as
         id_token_hint.
         """
         self.grant_oidc_access(self.user1)
@@ -107,7 +109,8 @@ class TestRPInitiatedLogout(OIDCTestCase):
                 )
 
     def test_rp_logout_with_id_token_hint_for_unlisted_redirect_uri(self):
-        """Even with a valid id_token_hint, an unlisted
+        """
+        Even with a valid id_token_hint, an unlisted
         post_logout_redirect_uri must not redirect there — the allowlist is the
         security boundary, not the hint.
         """

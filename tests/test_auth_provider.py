@@ -2,10 +2,9 @@
 Unit tests for ``AllianceAuthOAuth2Validator``'s policy hooks.
 
 These tests stay below the HTTP layer: ``_enforce_policy`` and
-``save_bearer_token`` are exercised against synthetic request objects
-so the AnonymousUser branch can be reached without spinning up the
-client_credentials grant flow (which DOT does not register by
-default in the test settings).
+``save_bearer_token`` are exercised against synthetic request objects so the
+AnonymousUser branch can be reached without spinning up the client_credentials
+grant flow (which DOT does not register by default in the test settings).
 """
 
 from types import SimpleNamespace
@@ -28,14 +27,14 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
 
     def test_anonymous_user_skips_policy_check(self):
         """
-        ``AnonymousUser`` must not be funnelled through the per-app state/group
-        gate.
+        ``AnonymousUser`` must not be funnelled through the per-app
+        state/group gate.
 
         client_credentials and similar end-user-less grants present
         ``AnonymousUser`` (or ``None``) on ``request.user``. Letting
-        ``check_user_state_and_groups`` run on those tokens would deny
-        every machine-to-machine token because anonymous users carry
-        no Django state/groups.
+        ``check_user_state_and_groups`` run on those tokens would deny every
+        machine-to-machine token because anonymous users carry no Django
+        state/groups.
         """
         request = SimpleNamespace(user=AnonymousUser())
         with patch(
@@ -48,7 +47,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         gate.assert_not_called()
 
     def test_none_user_skips_policy_check(self):
-        """``request.user is None`` must not be funnelled either — regression
+        """
+        ``request.user is None`` must not be funnelled either — regression
         for the original guard before the ``is_authenticated`` tightening.
         """
         request = SimpleNamespace(user=None)
@@ -62,7 +62,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         gate.assert_not_called()
 
     def test_authenticated_user_runs_policy_check(self):
-        """Authenticated user with a permissive gate ⇒ the gate runs once and
+        """
+        Authenticated user with a permissive gate ⇒ the gate runs once and
         the policy passes.
         """
         request = SimpleNamespace(user=self.user1)
@@ -76,7 +77,8 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         gate.assert_called_once_with(self.user1, self.client_obj)
 
     def test_authenticated_user_denied_returns_false(self):
-        """``PermissionDenied`` from the gate ⇒ policy returns False (the OAuth
+        """
+        ``PermissionDenied`` from the gate ⇒ policy returns False (the OAuth
         flow then translates this into ``invalid_grant``).
         """
         request = SimpleNamespace(user=self.user1)

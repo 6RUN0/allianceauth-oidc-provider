@@ -1,4 +1,5 @@
-"""Tests for OIDC debug-logging — `app.debug_mode` flag and the contract that
+"""
+Tests for OIDC debug-logging — `app.debug_mode` flag and the contract that
 no raw tokens or secrets are ever written to logs, even when debug logging is
 enabled.
 """
@@ -17,14 +18,14 @@ class TestDebugLogging(OIDCTestCase):
         self, code: str
     ) -> tuple[list[logging.LogRecord], str]:
         """
-        Exchange ``code`` for a token while capturing every record that reaches
-        the views logger.
+        Exchange ``code`` for a token while capturing every record that
+        reaches the views logger.
 
         Returns ``(records, joined_text)``. Uses ``level=NOTSET`` plus an
-        anchor DEBUG record so we can assert *absence* of INFO records;
-        plain ``assertLogs(..., level=INFO)`` would itself fail when no
-        INFO record is emitted (which is precisely what the negative
-        debug_mode test wants to verify).
+        anchor DEBUG record so we can assert *absence* of INFO records; plain
+        ``assertLogs(..., level=INFO)`` would itself fail when no INFO record
+        is emitted (which is precisely what the negative debug_mode test wants
+        to verify).
         """
         with self.assertLogs(VIEWS_LOGGER, level="NOTSET") as cm:
             logging.getLogger(VIEWS_LOGGER).debug("test-anchor")
@@ -44,7 +45,8 @@ class TestDebugLogging(OIDCTestCase):
         ]
 
     def test_debug_logging_does_not_leak_tokens_or_secrets(self):
-        """With app.debug_mode=True, TokenView emits safe metadata only — raw
+        """
+        With app.debug_mode=True, TokenView emits safe metadata only — raw
         tokens/code/secret must never reach the log buffer.
         """
         self.oauth_app.debug_mode = True
@@ -71,11 +73,12 @@ class TestDebugLogging(OIDCTestCase):
         self.assertNotIn(self.oauth_secret, log_text)
 
     def test_debug_logging_emits_no_info_when_debug_mode_is_false(self):
-        """Negative counterpart: with debug_mode=False (the default),
-        TokenView must not emit the OIDC DEBUG INFO line at all.
+        """
+        Negative counterpart: with debug_mode=False (the default), TokenView
+        must not emit the OIDC DEBUG INFO line at all.
 
-        Catches a regression where the per-app gate is accidentally
-        widened into a global one.
+        Catches a regression where the per-app gate is accidentally widened
+        into a global one.
         """
         self.oauth_app.debug_mode = False
         self.oauth_app.save()
@@ -98,8 +101,8 @@ class TestDebugLogging(OIDCTestCase):
         debug_mode is sampled on the token-exchange request, not cached at
         authorize-time.
 
-        Flipping it ``False → True`` between authorize
-        and exchange must surface the INFO line on exchange.
+        Flipping it ``False → True`` between authorize and exchange must
+        surface the INFO line on exchange.
         """
         self.oauth_app.debug_mode = False
         self.oauth_app.save()
@@ -119,9 +122,11 @@ class TestDebugLogging(OIDCTestCase):
         self.assertIn("OIDC DEBUG token issued", log_text)
 
     def test_debug_logging_disappears_when_toggled_off_between_steps(self):
-        """Symmetric negative case: ``True → False`` between authorize and
-        exchange must suppress the INFO line on exchange. Closes the
-        symmetry gap surfaced by the second-pass review.
+        """
+        Symmetric negative case: ``True → False`` between authorize and
+        exchange must suppress the INFO line on exchange.
+
+        Closes the symmetry gap surfaced by the second-pass review.
         """
         self.oauth_app.debug_mode = True
         self.oauth_app.save()

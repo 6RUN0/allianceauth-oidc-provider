@@ -46,13 +46,14 @@ class TestMultiAppIsolation(OIDCTestCase):
         return self.run_code_flow(self.user1, state="multiapp-issue")
 
     def test_refresh_token_with_wrong_client_id_is_rejected(self):
-        """OAuth2 refresh_token grant: DOT verifies the presenting client
-        owns the refresh token. App B's credentials with app A's
-        refresh token must be rejected.
+        """
+        OAuth2 refresh_token grant: DOT verifies the presenting client owns the
+        refresh token. App B's credentials with app A's refresh token must be
+        rejected.
 
         This is the load-bearing isolation contract — without it any
-        confidential client could mint access tokens for any other
-        client's sessions.
+        confidential client could mint access tokens for any other client's
+        sessions.
         """
         body = self._issue_token_for_app1()
 
@@ -72,11 +73,13 @@ class TestMultiAppIsolation(OIDCTestCase):
         )
 
     def test_introspect_does_not_isolate_between_apps(self):
-        """Pinned: DOT lets any authenticated confidential client introspect
-        any token in the same provider. RFC 7662 doesn't mandate
-        per-client isolation; this test documents the choice rather
-        than enforces it. Failure means DOT changed behaviour — review
-        carefully, it could be a hardening or a regression.
+        """
+        Pinned: DOT lets any authenticated confidential client introspect any
+        token in the same provider.
+
+        RFC 7662 doesn't mandate per-client isolation; this test documents the
+        choice rather than enforces it. Failure means DOT changed behaviour —
+        review carefully, it could be a hardening or a regression.
         """
         body = self._issue_token_for_app1()
 
@@ -100,12 +103,13 @@ class TestMultiAppIsolation(OIDCTestCase):
         self.assertEqual(self.user1.username, introspection.get("username"))
 
     def test_revoke_with_other_app_credentials_succeeds_in_dot(self):
-        """Pinned: RFC 7009 §2.1 requires the server to verify the token
-        belongs to the requesting client; DOT does not. Any confidential
-        client can revoke any token in the provider. This test pins the
-        current (insecure) DOT behaviour — if it starts failing,
-        DOT has tightened revoke and we should celebrate then update
-        the assertion.
+        """
+        Pinned: RFC 7009 §2.1 requires the server to verify the token belongs
+        to the requesting client; DOT does not.
+
+        Any confidential client can revoke any token in the provider. This test
+        pins the current (insecure) DOT behaviour — if it starts failing, DOT
+        has tightened revoke and we should celebrate then update the assertion.
         """
         body = self._issue_token_for_app1()
         access_token = body["access_token"]

@@ -54,9 +54,15 @@ extend-exclude = [ ".tox", ".venv", "htmlcov", "dist", "build" ]
 
 [tool.ruff.lint]
 select = [ "E", "F", "I", "B", "UP", "N", "SIM", "C4", "PIE", "RUF", "D" ]
+# D213 (multi-line summary on second line) is the project's chosen
+# docstring shape. It is mutually exclusive with D212 (summary on the
+# first line), which the pep257 convention enables — so we explicitly
+# extend-select D213 and ignore D212.
+extend-select = [ "D213" ]
 ignore = [
     "B008", # function-call-in-default-argument — common in Django (e.g. timezone.now)
     "D205", # docformatter and D205 disagree on blank line after summary
+    "D212", # we use D213 (summary on second line); see extend-select above
     "D401", # imperative mood is subjective for descriptive helpers
 ]
 

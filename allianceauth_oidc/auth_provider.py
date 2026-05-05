@@ -60,7 +60,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         return True
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
-        """Ensure app/user policy is enforced during authorization_code
+        """
+        Ensure app/user policy is enforced during authorization_code
         exchange (before a token is persisted).
         """
         if not super().validate_code(
@@ -80,7 +81,9 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         return self._enforce_policy(request, client)
 
     def save_bearer_token(self, token, request, *args, **kwargs):
-        """Final guard: block persistence if policy fails.
+        """
+        Final guard: block persistence if policy fails.
+
         This prevents "token issued then denied" races/500s.
         """
         try:

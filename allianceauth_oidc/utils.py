@@ -113,8 +113,9 @@ def build_oidc_debug_meta(
     payload: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Build a dict safe for logging in debug_mode. Never returns raw token
-    strings or secrets.
+    Build a dict safe for logging in debug_mode.
+
+    Never returns raw token strings or secrets.
 
     Why we return a curated "meta" instead of logging request/response as-is:
     - the token endpoint can contain access_token/refresh_token/id_token;

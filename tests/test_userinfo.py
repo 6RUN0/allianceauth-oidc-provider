@@ -1,4 +1,5 @@
-"""Tests for /o/userinfo/ — claim emission, scope filtering, and bearer-token
+"""
+Tests for /o/userinfo/ — claim emission, scope filtering, and bearer-token
 requirements.
 """
 
@@ -26,9 +27,9 @@ class TestUserinfoClaims(OIDCTestCase):
         """
         Common code-flow → userinfo helper for scope-filtering tests.
 
-        ``email`` lets the whitespace-regression test pass a non-default
-        value; ``with_test_group=False`` skips the implicit
-        ``test_grp`` membership for tests where it would interfere.
+        ``email`` lets the whitespace-regression test pass a non-default value;
+        ``with_test_group=False`` skips the implicit ``test_grp`` membership
+        for tests where it would interfere.
         """
         self.grant_oidc_access(self.user1)
         self.user1.email = email
@@ -80,7 +81,8 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertEqual("user1@example.com", info["email"])
 
     def test_locale_claim_omitted_when_user_language_is_blank(self):
-        """Regression: `UserProfile.language` is a CharField with default="";
+        """
+        Regression: `UserProfile.language` is a CharField with default="";
         the locale claim must not be emitted as an empty string.
         """
         self.user1.profile.language = ""
@@ -103,7 +105,8 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertIn(resp.status_code, (401, 403))
 
     def test_email_claim_omitted_when_user_email_is_whitespace(self):
-        """Regression: ``User.email = "   "`` is truthy and would have
+        """
+        Regression: ``User.email = "   "`` is truthy and would have
         leaked into the email claim under a naive ``if email:`` check.
         The provider strips whitespace and treats whitespace-only
         emails as absent.
@@ -117,11 +120,11 @@ class TestUserinfoClaims(OIDCTestCase):
 
     def test_name_and_picture_come_from_main_character_not_alts(self):
         """
-        User1's main is char1 (corp1, no alliance) and they have an alt char2
-        also in corp1.
+        User1's main is char1 (corp1, no alliance) and they have an alt
+        char2 also in corp1.
 
-        The `name` claim must come from the *main* character,
-        even when alts exist in different corps.
+        The `name` claim must come from the *main* character, even when alts
+        exist in different corps.
         """
         info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         self.assertEqual(self.char1.character_name, info.get("name"))
@@ -138,8 +141,7 @@ class TestUserinfoClaims(OIDCTestCase):
         Operators can override the portrait URL template and size via Django
         settings (e.g. for a mirrored CDN).
 
-        The `picture` claim
-        must reflect both.
+        The `picture` claim must reflect both.
         """
         info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         expected = f"https://cdn.example.test/portraits/{self.char1.character_id}-512.png"
@@ -215,8 +217,8 @@ class TestUserinfoClaims(OIDCTestCase):
         """
         User4 is set up without a main_character.
 
-        Userinfo must respond 200 and just omit `name`/`picture`, not
-        crash with AttributeError.
+        Userinfo must respond 200 and just omit `name`/`picture`, not crash
+        with AttributeError.
         """
         self.grant_oidc_access(self.user4)
         tokens = self.run_code_flow(self.user4, state="no-main")
@@ -231,8 +233,8 @@ class TestUserinfoClaims(OIDCTestCase):
 
     def test_groups_claim_is_deterministic_across_calls(self):
         """
-        With many groups (enough to defeat any DB-default ordering luck), two
-        consecutive userinfo calls must return identical `groups` arrays.
+        With many groups (enough to defeat any DB-default ordering luck),
+        two consecutive userinfo calls must return identical `groups` arrays.
 
         The contract is: Django groups sorted alphabetically, then the
         state name appended at the end. Adversarial fixture: 50 groups
@@ -267,8 +269,7 @@ class TestUserinfoClaims(OIDCTestCase):
         The groups claim is the union of Django Group names AND the user's
         state name (Member/Blue/Guest).
 
-        user1 has the helper-added
-        ``self.test_grp`` and state Member.
+        user1 has the helper-added ``self.test_grp`` and state Member.
         """
         info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         groups = info.get("groups", [])

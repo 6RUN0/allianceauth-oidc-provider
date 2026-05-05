@@ -24,8 +24,8 @@ from ._oidc_testcase import (
 class TestAuthorizeGate(OIDCTestCase):
     def test_anonymous_post_is_redirected_to_login_with_next(self):
         """
-        Anonymous POST to /o/authorize/ must redirect to the login page with a
-        "next" param.
+        Anonymous POST to /o/authorize/ must redirect to the login page with
+        a "next" param.
 
         Only the path is preserved for POST (body params are not).
         """
@@ -47,11 +47,11 @@ class TestAuthorizeGate(OIDCTestCase):
 
     def test_anonymous_is_redirected_to_login_with_next(self):
         """
-        Anonymous GET to /o/authorize/ must redirect to the login page with a
-        "next" param.
+        Anonymous GET to /o/authorize/ must redirect to the login page with
+        a "next" param.
 
-        Cannot use ``authorize_get_default`` because it
-        calls ``force_login`` first; this test relies on no session.
+        Cannot use ``authorize_get_default`` because it calls ``force_login``
+        first; this test relies on no session.
         """
         resp = self.client.get(
             "/o/authorize/",
@@ -73,7 +73,10 @@ class TestAuthorizeGate(OIDCTestCase):
         self.assertDeniedGlobal(response, self.user1)
 
     def test_post_no_perms_oauth_u1(self):
-        """Regression test: POST /o/authorize/ must NOT bypass access checks."""
+        """
+        Regression test: POST /o/authorize/ must NOT bypass access
+        checks.
+        """
         data = {
             "response_type": "code",
             "client_id": self.oauth_id,
@@ -87,9 +90,9 @@ class TestAuthorizeGate(OIDCTestCase):
 
     def test_global_denial_with_valid_client_id_does_not_leak_app_name(self):
         """
-        Anti-enumeration: when a logged-in user lacks ``access_oidc`` and
-        hits authorize with a *valid* ``client_id``, the global gate runs
-        first and the per-app branch never executes.
+        Anti-enumeration: when a logged-in user lacks ``access_oidc`` and hits
+        authorize with a *valid* ``client_id``, the global gate runs first and
+        the per-app branch never executes.
 
         Without this guarantee the denied page would render the app name
         (admin-controlled string) into the response, which lets a phisher
@@ -173,11 +176,13 @@ class TestAuthorizeGate(OIDCTestCase):
     # ---------------------------- multi-alt and state-precedence scenarios
 
     def test_alt_membership_in_member_state_does_not_grant_user_state(self):
-        """Adversarial multi-alt: user's main has no State affiliation, alt is
-        **explicitly** added to ``Member.member_characters``. If AA naively
-        used "any owned character is Member ⇒ user is Member", this user
-        would gain Member access through the alt. The contract: state is
-        decided by main only.
+        """
+        Adversarial multi-alt: user's main has no State affiliation, alt is
+        **explicitly** added to ``Member.member_characters``.
+
+        If AA naively used "any owned character is Member ⇒ user is Member",
+        this user would gain Member access through the alt. The contract: state
+        is decided by main only.
         """
         main_char = make_character("alice-main", self.corp1)
         alt_char = make_character("alice-alt", self.corp2)
@@ -199,7 +204,8 @@ class TestAuthorizeGate(OIDCTestCase):
     def test_main_character_state_grants_access_independent_of_alt_alliance(
         self,
     ):
-        """Positive counterpart: user1's main has Member state, app requires
+        """
+        Positive counterpart: user1's main has Member state, app requires
         Member → access granted regardless of alts.
         """
         self.oauth_app.states.add(State.objects.get(name="Member"))

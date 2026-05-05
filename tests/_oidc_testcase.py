@@ -40,7 +40,8 @@ class OIDCTestCase(TestCase):
         user.refresh_from_db()
 
     def assertDenied(self, response: Any, user: User) -> None:
-        """Assert that response is the standard denied page for the given
+        """
+        Assert that response is the standard denied page for the given
         user.
         """
         self.assertEqual(403, response.status_code)
@@ -63,7 +64,8 @@ class OIDCTestCase(TestCase):
         )
 
     def assertDeniedApp(self, response: Any, user: User, app: Any) -> None:
-        """Assert that the denial reason is application policy
+        """
+        Assert that the denial reason is application policy
         (state/groups).
         """
         self.assertDenied(response, user)
@@ -80,7 +82,8 @@ class OIDCTestCase(TestCase):
     def assertAuthorizePage(
         self, response: Any, app: Any, scopes: list[str] | None = None
     ) -> None:
-        """Assert that the authorization consent page rendered for the given
+        """
+        Assert that the authorization consent page rendered for the given
         app.
         """
         self.assertEqual(200, response.status_code)
@@ -121,7 +124,8 @@ class OIDCTestCase(TestCase):
     def authorize_post_and_extract_code(
         self, user: User, data: dict, expected_redirect_uri: str | None = None
     ) -> tuple[str, str, dict]:
-        """POST /o/authorize/ (allow=True) -> redirect to redirect_uri with
+        """
+        POST /o/authorize/ (allow=True) -> redirect to redirect_uri with
         code+state.
         """
         resp = self.authorize_post(user, data=data)
@@ -215,8 +219,8 @@ class OIDCTestCase(TestCase):
         Assert that the response body is an OAuth2 error payload.
 
         ``expected_error`` accepts either a single error code or a set of
-        acceptable codes (DOT versions sometimes return invalid_grant
-        where the spec allows invalid_request, etc.).
+        acceptable codes (DOT versions sometimes return invalid_grant where the
+        spec allows invalid_request, etc.).
         """
         body = json.loads(response.content.decode("utf-8"))
         self.assertIsInstance(body, dict)
@@ -238,9 +242,9 @@ class OIDCTestCase(TestCase):
         """
         GET /o/authorize/ with the standard OIDC params.
 
-        ``extra`` overrides individual keys (e.g. nonce, code_challenge,
-        custom client_id). Mirrors ``authorize_to_code`` for tests that
-        only need the consent page or denial response.
+        ``extra`` overrides individual keys (e.g. nonce, code_challenge, custom
+        client_id). Mirrors ``authorize_to_code`` for tests that only need the
+        consent page or denial response.
         """
         params = {
             "response_type": "code",
@@ -266,8 +270,8 @@ class OIDCTestCase(TestCase):
         Issue an authorization code without performing the token exchange.
 
         Use this when a test needs to mutate state (groups, permissions,
-        debug_mode, app.active) between authorize and token endpoints.
-        For end-to-end happy paths, prefer ``run_code_flow``.
+        debug_mode, app.active) between authorize and token endpoints. For end-
+        to-end happy paths, prefer ``run_code_flow``.
         """
         data = {
             "response_type": "code",
@@ -298,16 +302,17 @@ class OIDCTestCase(TestCase):
         expected_expires_in: int | None = None,
     ) -> dict:
         """
-        Run the full authorization-code flow and return the parsed token body.
+        Run the full authorization-code flow and return the parsed token
+        body.
 
-        Combines authorize_post_and_extract_code + exchange_code_for_token
-        into one call. Default scope/state match the most common test
-        setup; pass overrides for edge cases.
+        Combines authorize_post_and_extract_code + exchange_code_for_token into
+        one call. Default scope/state match the most common test setup; pass
+        overrides for edge cases.
 
         Pass ``expect_id_token=False`` for OAuth-only flows (scope without
-        ``openid``); ``assertTokenResponse`` will then assert the id_token
-        is *absent*. ``expected_scope``/``expected_expires_in`` are forwarded
-        to ``assertTokenResponse`` for happy-path checks.
+        ``openid``); ``assertTokenResponse`` will then assert the id_token is
+        *absent*. ``expected_scope``/``expected_expires_in`` are forwarded to
+        ``assertTokenResponse`` for happy-path checks.
         """
         code = self.authorize_to_code(
             user,
@@ -342,8 +347,8 @@ class OIDCTestCase(TestCase):
         Assert that a successful token response contains required fields.
 
         Pass ``expect_id_token=False`` for OAuth-only flows whose scope does
-        not include ``openid`` — DOT correctly omits the id_token in that
-        case, and the default ``True`` would produce a misleading failure.
+        not include ``openid`` — DOT correctly omits the id_token in that case,
+        and the default ``True`` would produce a misleading failure.
         """
         body = json.loads(response.content.decode("utf-8"))
         self.assertIsInstance(body, dict)
@@ -365,16 +370,16 @@ class OIDCTestCase(TestCase):
 
     @classmethod
     def setUpTestData(cls) -> None:
-        """Build the shared fixture: 2 alliances, 4 corps, 10 characters, 4
-        users with varied affiliations, a confidential OIDC app, and two
-        test groups.
+        """
+        Build the shared fixture: 2 alliances, 4 corps, 10 characters, 4 users
+        with varied affiliations, a confidential OIDC app, and two test groups.
 
-        Django wraps `setUpTestData` in a class-level transaction that
-        rolls back between tests, so M2M mutations made by individual
-        tests (oauth_app.states.add, user.groups.add) don't leak —
-        provided the suite stays on TestCase. Switching one of these
-        tests to TransactionTestCase or running under pytest-xdist with
-        a shared DB will break that guarantee.
+        Django wraps `setUpTestData` in a class-level transaction that rolls
+        back between tests, so M2M mutations made by individual tests
+        (oauth_app.states.add, user.groups.add) don't leak — provided the suite
+        stays on TestCase. Switching one of these tests to TransactionTestCase
+        or running under pytest-xdist with a shared DB will break that
+        guarantee.
         """
         # Alliances. Explicit IDs match assertions in legacy tests.
         cls.alli1 = make_alliance(

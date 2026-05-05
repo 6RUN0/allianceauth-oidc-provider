@@ -15,10 +15,10 @@ def clear_expired_tokens() -> None:
     """
     Delete expired access/refresh/id tokens and grants via DOT.
 
-    Wraps ``oauth2_provider.models.clear_expired()`` (which returns
-    nothing) with before/after counts of expired access tokens and a
-    duration measurement, so operators can verify the periodic Celery
-    Beat schedule is actually running.
+    Wraps ``oauth2_provider.models.clear_expired()`` (which returns nothing)
+    with before/after counts of expired access tokens and a duration
+    measurement, so operators can verify the periodic Celery Beat schedule is
+    actually running.
     """
     access_token_model = get_access_token_model()
     now = timezone.now()

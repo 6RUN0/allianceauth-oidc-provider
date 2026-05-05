@@ -49,11 +49,11 @@ def _resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:
     """
     Decide which positional test labels to run.
 
-    Honour any user-supplied label (e.g. ``tests.test_signals``); if none
-    is given, default to running the whole ``tests`` package. Django
-    argparse rejects positional args that follow some option flags, so
-    the caller must pass these labels at the very end of the command —
-    that is what every nox session does.
+    Honour any user-supplied label (e.g. ``tests.test_signals``); if none is
+    given, default to running the whole ``tests`` package. Django argparse
+    rejects positional args that follow some option flags, so the caller must
+    pass these labels at the very end of the command — that is what every nox
+    session does.
     """
     has_label = any(not arg.startswith("-") for arg in posargs)
     return list(posargs) if has_label else ["tests", *posargs]

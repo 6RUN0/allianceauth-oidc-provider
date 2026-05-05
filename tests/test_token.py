@@ -79,8 +79,8 @@ class TestPolicyMatrix(OIDCTestCase):
     Parametrised access-policy matrix exercised end-to-end.
 
     `parameterized.expand` synthesises individual test methods named
-    ``test_policy_matrix_<index>_<scenario>`` so failure messages
-    point at the exact row.
+    ``test_policy_matrix_<index>_<scenario>`` so failure messages point at the
+    exact row.
     """
 
     @parameterized.expand(POLICY_MATRIX)
@@ -131,7 +131,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         self.user1.refresh_from_db()
 
     def test_token_exchange_denied_if_group_removed_after_code_issued(self):
-        """If the user stops matching policy (group/state) after code issuance,
+        """
+        If the user stops matching policy (group/state) after code issuance,
         /o/token/ must fail with invalid_grant.
         """
         self._grant_user1_with_test_grp()
@@ -149,7 +150,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         self.assertOAuthError(resp, expected_error="invalid_grant")
 
     def test_refresh_token_denied_if_group_removed(self):
-        """Refresh token exchange must enforce policy and deny if access was
+        """
+        Refresh token exchange must enforce policy and deny if access was
         removed.
         """
         self._grant_user1_with_test_grp()
@@ -168,7 +170,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         self.assertOAuthError(resp, expected_error="invalid_grant")
 
     def test_refresh_token_denied_if_global_permission_removed(self):
-        """If the user loses the global OIDC permission after receiving a
+        """
+        If the user loses the global OIDC permission after receiving a
         refresh_token, refresh must fail with invalid_grant.
         """
         self.grant_oidc_access(self.user1)
@@ -182,7 +185,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         self.assertOAuthError(resp, expected_error="invalid_grant")
 
     def test_token_exchange_denied_if_redirect_uri_mismatch(self):
-        """If redirect_uri at /o/token/ doesn't match the one used at
+        """
+        If redirect_uri at /o/token/ doesn't match the one used at
         /o/authorize/, token exchange must fail.
         """
         self.grant_oidc_access(self.user1)
@@ -198,7 +202,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         )
 
     def test_token_exchange_denied_if_client_secret_invalid(self):
-        """Confidential clients must not exchange a code with an invalid
+        """
+        Confidential clients must not exchange a code with an invalid
         client_secret.
         """
         self.grant_oidc_access(self.user1)
@@ -222,7 +227,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         )
 
     def test_refresh_token_denied_when_app_becomes_inactive(self):
-        """A refresh_token minted while the app was active must NOT issue a new
+        """
+        A refresh_token minted while the app was active must NOT issue a new
         access_token after ``active=False``.
         """
         self.grant_oidc_access(self.user1)
@@ -293,7 +299,8 @@ class TestTokenPolicyGuards(OIDCTestCase):
         self.assertIn("access_token", body)
 
     def test_inactive_app_cannot_issue_code(self):
-        """``AllianceAuthApplication.active=False`` must make the app unusable
+        """
+        ``AllianceAuthApplication.active=False`` must make the app unusable
         — no code redirect to redirect_uri.
         """
         self.grant_oidc_access(self.user1)
