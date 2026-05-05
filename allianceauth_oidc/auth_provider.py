@@ -1,11 +1,15 @@
 """Custom DOT OAuth2Validator that enforces Alliance Auth access policy."""
 
+import logging
+
 from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
 from . import app_settings
 from .security import check_user_state_and_groups
+
+logger = logging.getLogger(f"extensions.{__name__}")
 
 
 class AllianceAuthOAuth2Validator(OAuth2Validator):
@@ -113,12 +117,23 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         main_character = getattr(profile, "main_character", None)
         # picture (avatar) — template + size are operator-overridable
         # via Django settings (see app_settings.portrait_url_template).
+        # A misconfigured template (missing/extra placeholders, stray `{`)
+        # would otherwise raise inside id-token signing and 500 the token
+        # endpoint; degrade gracefully and skip the claim instead.
         character_id = getattr(main_character, "character_id", None)
         if character_id:
-            out["picture"] = app_settings.portrait_url_template().format(
-                character_id=character_id,
-                size=app_settings.portrait_size(),
-            )
+            template = app_settings.portrait_url_template()
+            try:
+                out["picture"] = template.format(
+                    character_id=character_id,
+                    size=app_settings.portrait_size(),
+                )
+            except (KeyError, IndexError, ValueError) as exc:
+                logger.warning(
+                    "OIDC: invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE "
+                    "(%s); skipping `picture` claim",
+                    exc,
+                )
         # name
         character_name = getattr(main_character, "character_name", None)
         if character_name:

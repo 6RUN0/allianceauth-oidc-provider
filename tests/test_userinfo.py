@@ -145,6 +145,32 @@ class TestUserinfoClaims(OIDCTestCase):
         expected = f"https://cdn.example.test/portraits/{self.char1.character_id}-512.png"
         self.assertEqual(expected, info.get("picture"))
 
+    @override_settings(
+        ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE=(
+            "https://cdn.example.test/portraits/{wrong_placeholder}.png"
+        ),
+    )
+    def test_malformed_portrait_template_skips_picture_without_500(self):
+        """
+        A typo in the operator-supplied portrait URL template (missing the
+        ``{character_id}``/``{size}`` placeholders) used to raise inside
+        id-token signing and 500 the token endpoint.
+
+        Now: degrade gracefully — the userinfo response still succeeds, the
+        ``picture`` claim is simply omitted, and a warning is logged so the
+        operator can spot the misconfiguration.
+        """
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+        ) as cm:
+            info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
+
+        self.assertNotIn("picture", info)
+        # Other profile claims must still be emitted.
+        self.assertEqual(self.char1.character_name, info.get("name"))
+        joined = "\n".join(cm.output)
+        self.assertIn("ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE", joined)
+
     def test_user_without_main_character_omits_name_and_picture(self):
         """
         User4 is set up without a main_character.
