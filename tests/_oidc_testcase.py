@@ -3,20 +3,20 @@ from typing import Any, ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from allianceauth.authentication.models import (
-    CharacterOwnership,
     EveAllianceInfo,
     EveCharacter,
     EveCorporationInfo,
-    State,
 )
-from allianceauth.tests.auth_utils import AuthUtils
 from django.contrib.auth.models import Group, Permission, User
 from django.test import RequestFactory, TestCase
-from oauth2_provider.generators import (
-    generate_client_id,
-    generate_client_secret,
+
+from ._factories import (
+    make_alliance,
+    make_app,
+    make_character,
+    make_corp,
+    make_user,
 )
-from oauth2_provider.models import get_application_model
 
 
 class OIDCTestCase(TestCase):
@@ -230,161 +230,85 @@ class OIDCTestCase(TestCase):
 
         return body
 
-    @staticmethod
-    def create_char(
-        char_id: int, char_name: str, corp: EveCorporationInfo
-    ) -> EveCharacter:
-        """Create a character row with corp/alliance fields denormalized."""
-        return EveCharacter.objects.create(
-            character_id=char_id,
-            character_name=char_name,
-            corporation_id=corp.corporation_id,
-            corporation_name=corp.corporation_name,
-            corporation_ticker=corp.corporation_ticker,
-            alliance_id=getattr(corp.alliance, "alliance_id", None),
-            alliance_name=getattr(corp.alliance, "alliance_name", None),
-            alliance_ticker=getattr(corp.alliance, "alliance_ticker", None),
-        )
-
     @classmethod
     def setUpTestData(cls) -> None:
-        # Alliances / corps / characters / users are shared across tests.
-        cls.alli1 = EveAllianceInfo.objects.create(
+        """
+        Build the shared fixture: 2 alliances, 4 corps, 10 characters, 4
+        users with varied affiliations, a confidential OIDC app, and two
+        test groups.
+
+        Django wraps `setUpTestData` in a class-level transaction that
+        rolls back between tests, so M2M mutations made by individual
+        tests (oauth_app.states.add, user.groups.add) don't leak —
+        provided the suite stays on TestCase. Switching one of these
+        tests to TransactionTestCase or running under pytest-xdist with
+        a shared DB will break that guarantee.
+        """
+        # Alliances. Explicit IDs match assertions in legacy tests.
+        cls.alli1 = make_alliance(
+            "TEST",
             alliance_id=3,
-            alliance_name="alliance.names1",
-            alliance_ticker="TEST",
+            name="alliance.names1",
             executor_corp_id=123,
         )
-        cls.alli2 = EveAllianceInfo.objects.create(
+        cls.alli2 = make_alliance(
+            "TEST4",
             alliance_id=4,
-            alliance_name="alliance.names4",
-            alliance_ticker="TEST4",
+            name="alliance.names4",
             executor_corp_id=3,
         )
         cls.alliances = [cls.alli1, cls.alli2]
 
-        cls.corp1 = EveCorporationInfo.objects.create(
-            corporation_id=123,
-            corporation_name="corporation.name1",
-            corporation_ticker="ABC",
-            ceo_id=1,
-            member_count=1,
+        # Corps: corp1 is intentionally alliance-less (NPC corp case).
+        cls.corp1 = make_corp("ABC", corp_id=123, name="corporation.name1")
+        cls.corp2 = make_corp(
+            "DEF", corp_id=2, name="corporation.name2", alliance=cls.alli1
         )
-        cls.corp2 = EveCorporationInfo.objects.create(
-            corporation_id=2,
-            corporation_name="corporation.name2",
-            corporation_ticker="DEF",
-            ceo_id=2,
-            member_count=1,
-            alliance=cls.alli1,
+        cls.corp3 = make_corp(
+            "GHI", corp_id=3, name="corporation.name3", alliance=cls.alli2
         )
-        cls.corp3 = EveCorporationInfo.objects.create(
-            corporation_id=3,
-            corporation_name="corporation.name3",
-            corporation_ticker="GHI",
-            ceo_id=3,
-            member_count=1,
-            alliance=cls.alli2,
-        )
-        cls.corp4 = EveCorporationInfo.objects.create(
-            corporation_id=4,
-            corporation_name="corporation.name4",
-            corporation_ticker="JKL",
-            ceo_id=4,
-            member_count=1,
-            alliance=cls.alli2,
+        cls.corp4 = make_corp(
+            "JKL", corp_id=4, name="corporation.name4", alliance=cls.alli2
         )
         cls.corps = [cls.corp1, cls.corp2, cls.corp3, cls.corp4]
 
-        cls.char1 = cls.create_char(1, "character.name1", corp=cls.corp1)
-        cls.char2 = cls.create_char(2, "character.name2", corp=cls.corp1)
-        cls.char3 = cls.create_char(3, "character.name3", corp=cls.corp2)
-        cls.char4 = cls.create_char(4, "character.name4", corp=cls.corp2)
-        cls.char5 = cls.create_char(5, "character.name5", corp=cls.corp3)
-        cls.char6 = cls.create_char(6, "character.name6", corp=cls.corp3)
-        cls.char7 = cls.create_char(7, "character.name7", corp=cls.corp4)
-        cls.char8 = cls.create_char(8, "character.name8", corp=cls.corp4)
-        cls.char9 = cls.create_char(9, "character.name9", corp=cls.corp2)
-        cls.char10 = cls.create_char(10, "character.name10", corp=cls.corp2)
+        # Characters: 2 in corp1, 4 in corp2, 2 in corp3, 2 in corp4.
+        cls.char1 = make_character("character.name1", cls.corp1, char_id=1)
+        cls.char2 = make_character("character.name2", cls.corp1, char_id=2)
+        cls.char3 = make_character("character.name3", cls.corp2, char_id=3)
+        cls.char4 = make_character("character.name4", cls.corp2, char_id=4)
+        cls.char5 = make_character("character.name5", cls.corp3, char_id=5)
+        cls.char6 = make_character("character.name6", cls.corp3, char_id=6)
+        cls.char7 = make_character("character.name7", cls.corp4, char_id=7)
+        cls.char8 = make_character("character.name8", cls.corp4, char_id=8)
+        cls.char9 = make_character("character.name9", cls.corp2, char_id=9)
+        cls.char10 = make_character("character.name10", cls.corp2, char_id=10)
         cls.characters = [
-            cls.char1,
-            cls.char2,
-            cls.char3,
-            cls.char4,
-            cls.char5,
-            cls.char6,
-            cls.char7,
-            cls.char8,
-            cls.char9,
-            cls.char10,
-        ]
+            cls.char1, cls.char2, cls.char3, cls.char4, cls.char5,
+            cls.char6, cls.char7, cls.char8, cls.char9, cls.char10,
+        ]  # fmt: skip
 
-        cls.user1 = AuthUtils.create_user("User1")
-        cls.user1.profile.main_character = cls.char1
-        cls.user1.profile.save()
-        CharacterOwnership.objects.bulk_create(
-            [
-                CharacterOwnership(
-                    user=cls.user1, character=cls.char1, owner_hash="abc123"
-                ),
-                CharacterOwnership(
-                    user=cls.user1, character=cls.char2, owner_hash="cba123"
-                ),
-            ]
+        # Users:
+        # - user1 (Member): main char1 in corp1 (no alliance) + alt char2.
+        # - user2 (Blue):   main char3 in corp2/alli1.
+        # - user3 (no state): main char5 in corp3/alli2 + alt char7 in
+        #   corp4/alli2 — cross-corp same-alliance alts.
+        # - user4 (no main, no state): two alts in corp2/alli1; exercises
+        #   the "user without main_character" claim-mapping branch.
+        cls.user1 = make_user(
+            "User1", main=cls.char1, alts=[cls.char2], state="Member"
         )
-        State.objects.get(name="Member").member_characters.add(cls.char1)
-
-        cls.user2 = AuthUtils.create_user("User2")
-        cls.user2.profile.main_character = cls.char3
-        cls.user2.profile.save()
-        CharacterOwnership.objects.create(
-            user=cls.user2, character=cls.char3, owner_hash="cba321"
-        )
-        State.objects.get(name="Blue").member_characters.add(cls.char3)
-
-        cls.user3 = AuthUtils.create_user("User3")
-        cls.user3.profile.main_character = cls.char5
-        cls.user3.profile.save()
-        CharacterOwnership.objects.bulk_create(
-            [
-                CharacterOwnership(
-                    user=cls.user3, character=cls.char5, owner_hash="abc432"
-                ),
-                CharacterOwnership(
-                    user=cls.user3, character=cls.char7, owner_hash="def432"
-                ),
-            ]
-        )
-
-        cls.user4 = AuthUtils.create_user("User4")
-        CharacterOwnership.objects.bulk_create(
-            [
-                CharacterOwnership(
-                    user=cls.user4, character=cls.char9, owner_hash="def432a"
-                ),
-                CharacterOwnership(
-                    user=cls.user4, character=cls.char10, owner_hash="def432b"
-                ),
-            ]
-        )
+        cls.user2 = make_user("User2", main=cls.char3, state="Blue")
+        cls.user3 = make_user("User3", main=cls.char5, alts=[cls.char7])
+        cls.user4 = make_user("User4", alts=[cls.char9, cls.char10])
         cls.users = [cls.user1, cls.user2, cls.user3, cls.user4]
 
         cls.access_oauth = Permission.objects.get_by_natural_key(
             "access_oidc", "allianceauth_oidc", "allianceauthapplication"
         )
 
-        cls.oauth_secret = generate_client_secret()
-        cls.oauth_id = generate_client_id()
-        cls.oauth_app = get_application_model().objects.create(
-            user=cls.user1,
-            client_id=cls.oauth_id,
-            redirect_uris="http://localhost/redir/",
-            client_type="confidential",
-            authorization_grant_type="authorization-code",
-            client_secret=cls.oauth_secret,
-            name=f"TEST APP - {cls.oauth_id}",
-            skip_authorization=False,
-            algorithm="RS256",
+        cls.oauth_app, cls.oauth_id, cls.oauth_secret = make_app(
+            owner=cls.user1
         )
 
         cls.factory = RequestFactory()
