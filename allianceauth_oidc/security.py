@@ -41,12 +41,16 @@ def check_user_global_oidc_access(user: object) -> None:
 
 
 def check_user_state_and_groups(user: object, app: object) -> None:
-    """App gate:
+    """Enforce per-application state/group access for ``user``.
+
+    Rules:
     - If app has no states and no groups: allow.
     - If app has states and/or groups: allow if (state matches)
       OR (any group matches).
     - Superuser bypasses.
-    Also enforces global permission via check_user_global_oidc_access().
+
+    Also enforces the global permission via
+    ``check_user_global_oidc_access``.
     """
     check_user_global_oidc_access(user)
     if is_superuser(user):

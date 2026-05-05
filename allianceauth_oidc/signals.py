@@ -26,9 +26,10 @@ def audit_oidc_token_issued(
     *args: Any,
     **kwargs: Any,
 ) -> None:
-    """Security note:
-    Do NOT log OAuth token responses (access/refresh/id tokens).
-    Only log minimal metadata for auditing.
+    """Default audit receiver — log minimal, secret-free metadata.
+
+    Security note: do NOT log OAuth token responses (access/refresh/id
+    tokens). Only minimal, non-secret metadata is logged here.
 
     Why we never log tokens, even in debug_mode:
     - access_token/refresh_token/id_token are effectively passwords

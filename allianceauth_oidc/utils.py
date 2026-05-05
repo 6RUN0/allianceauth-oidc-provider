@@ -42,8 +42,8 @@ def app_log(
 
 
 def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
-    """Mask a secret value by showing only the first `head`
-    and last `tail` characters.
+    """Mask a secret value, exposing only ``head``/``tail`` characters.
+
     Why masking exists: in debug scenarios you may need to confirm a secret
     is present/non-empty (or changing), but you must never log the full value.
 
