@@ -71,9 +71,10 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         user = getattr(request, "user", None)
         if user is None:
             return out
-        # email
+        # email — Django sets a blank string when no email is registered;
+        # only emit the claim when there's a real value.
         email = getattr(user, "email", None)
-        if email is not None:
+        if email:
             out["email"] = email
         groups = getattr(user, "groups", None)
         profile = getattr(user, "profile", None)
@@ -86,7 +87,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             )
         # name
         character_name = getattr(main_character, "character_name", None)
-        if character_name is not None:
+        if character_name:
             out["name"] = character_name
         # groups + state
         state = getattr(profile, "state", None)
@@ -99,8 +100,10 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             groups_list.append(state_name)
         if groups_list:
             out["groups"] = groups_list
-        # locale
+        # locale — UserProfile.language is a CharField with default="" when
+        # the user hasn't picked a language. The bare `is not None` check
+        # would leak the empty string as a claim.
         locale = getattr(profile, "language", None)
-        if locale is not None:
+        if locale:
             out["locale"] = locale
         return out
