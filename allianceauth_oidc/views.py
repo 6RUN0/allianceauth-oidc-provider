@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, Final
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -69,8 +69,9 @@ class TokenView(OAuthLibMixin, View):
     # Defence-in-depth cap on the body we'll JSON-parse. A correctly
     # behaving DOT response is ~1KB; this leaves three orders of magnitude
     # of headroom while preventing a misconfigured upstream from feeding
-    # an unbounded payload to json.loads.
-    _MAX_BODY_BYTES_FOR_AUDIT_PARSE = 64 * 1024
+    # an unbounded payload to json.loads. Private + ``Final``: not meant
+    # to be overridden in subclasses.
+    _MAX_BODY_BYTES_FOR_AUDIT_PARSE: Final[int] = 64 * 1024
 
     def _emit_audit(self, request: HttpRequest, body: Any) -> None:
         """
