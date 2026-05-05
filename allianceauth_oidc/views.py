@@ -83,7 +83,15 @@ class TokenView(OAuthLibMixin, View):
         """
         payload: dict[str, Any] = {}
         if body:
-            body_len = len(body) if hasattr(body, "__len__") else None
+            # Compare against a byte-count, not a code-point count. A
+            # ``str`` body and a ``bytes`` body would otherwise yield
+            # different cap behaviour for multi-byte characters.
+            if isinstance(body, str):
+                body_len = len(body.encode("utf-8", errors="replace"))
+            elif hasattr(body, "__len__"):
+                body_len = len(body)
+            else:
+                body_len = None
             if (
                 body_len is not None
                 and body_len > self._MAX_BODY_BYTES_FOR_AUDIT_PARSE
@@ -149,7 +157,11 @@ class TokenView(OAuthLibMixin, View):
                 "scope": request.POST.get("scope"),
             },
         ):
-            if isinstance(response_or_exc, Exception):
+            # `send_robust` itself only catches `Exception`, but matching
+            # on `BaseException` here keeps the branch correct for future
+            # subclasses (e.g. 3.11+ `ExceptionGroup`) without relying on
+            # implementation details of Django's signal layer.
+            if isinstance(response_or_exc, BaseException):
                 logger.error(
                     "OIDC audit receiver %r failed",
                     receiver,
