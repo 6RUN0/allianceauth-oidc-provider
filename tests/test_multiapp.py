@@ -1,4 +1,5 @@
-"""Multi-app isolation tests.
+"""
+Multi-app isolation tests.
 
 Documents the actual cross-app behaviour of django-oauth-toolkit so
 upgrades that change it are caught:
@@ -96,9 +97,7 @@ class TestMultiAppIsolation(OIDCTestCase):
             "per-client and the suite needs to assert the new contract.",
         )
         # The leaked metadata: app B sees app A's user, scope, expiry.
-        self.assertEqual(
-            self.user1.username, introspection.get("username")
-        )
+        self.assertEqual(self.user1.username, introspection.get("username"))
 
     def test_revoke_with_other_app_credentials_succeeds_in_dot(self):
         """Pinned: RFC 7009 §2.1 requires the server to verify the token
