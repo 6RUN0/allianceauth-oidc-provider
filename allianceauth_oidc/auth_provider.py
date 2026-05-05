@@ -139,7 +139,12 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                     character_id=character_id,
                     size=app_settings.portrait_size(),
                 )
-            except (KeyError, IndexError, ValueError) as exc:
+            except (KeyError, IndexError, ValueError, TypeError) as exc:
+                # TypeError catches the "template ended up not a str"
+                # case. `app_settings.portrait_url_template()` already
+                # coerces with `str(...)`, but a future config layer
+                # could feed a non-stringable object that raises on
+                # ``.format`` lookup. Belt-and-braces; cheap.
                 logger.warning(
                     "OIDC: invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE (%s); skipping `picture` claim",  # noqa: E501
                     exc,

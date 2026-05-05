@@ -23,14 +23,17 @@ def clear_expired_tokens() -> None:
     actually running.
     """
     access_token_model = get_access_token_model()
+    # Reuse a single `now` snapshot for both before/after counts so the
+    # delta is an honest measure of what `clear_expired()` removed,
+    # not "what expired during the cleanup window plus what it
+    # removed". The task is idempotent and runs on a cron schedule —
+    # any newly-expired rows show up on the next run.
     now = timezone.now()
     expired_before = access_token_model.objects.filter(expires__lt=now).count()
     started = time.monotonic()
     clear_expired()
     duration_ms = (time.monotonic() - started) * 1000
-    expired_after = access_token_model.objects.filter(
-        expires__lt=timezone.now()
-    ).count()
+    expired_after = access_token_model.objects.filter(expires__lt=now).count()
     # The before/after delta is access-token-only by design — DOT's
     # `clear_expired()` also drops grants and refresh tokens, but
     # counting those is best-effort and would mislead operators if the

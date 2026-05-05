@@ -5,6 +5,7 @@ from django.contrib.auth.models import Group
 from django.core.validators import URLValidator
 from django.db import models
 from oauth2_provider.models import AbstractApplication
+from typing_extensions import override
 
 from .constants import PERM_ACCESS_OIDC_CODENAME
 
@@ -31,6 +32,7 @@ class AllianceAuthApplication(AbstractApplication):
         help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",  # noqa: E501
     )
 
+    @override
     def is_usable(self, request):
         """
         Return whether the application is usable.
@@ -39,7 +41,10 @@ class AllianceAuthApplication(AbstractApplication):
         ``AbstractApplication`` contract (parameter name must match for type-
         checker override compatibility) but unused — the active flag is a
         property of the app itself, independent of the incoming
-        ``oauthlib.common.Request``.
+        ``oauthlib.common.Request``. The ``@override`` decorator makes the
+        contract a checker-enforced invariant: if DOT ever renames or
+        removes ``is_usable``, mypy / basedpyright fails the build instead
+        of silently letting ``active=False`` apps issue tokens.
         """
         return self.active
 
