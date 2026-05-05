@@ -4,6 +4,7 @@ from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
+from . import app_settings
 from .security import check_user_state_and_groups
 
 
@@ -95,11 +96,13 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         groups = getattr(user, "groups", None)
         profile = getattr(user, "profile", None)
         main_character = getattr(profile, "main_character", None)
-        # picture (avatar)
+        # picture (avatar) — template + size are operator-overridable
+        # via Django settings (see app_settings.portrait_url_template).
         character_id = getattr(main_character, "character_id", None)
         if character_id:
-            out["picture"] = (
-                f"https://images.evetech.net/characters/{character_id}/portrait?size=128"
+            out["picture"] = app_settings.portrait_url_template().format(
+                character_id=character_id,
+                size=app_settings.portrait_size(),
             )
         # name
         character_name = getattr(main_character, "character_name", None)

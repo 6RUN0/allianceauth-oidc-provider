@@ -5,6 +5,7 @@ requirements.
 import json
 
 from django.contrib.auth.models import Group
+from django.test import override_settings
 
 from ._oidc_testcase import (
     SCOPE_FULL,
@@ -127,6 +128,22 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertIn(str(self.char1.character_id), info.get("picture", ""))
         # Alt's name MUST NOT leak in.
         self.assertNotEqual(self.char2.character_name, info.get("name"))
+
+    @override_settings(
+        ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE="https://cdn.example.test/portraits/{character_id}-{size}.png",
+        ALLIANCEAUTH_OIDC_PORTRAIT_SIZE=512,
+    )
+    def test_picture_claim_honours_portrait_template_overrides(self):
+        """
+        Operators can override the portrait URL template and size via Django
+        settings (e.g. for a mirrored CDN).
+
+        The `picture` claim
+        must reflect both.
+        """
+        info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
+        expected = f"https://cdn.example.test/portraits/{self.char1.character_id}-512.png"
+        self.assertEqual(expected, info.get("picture"))
 
     def test_user_without_main_character_omits_name_and_picture(self):
         """
