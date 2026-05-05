@@ -7,6 +7,10 @@ These tests guard the contract: the signal fires on success with a
 specific payload shape, and does NOT fire on failed token exchanges.
 """
 
+from unittest.mock import patch
+
+from oauth2_provider.models import get_access_token_model
+
 from allianceauth_oidc.signals import oidc_token_issued
 
 from ._oidc_testcase import OIDCTestCase
@@ -85,6 +89,71 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
             [],
             self.captured,
             "signal must not fire when token exchange fails",
+        )
+
+    def test_receiver_failure_does_not_break_token_issuance(self):
+        """A misbehaving audit receiver must NOT propagate its exception:
+        token issuance succeeds, the failure is logged, other receivers
+        still run. Regression for ``send_robust`` semantics in
+        ``TokenView._emit_audit``.
+        """
+        self.grant_oidc_access(self.user1)
+
+        def boom(sender, **kwargs):
+            raise RuntimeError("simulated SIEM forwarder failure")
+
+        oidc_token_issued.connect(boom, dispatch_uid="test-signal-boom")
+        self.addCleanup(
+            oidc_token_issued.disconnect,
+            dispatch_uid="test-signal-boom",
+        )
+
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.views", level="ERROR"
+        ) as cm:
+            body = self.run_code_flow(self.user1, state="receiver-failure")
+
+        # Token issued normally despite the failing receiver.
+        self.assertIn("access_token", body)
+        # The non-failing capture receiver still ran.
+        self.assertEqual(1, len(self.captured))
+        # The failure was logged with the exception message.
+        joined = "\n".join(cm.output)
+        self.assertIn("OIDC audit receiver", joined)
+        self.assertIn("simulated SIEM forwarder failure", joined)
+
+    def test_audit_skipped_when_access_token_not_in_db(self):
+        """
+        In hashed-token storage configurations DOT persists a hashed token but
+        returns the raw value in the response body, so the
+        ``objects.get(token=...)`` lookup misses.
+
+        The audit pipeline must skip silently (debug-level log), not crash and
+        not leak the exception to the OAuth client.
+        """
+        self.grant_oidc_access(self.user1)
+
+        access_token_model = get_access_token_model()
+        with (
+            patch.object(
+                access_token_model.objects,
+                "get",
+                side_effect=access_token_model.DoesNotExist,
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.views", level="DEBUG"
+            ) as cm,
+        ):
+            body = self.run_code_flow(self.user1, state="hashed-storage")
+
+        # Token issued; OAuth client never sees the audit failure.
+        self.assertIn("access_token", body)
+        # Signal NOT dispatched (the capture receiver did not fire).
+        self.assertEqual([], self.captured)
+        # Debug log explains why audit was skipped.
+        self.assertTrue(
+            any("hashed-token storage" in msg for msg in cm.output),
+            f"expected hashed-storage mention in logs, got {cm.output}",
         )
 
     def test_signal_payload_contains_no_raw_secrets(self):

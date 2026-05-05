@@ -56,58 +56,87 @@ class TokenView(OAuthLibMixin, View):
     ) -> HttpResponse:
         """Issue an OAuth2/OIDC token and emit the audit signal on success."""
         _, headers, body, status = self.create_token_response(request)
-        # Access enforcement is handled in the OAuth2 validator
-        # before token persistence.
-        # Here we only emit a safe audit signal (no token strings in logs).
+        # Access enforcement is handled in the OAuth2 validator before
+        # token persistence; here we only emit a safe audit signal.
         if status == 200:
-            try:
-                # Response body can be str/bytes/non-JSON in edge cases.
-                # We parse it only to build safe debug metadata and to obtain
-                # access_token in order to fetch the persisted token model
-                # (app/user/scope) without logging any raw tokens.
-                payload = json.loads(body) if body else {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                access_token = payload.get("access_token")
-                if access_token:
-                    token = get_access_token_model().objects.get(
-                        token=access_token
-                    )
-                    app = getattr(token, "application", None)
-                    if getattr(
-                        app, "debug_mode", False
-                    ) and logger.isEnabledFor(logging.INFO):
-                        # meta is computed ONLY when we really intend to log it
-                        # build_oidc_debug_meta reads sanitized fields
-                        # from request.POST
-                        logger.info(
-                            "OIDC DEBUG token issued app_id=%s client_id=%s user_id=%s meta=%s",  # noqa E501
-                            getattr(app, "id", None),
-                            getattr(app, "client_id", None),
-                            getattr(getattr(token, "user", None), "id", None),
-                            build_oidc_debug_meta(request, payload),
-                        )
-                    oidc_token_issued.send(
-                        sender=self,
-                        request=request,
-                        token=token,
-                        body={
-                            "grant_type": request.POST.get("grant_type"),
-                            "scope": request.POST.get("scope"),
-                        },
-                    )
-            except Exception as exc:
-                # Never break token issuance due to auditing/logging errors.
-                logger.exception(
-                    "Failed to emit OIDC audit signal for token issuance: %s",
-                    exc,
-                )
+            self._emit_audit(request, body)
 
         response = HttpResponse(content=body, status=status)
-
         for k, v in headers.items():
             response[k] = v
         return response
+
+    def _emit_audit(self, request: HttpRequest, body: Any) -> None:
+        """
+        Emit the ``oidc_token_issued`` signal without leaking failures.
+
+        Each step is wrapped in its own narrow ``try`` so a misbehaving
+        component (malformed body, hashed-token storage, broken receiver)
+        never poisons the others. ``send_robust`` is used so a failing
+        SIEM/audit receiver is logged but does not propagate.
+        """
+        payload: dict[str, Any] = {}
+        if body:
+            try:
+                parsed = json.loads(body)
+            except (TypeError, ValueError):
+                logger.exception(
+                    "OIDC audit: token response body is not valid JSON"
+                )
+            else:
+                if isinstance(parsed, dict):
+                    payload = parsed
+
+        access_token = payload.get("access_token")
+        if not access_token:
+            return
+
+        access_token_model = get_access_token_model()
+        try:
+            token = access_token_model.objects.get(token=access_token)
+        except access_token_model.DoesNotExist:
+            # Hashed-token storage configurations don't expose the raw
+            # token in the response body (it's already hashed at rest),
+            # so this lookup misses. Fall back to a debug-level log; the
+            # operator can plug a custom audit hook in deployments that
+            # use such storage.
+            logger.debug(
+                "OIDC audit: access_token not found in DB (hashed-token storage?)"  # noqa: E501
+            )
+            return
+
+        app = getattr(token, "application", None)
+        if getattr(app, "debug_mode", False) and logger.isEnabledFor(
+            logging.INFO
+        ):
+            # build_oidc_debug_meta reads sanitised fields from request.POST
+            # only — it never logs raw tokens or secrets.
+            logger.info(
+                "OIDC DEBUG token issued app_id=%s client_id=%s user_id=%s meta=%s",  # noqa: E501
+                getattr(app, "id", None),
+                getattr(app, "client_id", None),
+                getattr(getattr(token, "user", None), "id", None),
+                build_oidc_debug_meta(request, payload),
+            )
+
+        # send_robust returns [(receiver, response_or_exception), ...]
+        # without propagating; one bad receiver can't break the others
+        # or token issuance.
+        for receiver, response_or_exc in oidc_token_issued.send_robust(
+            sender=self.__class__,
+            request=request,
+            token=token,
+            body={
+                "grant_type": request.POST.get("grant_type"),
+                "scope": request.POST.get("scope"),
+            },
+        ):
+            if isinstance(response_or_exc, Exception):
+                logger.error(
+                    "OIDC audit receiver %r failed",
+                    receiver,
+                    exc_info=response_or_exc,
+                )
 
 
 @method_decorator(login_required, name="dispatch")
