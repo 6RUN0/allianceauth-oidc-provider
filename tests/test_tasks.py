@@ -100,6 +100,35 @@ class TestClearExpiredTokensTask(OIDCTestCase):
             "live AccessToken must NOT be deleted",
         )
 
+    def test_task_logs_cleanup_count_for_operator_visibility(self):
+        """
+        The task emits an INFO log line with the number of removed tokens and
+        the duration.
+
+        Operators rely on this to verify the Celery Beat schedule is actually
+        firing.
+        """
+        AccessToken = get_access_token_model()
+        now = timezone.now()
+        AccessToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            token="orphan-expired-for-log",  # nosec B106
+            expires=now - timedelta(hours=1),
+            scope="openid",
+        )
+
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.tasks", level="INFO"
+        ) as cm:
+            clear_expired_tokens()
+
+        joined = "\n".join(cm.output)
+        self.assertIn("OIDC cleanup", joined)
+        self.assertIn("removed", joined)
+        # Duration is reported in ms.
+        self.assertIn("ms", joined)
+
     def test_task_is_idempotent_on_clean_database(self):
         """Running the task on a database with no expired rows must be a no-op
         — used to be the regression case where overzealous cleanup would remove
