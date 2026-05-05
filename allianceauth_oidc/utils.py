@@ -121,6 +121,15 @@ def build_oidc_debug_meta(
     - this helper must be "safe by construction": it always returns
       sanitized data.
 
+    .. warning::
+       This builds the dict **eagerly** and runs ``redact_secret`` on every
+       secret-shaped field. Always guard the call with
+       ``if logger.isEnabledFor(level)`` AND the per-app
+       ``debug_mode`` flag, or you will pay the construction cost on every
+       request whether or not the log line is actually emitted. The
+       ``%s``-style placeholder in ``logger.log(...)`` does not save you —
+       function arguments are evaluated before ``log()`` decides to suppress.
+
     Args:
         request: The HTTP request object.
         payload: The response payload mapping.
