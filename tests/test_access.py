@@ -2,7 +2,7 @@ from allianceauth.authentication.models import State
 from django.conf import settings
 from django.shortcuts import resolve_url
 
-from . import OIDCTestCase
+from ._oidc_testcase import OIDCTestCase
 
 
 class TestCorptoolsCharAccessPerms(OIDCTestCase):

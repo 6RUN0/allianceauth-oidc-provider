@@ -4,7 +4,7 @@ from django.conf import settings
 from django.test import override_settings
 from oauth2_provider.settings import oauth2_settings
 
-from . import OIDCTestCase
+from ._oidc_testcase import OIDCTestCase
 
 
 def _enable_rp_logout():

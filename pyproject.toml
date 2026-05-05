@@ -68,10 +68,9 @@ ignore = [
 # Test docstrings and assertions are routinely long; custom assertXxx methods
 # follow unittest.TestCase camelCase convention (N802); some test files use
 # hardcoded "secrets" intentionally (covered by `# nosec`/inline noqa).
-"allianceauth_oidc/tests/*" = [ "E501", "N802" ]
+"tests/*" = [ "E501", "N802" ]
 # Django test settings module name has a legacy uppercase suffix (AA4).
-"tests/celery.py" = [ "E501" ]
-"tests/test_settingsAA4.py" = [ "E501", "N999" ]
+"tests/test_settingsAA4.py" = [ "E501", "N802", "N999" ]
 
 [tool.ruff.lint.isort]
 known-first-party = [ "allianceauth_oidc" ]
@@ -85,7 +84,6 @@ no_implicit_optional = true
 # Type-check production code only. Django dynamic attrs (User.profile,
 # setUpTestData ClassVars) need allianceauth-stubs which don't exist.
 exclude = [
-    "allianceauth_oidc/tests/.*",
     "allianceauth_oidc/migrations/.*",
     "tests/.*",
     "build/.*",
@@ -118,7 +116,6 @@ venv = ".venv"
 venvPath = "."
 include = [ "allianceauth_oidc" ]
 exclude = [
-    "allianceauth_oidc/tests",
     "allianceauth_oidc/migrations",
     "tests",
     "**/__pycache__",
@@ -148,4 +145,4 @@ reportUnannotatedClassAttribute = "none"
 # Test files contain intentional anti-patterns (e.g. hardcoded test secrets).
 # They are inline-suppressed with `# nosec` where needed; this just trims the
 # scan to the production code.
-exclude_dirs = [ "tests", "allianceauth_oidc/tests", "allianceauth_oidc/migrations" ]
+exclude_dirs = [ "tests", "allianceauth_oidc/migrations" ]

@@ -13,41 +13,38 @@ Supported runtime: Python 3.10–3.12, Django 4.2, Alliance Auth 4.x, `django-oa
 The project uses `tox` (per-Python-version envs against Django 4.2) plus a Makefile shim. Test data is loaded from Alliance Auth migrations, and Redis is replaced by `fakeredis` so no external services are required.
 
 ```sh
-# install dev environment (uses pip + tox)
-make dev
+# install dev environment (uv-managed venv + pre-commit)
+make dev                              # == uv sync --all-groups && uv run pre-commit install
 
-# full test matrix (py310/py311/py312 × django42), with coverage
-make test                # == tox
+# default sessions: lint + tests
+make test                             # == uv run nox -s tests
+make lint                             # == uv run nox -s lint
+uv run nox                            # both
 
-# single env
-tox -e py312-django42
+# run a single test class / method (forwarded to runtests.py)
+uv run nox -s tests -- tests.test_token_policy.TestTokenPolicy
+uv run nox -s tests -- tests.test_token_policy.TestTokenPolicy.test_userinfo_returns_expected_claims
 
-# run tests directly without tox (must point Django at the test settings)
-DJANGO_SETTINGS_MODULE=tests.test_settingsAA4 AA_USE_FAKE_REDIS=1 \
-  python runtests.py allianceauth_oidc -v 2 --debug-mode
+# type checking and coverage
+make typecheck                        # mypy + basedpyright
+make coverage                         # term + html + xml report
 
-# run a single test class / method
-DJANGO_SETTINGS_MODULE=tests.test_settingsAA4 AA_USE_FAKE_REDIS=1 \
-  python runtests.py allianceauth_oidc.tests.test_token_policy.TestTokenPolicy -v 2
-DJANGO_SETTINGS_MODULE=tests.test_settingsAA4 AA_USE_FAKE_REDIS=1 \
-  python runtests.py allianceauth_oidc.tests.test_token_policy.TestTokenPolicy.test_userinfo_returns_expected_claims -v 2
+# pip-audit is opt-in (manual stage) because Alliance Auth pins old deps
+make audit                            # == uv run nox -s audit
+uv run pre-commit run pip-audit --hook-stage=manual --all-files
 
-# coverage report after a tox run (also produced as coverage.xml / htmlcov/)
-coverage report -m
-
-# pre-commit / linters (configured in .pre-commit-config.yaml + pyproject.toml)
-uv run pre-commit run --all          # runs pyupgrade, isort, black, flake8, mypy, bandit, …
-ruff check                            # quick lint pass (configured outside repo)
-
-# build a wheel / sdist (flit)
+# build a wheel / sdist (flit driven by uv run)
 make package
 ```
 
 `runtests.py` does two notable things: it monkey-patches `django_redis.get_redis_connection` to a `FakeRedis` (so no real Redis is needed), and it shims `redis_version` to `7.4.0` because Alliance Auth checks that on startup. Honor `AA_USE_FAKE_REDIS=0` only if you actually want to talk to a real Redis.
 
-Tests live in two places:
-- `allianceauth_oidc/tests/` — the actual test suite for the package (this is what `tox` discovers).
-- `tests/` — Django settings, URL conf, and Celery shim used to *run* those tests (`DJANGO_SETTINGS_MODULE=tests.test_settingsAA4`). Don't put new test cases there.
+All tests live in `tests/` at the repo root, deliberately outside the `allianceauth_oidc/` package so `flit build` does not ship them in the wheel/sdist:
+- `tests/test_*.py` — actual test cases (Django `unittest.TestCase`-based).
+- `tests/_oidc_testcase.py` — shared `OIDCTestCase` with fixtures, helpers, and assertion shortcuts. Re-exported from `tests/__init__.py` so tests use `from . import OIDCTestCase`.
+- `tests/test_settingsAA4.py` — Django settings module (`DJANGO_SETTINGS_MODULE=tests.test_settingsAA4`).
+- `tests/urls.py`, `tests/views.py`, `tests/celery.py` — minimal Django app wiring for the test environment.
+- `tests/oidc-test.key` — RSA key used by the OIDC config in test settings.
 
 ## Architecture
 

@@ -48,7 +48,7 @@ def tests(session: nox.Session) -> None:
     session.run(
         "python",
         "runtests.py",
-        "allianceauth_oidc",
+        "tests",
         "-v",
         "2",
         "--debug-mode",
@@ -64,7 +64,7 @@ def coverage(session: nox.Session) -> None:
         "coverage",
         "run",
         "runtests.py",
-        "allianceauth_oidc",
+        "tests",
         "-v",
         "2",
         "--debug-mode",
