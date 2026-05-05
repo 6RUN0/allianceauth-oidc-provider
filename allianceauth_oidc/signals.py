@@ -53,11 +53,16 @@ def audit_oidc_token_issued(
             getattr(token, "scope", None),
             meta,
         )
-    except Exception:
-        # Never fail the auth flow because of logging. Include the
-        # token's type and any non-secret identifiers we managed to
-        # extract before the failure — operators grep these to figure
-        # out which receiver/path is broken.
+    except (AttributeError, TypeError, ValueError, KeyError):
+        # Narrow except: the only failure modes inside the body above
+        # are partially-mocked tokens (AttributeError), bad meta types
+        # (TypeError), bad string formatting (ValueError), or
+        # body.get(...) misuse (KeyError). Keep MemoryError /
+        # RecursionError / KeyboardInterrupt propagating so genuine
+        # bugs surface in tests instead of getting silently logged.
+        # Include the token's type and any non-secret identifiers
+        # extracted before the failure — operators grep these to
+        # figure out which receiver/path is broken.
         logger.exception(
             "Failed to audit OIDC token issuance "
             "(token_type=%s, application_id=%s, user_id=%s)",
