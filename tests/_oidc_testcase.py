@@ -10,6 +10,8 @@ from allianceauth.authentication.models import (
 from django.contrib.auth.models import Group, Permission, User
 from django.test import RequestFactory, TestCase
 
+from allianceauth_oidc.constants import PERM_ACCESS_OIDC_CODENAME
+
 from ._factories import (
     make_alliance,
     make_app,
@@ -441,7 +443,9 @@ class OIDCTestCase(TestCase):
         cls.users = [cls.user1, cls.user2, cls.user3, cls.user4]
 
         cls.access_oauth = Permission.objects.get_by_natural_key(
-            "access_oidc", "allianceauth_oidc", "allianceauthapplication"
+            PERM_ACCESS_OIDC_CODENAME,
+            "allianceauth_oidc",
+            "allianceauthapplication",
         )
 
         cls.oauth_app, cls.oauth_id, cls.oauth_secret = make_app(

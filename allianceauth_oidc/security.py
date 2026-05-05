@@ -4,6 +4,7 @@ import logging
 
 from django.core.exceptions import PermissionDenied
 
+from .constants import PERM_ACCESS_OIDC
 from .utils import app_log
 
 # This module intentionally uses getattr/callable checks:
@@ -33,11 +34,9 @@ def check_user_global_oidc_access(user: object) -> None:
     # object as an invalid user and deny access.
     if not callable(has_perm):
         raise PermissionDenied("Invalid user object (no has_perm)")
-    if not has_perm("allianceauth_oidc.access_oidc"):
+    if not has_perm(PERM_ACCESS_OIDC):
         logger.warning("OIDC DENIED: missing global permission user=%s", user)
-        raise PermissionDenied(
-            "Missing allianceauth_oidc.access_oidc permission"
-        )
+        raise PermissionDenied(f"Missing {PERM_ACCESS_OIDC} permission")
 
 
 def check_user_state_and_groups(user: object, app: object) -> None:

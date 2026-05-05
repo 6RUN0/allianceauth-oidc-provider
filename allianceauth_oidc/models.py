@@ -6,6 +6,8 @@ from django.core.validators import URLValidator
 from django.db import models
 from oauth2_provider.models import AbstractApplication
 
+from .constants import PERM_ACCESS_OIDC_CODENAME
+
 
 class AllianceAuthApplication(AbstractApplication):
     """OAuth2 Application restricted by Alliance Auth states and groups."""
@@ -43,5 +45,8 @@ class AllianceAuthApplication(AbstractApplication):
 
     class Meta:
         permissions = [
-            ("access_oidc", "Can Authenticate External Apps with OIDC")
+            (
+                PERM_ACCESS_OIDC_CODENAME,
+                "Can Authenticate External Apps with OIDC",
+            )
         ]
