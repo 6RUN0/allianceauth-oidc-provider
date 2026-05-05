@@ -53,8 +53,17 @@ def audit_oidc_token_issued(
             meta,
         )
     except Exception:
-        # Never fail the auth flow because of logging.
-        logger.exception("Failed to audit OIDC token issuance")
+        # Never fail the auth flow because of logging. Include the
+        # token's type and any non-secret identifiers we managed to
+        # extract before the failure — operators grep these to figure
+        # out which receiver/path is broken.
+        logger.exception(
+            "Failed to audit OIDC token issuance "
+            "(token_type=%s, application_id=%s, user_id=%s)",
+            type(token).__name__,
+            getattr(getattr(token, "application", None), "id", None),
+            getattr(getattr(token, "user", None), "id", None),
+        )
 
 
 oidc_token_issued.connect(
