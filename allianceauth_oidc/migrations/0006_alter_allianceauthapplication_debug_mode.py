@@ -4,15 +4,20 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('allianceauth_oidc', '0005_alter_allianceauthapplication_authorization_grant_type'),
+        (
+            "allianceauth_oidc",
+            "0005_alter_allianceauthapplication_authorization_grant_type",
+        ),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='allianceauthapplication',
-            name='debug_mode',
-            field=models.BooleanField(default=False, help_text='Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.'),
+            model_name="allianceauthapplication",
+            name="debug_mode",
+            field=models.BooleanField(
+                default=False,
+                help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",
+            ),
         ),
     ]
