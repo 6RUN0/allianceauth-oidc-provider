@@ -18,15 +18,16 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     oidc_claim_scope = OAuth2Validator.oidc_claim_scope.copy()
     oidc_claim_scope.update({"groups": "profile"})
 
-    def validate_code(self, client_id, code, client, request, *args, **kwargs):
-        """Ensure app/user policy is enforced during authorization_code
-        exchange (before a token is persisted).
+    @staticmethod
+    def _enforce_policy(request, client) -> bool:
         """
-        ok = super().validate_code(
-            client_id, code, client, request, *args, **kwargs
-        )
-        if not ok:
-            return False
+        Run the per-app state/groups gate against ``request.user``.
+
+        Returns True if the policy allows the operation, False otherwise. Used
+        as a post-validation hook by validate_code and validate_refresh_token
+        so the same gate runs on every token-issuing path; missing it on either
+        side leaves a hole.
+        """
         try:
             user = getattr(request, "user", None)
             if user is not None and client is not None:
@@ -35,22 +36,25 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             return False
         return True
 
+    def validate_code(self, client_id, code, client, request, *args, **kwargs):
+        """Ensure app/user policy is enforced during authorization_code
+        exchange (before a token is persisted).
+        """
+        if not super().validate_code(
+            client_id, code, client, request, *args, **kwargs
+        ):
+            return False
+        return self._enforce_policy(request, client)
+
     def validate_refresh_token(
         self, refresh_token, client, request, *args, **kwargs
     ):
         """Ensure app/user policy is enforced during refresh_token flow."""
-        ok = super().validate_refresh_token(
+        if not super().validate_refresh_token(
             refresh_token, client, request, *args, **kwargs
-        )
-        if not ok:
+        ):
             return False
-        try:
-            user = getattr(request, "user", None)
-            if user is not None and client is not None:
-                check_user_state_and_groups(user, client)
-        except PermissionDenied:
-            return False
-        return True
+        return self._enforce_policy(request, client)
 
     def save_bearer_token(self, token, request, *args, **kwargs):
         """Final guard: block persistence if policy fails.
