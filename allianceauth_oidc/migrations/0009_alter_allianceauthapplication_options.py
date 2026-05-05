@@ -4,14 +4,20 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('allianceauth_oidc', '0008_alter_allianceauthapplication_logo_url'),
+        ("allianceauth_oidc", "0008_alter_allianceauthapplication_logo_url"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='allianceauthapplication',
-            options={'ordering': ('name',), 'permissions': [('access_oidc', 'Can Authenticate External Apps with OIDC')], 'verbose_name': 'Alliance Auth OIDC application', 'verbose_name_plural': 'Alliance Auth OIDC applications'},
+            name="allianceauthapplication",
+            options={
+                "ordering": ("name",),
+                "permissions": [
+                    ("access_oidc", "Can Authenticate External Apps with OIDC")
+                ],
+                "verbose_name": "Alliance Auth OIDC application",
+                "verbose_name_plural": "Alliance Auth OIDC applications",
+            },
         ),
     ]
