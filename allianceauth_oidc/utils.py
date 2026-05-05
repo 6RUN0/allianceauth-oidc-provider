@@ -6,6 +6,13 @@ from typing import Any
 
 from . import app_settings
 
+__all__ = [
+    "app_log",
+    "build_oidc_debug_meta",
+    "mask_secret",
+    "redact_secret",
+]
+
 
 def app_log(
     logger: logging.Logger,
