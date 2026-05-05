@@ -18,6 +18,13 @@ from ._factories import (
     make_user,
 )
 
+# Default test fixtures — keep aligned with make_app() / make_user().
+REDIRECT_URI = "http://localhost/redir/"
+SCOPE_OPENID = "openid"
+SCOPE_PROFILE = "openid profile"
+SCOPE_FULL = "openid profile email"
+DEFAULT_EXPIRES_IN = 60
+
 
 class OIDCTestCase(TestCase):
     """Shared test helpers and test data for OIDC provider tests."""
@@ -199,21 +206,57 @@ class OIDCTestCase(TestCase):
         self,
         response: Any,
         *,
-        expected_error: str,
+        expected_error: str | set[str],
     ) -> Any:
-        """Assert that the response body is an OAuth2 error payload."""
+        """
+        Assert that the response body is an OAuth2 error payload.
+
+        ``expected_error`` accepts either a single error code or a set of
+        acceptable codes (DOT versions sometimes return invalid_grant
+        where the spec allows invalid_request, etc.).
+        """
         body = json.loads(response.content.decode("utf-8"))
         self.assertIsInstance(body, dict)
-        self.assertEqual(expected_error, body.get("error"))
+        if isinstance(expected_error, set):
+            self.assertIn(body.get("error"), expected_error)
+        else:
+            self.assertEqual(expected_error, body.get("error"))
         return body
+
+    def authorize_get_default(
+        self,
+        user: User,
+        *,
+        scope: str = SCOPE_FULL,
+        state: str = "test",
+        redirect_uri: str = REDIRECT_URI,
+        extra: dict | None = None,
+    ) -> Any:
+        """
+        GET /o/authorize/ with the standard OIDC params.
+
+        ``extra`` overrides individual keys (e.g. nonce, code_challenge,
+        custom client_id). Mirrors ``authorize_to_code`` for tests that
+        only need the consent page or denial response.
+        """
+        params = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "state": state,
+        }
+        if extra:
+            params.update(extra)
+        return self.authorize_get(user, params=params)
 
     def authorize_to_code(
         self,
         user: User,
         *,
-        scope: str = "openid profile email",
+        scope: str = SCOPE_FULL,
         state: str = "test",
-        redirect_uri: str = "http://localhost/redir/",
+        redirect_uri: str = REDIRECT_URI,
         extra_authorize_params: dict | None = None,
     ) -> str:
         """
@@ -242,9 +285,9 @@ class OIDCTestCase(TestCase):
         self,
         user: User,
         *,
-        scope: str = "openid profile email",
+        scope: str = SCOPE_FULL,
         state: str = "test",
-        redirect_uri: str = "http://localhost/redir/",
+        redirect_uri: str = REDIRECT_URI,
         extra_authorize_params: dict | None = None,
         expect_status: int | tuple[int, ...] = 200,
         expect_id_token: bool = True,
@@ -403,12 +446,10 @@ class OIDCTestCase(TestCase):
         cls.test_grp_2 = Group.objects.create(name="TestGroup2")
 
     def setUp(self) -> None:
+        # refresh_from_db() resets _prefetched_objects_cache for us, plus
+        # the per-instance permissions cache that survives the test
+        # transaction otherwise.
         for u in self.users:
             u.refresh_from_db()
-            if hasattr(u, "_prefetched_objects_cache"):
-                u._prefetched_objects_cache = {}
         self.oauth_app.refresh_from_db()
-        if hasattr(self.oauth_app, "_prefetched_objects_cache"):
-            self.oauth_app._prefetched_objects_cache = {}
-
         self.client.logout()

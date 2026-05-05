@@ -4,16 +4,36 @@ requirements.
 
 import json
 
-from ._oidc_testcase import OIDCTestCase
+from django.contrib.auth.models import Group
+
+from ._oidc_testcase import (
+    SCOPE_FULL,
+    SCOPE_OPENID,
+    SCOPE_PROFILE,
+    OIDCTestCase,
+)
 
 
 class TestUserinfoClaims(OIDCTestCase):
-    def _userinfo_for_user1_with_scope(self, scope: str) -> dict:
-        """Common code-flow → userinfo helper for scope-filtering tests."""
+    def _userinfo_for_user1_with_scope(
+        self,
+        scope: str,
+        *,
+        email: str = "user1@example.com",
+        with_test_group: bool = True,
+    ) -> dict:
+        """
+        Common code-flow → userinfo helper for scope-filtering tests.
+
+        ``email`` lets the whitespace-regression test pass a non-default
+        value; ``with_test_group=False`` skips the implicit
+        ``test_grp`` membership for tests where it would interfere.
+        """
         self.grant_oidc_access(self.user1)
-        self.user1.email = "user1@example.com"
+        self.user1.email = email
         self.user1.save()
-        self.user1.groups.add(self.test_grp)
+        if with_test_group:
+            self.user1.groups.add(self.test_grp)
         self.user1.refresh_from_db()
         tokens = self.run_code_flow(
             self.user1,
@@ -34,7 +54,7 @@ class TestUserinfoClaims(OIDCTestCase):
 
         name, picture, groups (+ email if set).
         """
-        info = self._userinfo_for_user1_with_scope("openid profile email")
+        info = self._userinfo_for_user1_with_scope(SCOPE_FULL)
 
         self.assertEqual(self.char1.character_name, info.get("name"))
         self.assertIn(str(self.char1.character_id), info.get("picture", ""))
@@ -53,12 +73,12 @@ class TestUserinfoClaims(OIDCTestCase):
         oidc_claim_scope; if a future claim is added to get_additional_claims
         without a matching oidc_claim_scope entry, this catches it.
         """
-        info = self._userinfo_for_user1_with_scope("openid")
+        info = self._userinfo_for_user1_with_scope(SCOPE_OPENID)
         self.assertEqual({"sub"}, set(info.keys()))
 
     def test_userinfo_scope_openid_email_returns_only_sub_and_email(self):
         """Scope=`openid email` MUST NOT leak profile claims."""
-        info = self._userinfo_for_user1_with_scope("openid email")
+        info = self._userinfo_for_user1_with_scope(f"{SCOPE_OPENID} email")
         self.assertEqual({"sub", "email"}, set(info.keys()))
         self.assertEqual("user1@example.com", info["email"])
 
@@ -70,7 +90,7 @@ class TestUserinfoClaims(OIDCTestCase):
         self.user1.profile.language = ""
         self.user1.profile.save()
         self.user1.refresh_from_db()
-        info = self._userinfo_for_user1_with_scope("openid profile email")
+        info = self._userinfo_for_user1_with_scope(SCOPE_FULL)
         self.assertNotIn("locale", info)
 
     def test_locale_claim_present_when_user_language_is_set(self):
@@ -78,7 +98,7 @@ class TestUserinfoClaims(OIDCTestCase):
         self.user1.profile.language = "ru"
         self.user1.profile.save()
         self.user1.refresh_from_db()
-        info = self._userinfo_for_user1_with_scope("openid profile email")
+        info = self._userinfo_for_user1_with_scope(SCOPE_FULL)
         self.assertEqual("ru", info.get("locale"))
 
     def test_userinfo_requires_bearer_token(self):
@@ -93,23 +113,9 @@ class TestUserinfoClaims(OIDCTestCase):
         The provider strips whitespace and treats whitespace-only
         emails as absent.
         """
-        # Need to bypass the helper's `user1.email = "user1@example.com"`
-        # so we can test the whitespace case directly.
-        self.grant_oidc_access(self.user1)
-        self.user1.email = "   "
-        self.user1.save()
-        self.user1.refresh_from_db()
-
-        tokens = self.run_code_flow(
-            self.user1,
-            scope="openid email",
-            state="whitespace-email",
+        info = self._userinfo_for_user1_with_scope(
+            f"{SCOPE_OPENID} email", email="   "
         )
-        resp = self.client.get(
-            "/o/userinfo/",
-            headers={"authorization": f"Bearer {tokens['access_token']}"},
-        )
-        info = json.loads(resp.content.decode("utf-8"))
         self.assertNotIn("email", info)
 
     # -------------------------------------------------- multi-alt / edge cases
@@ -122,7 +128,7 @@ class TestUserinfoClaims(OIDCTestCase):
         The `name` claim must come from the *main* character,
         even when alts exist in different corps.
         """
-        info = self._userinfo_for_user1_with_scope("openid profile")
+        info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         self.assertEqual(self.char1.character_name, info.get("name"))
         self.assertIn(str(self.char1.character_id), info.get("picture", ""))
         # Alt's name MUST NOT leak in.
@@ -156,8 +162,6 @@ class TestUserinfoClaims(OIDCTestCase):
         whose insertion order != alphabetical order, so a missing
         sort() would surface as B-tree leakage between calls.
         """
-        from django.contrib.auth.models import Group
-
         # Mix prefixes so insertion order != alphabetical order.
         names = (
             [f"z-grp-{i:02d}" for i in range(15)]
@@ -169,8 +173,8 @@ class TestUserinfoClaims(OIDCTestCase):
             self.user1.groups.add(g)
         self.user1.refresh_from_db()
 
-        info1 = self._userinfo_for_user1_with_scope("openid profile")
-        info2 = self._userinfo_for_user1_with_scope("openid profile")
+        info1 = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
+        info2 = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         self.assertEqual(info1.get("groups"), info2.get("groups"))
 
         # Stronger structural assertion: Django groups portion (everything
@@ -189,7 +193,7 @@ class TestUserinfoClaims(OIDCTestCase):
         user1 has the helper-added
         ``self.test_grp`` and state Member.
         """
-        info = self._userinfo_for_user1_with_scope("openid profile")
+        info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         groups = info.get("groups", [])
         self.assertIn(self.test_grp.name, groups)
         self.assertIn("Member", groups)

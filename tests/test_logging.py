@@ -5,7 +5,9 @@ enabled.
 
 import logging
 
-from ._oidc_testcase import OIDCTestCase
+from oauth2_provider.models import get_access_token_model
+
+from ._oidc_testcase import SCOPE_OPENID, OIDCTestCase
 
 VIEWS_LOGGER = "extensions.allianceauth_oidc.views"
 
@@ -61,10 +63,8 @@ class TestDebugLogging(OIDCTestCase):
         )
         self.assertIn("OIDC DEBUG token issued", log_text)
 
-        # Need to look up the AccessToken row for its tokens — we don't
-        # have the token response handy here, fetch via the bearer.
-        from oauth2_provider.models import get_access_token_model
-
+        # The exchange does not return tokens here (we only capture logs);
+        # pull the persisted row by user to verify nothing leaked.
         token = get_access_token_model().objects.get(user=self.user1)
         self.assertNotIn(token.token, log_text)
         self.assertNotIn(code, log_text)
@@ -107,7 +107,7 @@ class TestDebugLogging(OIDCTestCase):
         self.oauth_app.refresh_from_db()
         self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
-            self.user1, scope="openid", state="toggle-on"
+            self.user1, scope=SCOPE_OPENID, state="toggle-on"
         )
 
         # Flip True before exchange.
@@ -130,7 +130,7 @@ class TestDebugLogging(OIDCTestCase):
         self.oauth_app.refresh_from_db()
         self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
-            self.user1, scope="openid", state="toggle-off"
+            self.user1, scope=SCOPE_OPENID, state="toggle-off"
         )
 
         self.oauth_app.debug_mode = False

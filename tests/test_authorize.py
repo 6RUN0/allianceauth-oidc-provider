@@ -11,7 +11,14 @@ from allianceauth.authentication.models import State
 from django.conf import settings
 from django.shortcuts import resolve_url
 
-from ._oidc_testcase import OIDCTestCase
+from ._factories import make_character, make_user
+from ._oidc_testcase import (
+    REDIRECT_URI,
+    SCOPE_FULL,
+    SCOPE_OPENID,
+    SCOPE_PROFILE,
+    OIDCTestCase,
+)
 
 
 class TestAuthorizeGate(OIDCTestCase):
@@ -25,8 +32,8 @@ class TestAuthorizeGate(OIDCTestCase):
         data = {
             "response_type": "code",
             "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid",
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
             "state": "abc",
             "allow": True,
         }
@@ -36,29 +43,30 @@ class TestAuthorizeGate(OIDCTestCase):
 
         self.assertEqual(resolve_url(settings.LOGIN_URL), path)
         self.assertIn("next", qs)
-
-        actual_next = qs["next"][0]
-        self.assertEqual("/o/authorize/", actual_next)
+        self.assertEqual("/o/authorize/", qs["next"][0])
 
     def test_anonymous_is_redirected_to_login_with_next(self):
-        """Anonymous GET to /o/authorize/ must redirect to the login page with
-        a "next" param.
         """
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid",
-            "state": "abc",
-        }
+        Anonymous GET to /o/authorize/ must redirect to the login page with a
+        "next" param.
 
-        resp = self.client.get("/o/authorize/", data=params)
+        Cannot use ``authorize_get_default`` because it
+        calls ``force_login`` first; this test relies on no session.
+        """
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "abc",
+            },
+        )
         _, path, qs = self.parse_redirect(resp, (302,))
         self.assertEqual(resolve_url(settings.LOGIN_URL), path)
         self.assertIn("next", qs)
-        expected_next = resp.wsgi_request.get_full_path()
-        actual_next = qs["next"][0]
-        self.assertEqual(expected_next, actual_next)
+        self.assertEqual(resp.wsgi_request.get_full_path(), qs["next"][0])
 
     def test_no_perms_oauth_u1(self):
         response = self.authorize_get(self.user1)
@@ -69,8 +77,8 @@ class TestAuthorizeGate(OIDCTestCase):
         data = {
             "response_type": "code",
             "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_FULL,
             "state": "post-bypass-test",
             "allow": True,
         }
@@ -80,14 +88,7 @@ class TestAuthorizeGate(OIDCTestCase):
     def test_with_perms_oauth_u1_all_scopes(self):
         """Check that all requested scopes are shown when user has access."""
         self.grant_oidc_access(self.user1)
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "asdfghhjkl",
-        }
-        response = self.authorize_get(self.user1, params=params)
+        response = self.authorize_get_default(self.user1, state="all-scopes")
         self.assertAuthorizePage(
             response, self.oauth_app, ["openid", "email", "profile"]
         )
@@ -95,156 +96,85 @@ class TestAuthorizeGate(OIDCTestCase):
     def test_with_perms_oauth_u1_email_only(self):
         """Check that only requested scopes are shown when user has access."""
         self.grant_oidc_access(self.user1)
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "email",
-            "state": "asdfghhjkl",
-        }
-        response = self.authorize_get(self.user1, params=params)
+        response = self.authorize_get_default(
+            self.user1, scope="email", state="email-only"
+        )
         self.assertAuthorizePage(response, self.oauth_app, ["email"])
 
     def test_with_perms_and_state_oauth_u1(self):
-        """Check that scopes are shown when user has access and correct
-        state.
-        """
+        """Scopes are shown when user has access and matching state."""
         self.oauth_app.states.add(State.objects.get(name="Member"))
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.refresh_from_db()
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "asdfghhjkl",
-        }
-        response = self.authorize_get(self.user1, params=params)
+        self.grant_oidc_access(self.user1)
+        response = self.authorize_get_default(self.user1, state="state-match")
         self.assertAuthorizePage(
             response, self.oauth_app, ["email", "openid", "profile"]
         )
 
     def test_authorize_denies_when_app_state_does_not_match_user(self):
-        """User has the OIDC permission but app requires a state the user
-        doesn't have → 403 denied page.
-        """
+        """App requires a state the user doesn't have → 403 denied page."""
         self.oauth_app.states.add(State.objects.get(name="Guest"))
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.refresh_from_db()
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "wrong-state",
-            "allow": True,
-        }
-        response = self.authorize_get(self.user1, params=params)
+        self.grant_oidc_access(self.user1)
+        response = self.authorize_get_default(self.user1, state="wrong-state")
         self.assertDeniedApp(response, self.user1, self.oauth_app)
 
     def test_authorize_denies_when_app_group_does_not_match_user(self):
-        """User has the OIDC permission and a group, but app's required group
-        is different → 403 denied page.
-        """
+        """App's required group differs from user's group → 403 denied page."""
         self.oauth_app.groups.add(self.test_grp_2)
-        self.user1.user_permissions.add(self.access_oauth)
         self.user1.groups.add(self.test_grp)
-        self.user1.refresh_from_db()
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "wrong-group",
-            "allow": True,
-        }
-        response = self.authorize_get(self.user1, params=params)
+        self.grant_oidc_access(self.user1)
+        response = self.authorize_get_default(self.user1, state="wrong-group")
         self.assertDeniedApp(response, self.user1, self.oauth_app)
 
     # ---------------------------- multi-alt and state-precedence scenarios
 
     def test_alt_membership_in_member_state_does_not_grant_user_state(self):
         """
-        Adversarial multi-alt scenario.
-
-        Set up a user whose ``main_character`` has no State affiliation,
-        and whose alt is **explicitly** added to ``Member.member_characters``.
-        If AA's state determination naively used "any character is Member
-        ⇒ user is Member", this user would gain access to a Member-gated
-        app through the alt. The contract is: state is decided by the
-        main character only, alts are ignored.
-
-        This is the *real* multi-alt test — the previous version under
-        the same name passed by accident because user3 simply had no
-        state at all.
+        Adversarial multi-alt: user's main has no State affiliation, alt is
+        **explicitly** added to ``Member.member_characters``. If AA naively
+        used "any owned character is Member ⇒ user is Member", this user
+        would gain Member access through the alt. The contract: state is
+        decided by main only.
         """
-        from ._factories import make_character, make_user
-
-        # main in corp1 (no alliance, no state); alt in corp2.
         main_char = make_character("alice-main", self.corp1)
         alt_char = make_character("alice-alt", self.corp2)
         adv_user = make_user(
             "alice-multi-alt", main=main_char, alts=[alt_char]
         )
         # Adversarial step: put the *alt* into Member's member_characters.
-        # If AA looked at any owned character, this would set the user's
-        # state to Member.
         State.objects.get(name="Member").member_characters.add(alt_char)
         adv_user.refresh_from_db()
 
         self.oauth_app.states.add(State.objects.get(name="Member"))
         self.grant_oidc_access(adv_user)
 
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile",
-            "state": "alt-must-not-leak-state",
-        }
-        response = self.authorize_get(adv_user, params=params)
+        response = self.authorize_get_default(
+            adv_user, scope=SCOPE_PROFILE, state="alt-state-leak"
+        )
         self.assertDeniedApp(response, adv_user, self.oauth_app)
 
     def test_main_character_state_grants_access_independent_of_alt_alliance(
         self,
     ):
-        """
-        User1's main char1 is in corp1 (no alliance) and has State=Member. Even
-        though user1's alt char2 is also in corp1 (and the app has a Member
-        state restriction), access depends on user1.profile.state, not on the
-        alts' affiliations.
-
-        This is the positive counterpart of the test above.
+        """Positive counterpart: user1's main has Member state, app requires
+        Member → access granted regardless of alts.
         """
         self.oauth_app.states.add(State.objects.get(name="Member"))
         self.grant_oidc_access(self.user1)
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile",
-            "state": "main-state-grants",
-        }
-        response = self.authorize_get(self.user1, params=params)
+        response = self.authorize_get_default(
+            self.user1, scope=SCOPE_PROFILE, state="main-state-grants"
+        )
         self.assertAuthorizePage(
             response, self.oauth_app, ["openid", "profile"]
         )
 
     def test_authorize_denies_when_neither_state_nor_group_matches(self):
-        """When the app requires both a state AND a group, and the user matches
-        neither, the authorize gate denies.
+        """App requires both a state AND a group, user matches neither →
+        denied.
         """
         self.oauth_app.groups.add(self.test_grp)
         self.oauth_app.states.add(State.objects.get(name="Blue"))
-        self.user1.user_permissions.add(self.access_oauth)
-        self.user1.refresh_from_db()
-        params = {
-            "response_type": "code",
-            "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
-            "state": "neither-matches",
-            "allow": True,
-        }
-        response = self.authorize_get(self.user1, params=params)
+        self.grant_oidc_access(self.user1)
+        response = self.authorize_get_default(
+            self.user1, state="neither-matches"
+        )
         self.assertDeniedApp(response, self.user1, self.oauth_app)

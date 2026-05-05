@@ -13,13 +13,15 @@ Userinfo claims live in test_userinfo.py; RP-initiated logout in
 test_logout.py; debug-logging leak protection in test_logging.py.
 """
 
-import json
-
 from allianceauth.authentication.models import State
 
-from ._oidc_testcase import OIDCTestCase
-
-DEFAULT_SCOPES = "openid profile email"
+from ._oidc_testcase import (
+    DEFAULT_EXPIRES_IN,
+    REDIRECT_URI,
+    SCOPE_FULL,
+    SCOPE_OPENID,
+    OIDCTestCase,
+)
 
 
 class TestCodeFlowAndTokenPolicy(OIDCTestCase):
@@ -41,8 +43,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.run_code_flow(
             self.user1,
             state="full-chain-state",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
 
     def test_full_chain_u1_with_perms_and_wrong_state_and_group(self):
@@ -54,8 +56,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.run_code_flow(
             self.user1,
             state="full-chain-wrong-state-right-group",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
 
     def test_full_chain_u1_with_perms_and_group_and_state(self):
@@ -65,8 +67,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.run_code_flow(
             self.user1,
             state="full-chain-state-and-group",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
 
     def test_full_chain_u1_with_perms_and_group(self):
@@ -75,8 +77,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.run_code_flow(
             self.user1,
             state="full-chain-group-only",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
 
     def test_full_chain_u1_with_perms_and_wrong_group_and_state(self):
@@ -85,14 +87,13 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         """
         self.oauth_app.states.add(State.objects.get(name="Member"))
         self.oauth_app.groups.add(self.test_grp_2)
-        self.user1.user_permissions.add(self.access_oauth)
         self.user1.groups.add(self.test_grp)
-        self.user1.refresh_from_db()
+        self.grant_oidc_access(self.user1)
         self.run_code_flow(
             self.user1,
             state="full-chain-right-state-wrong-group",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
 
     def test_full_chain_u1_with_su(self):
@@ -105,8 +106,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         self.run_code_flow(
             self.user1,
             state="full-chain-su-bypass",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
 
     # -------------------------------------------------------------- token policy
@@ -124,7 +125,7 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         resp = self.exchange_code_for_token(
             code=code,
             state="policy-test",
-            redirect_uri="http://localhost/redir/",
+            redirect_uri=REDIRECT_URI,
             expected_status=400,
         )
         self.assertOAuthError(resp, expected_error="invalid_grant")
@@ -137,8 +138,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         body = self.run_code_flow(
             self.user1,
             state="refresh-policy-test",
-            expected_scope=DEFAULT_SCOPES,
-            expected_expires_in=60,
+            expected_scope=SCOPE_FULL,
+            expected_expires_in=DEFAULT_EXPIRES_IN,
         )
         refresh = body["refresh_token"]
 
@@ -174,10 +175,9 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
             redirect_uri="http://localhost/other/",
             expected_status=400,
         )
-
-        body = json.loads(resp.content.decode("utf-8"))
-        self.assertIsInstance(body, dict)
-        self.assertIn(body.get("error"), {"invalid_grant", "invalid_request"})
+        self.assertOAuthError(
+            resp, expected_error={"invalid_grant", "invalid_request"}
+        )
 
     def test_token_exchange_denied_if_client_secret_invalid(self):
         """Confidential clients must not exchange a code with an invalid
@@ -185,20 +185,22 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         """
         self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
-            self.user1, scope="openid", state="bad-secret"
+            self.user1, scope=SCOPE_OPENID, state="bad-secret"
         )
 
         resp = self.exchange_code_for_token(
             code=code,
-            redirect_uri="http://localhost/redir/",
+            redirect_uri=REDIRECT_URI,
             client_secret="WRONG_SECRET",  # nosec B106
             expected_status=(400, 401),
         )
-        body = json.loads(resp.content.decode("utf-8"))
-        self.assertIsInstance(body, dict)
-        self.assertIn(
-            body.get("error"),
-            {"invalid_client", "invalid_grant", "invalid_request"},
+        self.assertOAuthError(
+            resp,
+            expected_error={
+                "invalid_client",
+                "invalid_grant",
+                "invalid_request",
+            },
         )
 
     def test_refresh_token_denied_when_app_becomes_inactive(self):
@@ -221,13 +223,15 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         resp = self.refresh_token(
             refresh_token=refresh, expected_status=(400, 401, 403)
         )
-        body = json.loads(resp.content.decode("utf-8"))
-        self.assertIsInstance(body, dict)
         # DOT or our validator may surface this as invalid_grant or
         # invalid_client; either is correct, but it must NOT succeed.
-        self.assertIn(
-            body.get("error"),
-            {"invalid_grant", "invalid_client", "invalid_request"},
+        self.assertOAuthError(
+            resp,
+            expected_error={
+                "invalid_grant",
+                "invalid_client",
+                "invalid_request",
+            },
         )
 
     def test_token_response_omits_id_token_when_scope_lacks_openid(self):
@@ -263,8 +267,8 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
         data = {
             "response_type": "code",
             "client_id": self.oauth_id,
-            "redirect_uri": "http://localhost/redir/",
-            "scope": "openid profile email",
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_FULL,
             "state": "inactive-app",
             "allow": True,
         }
@@ -272,7 +276,7 @@ class TestCodeFlowAndTokenPolicy(OIDCTestCase):
 
         if resp.status_code == 302:
             loc, _, qs = self.parse_redirect(resp, (302,))
-            self.assertTrue(loc.startswith("http://localhost/redir/"))
+            self.assertTrue(loc.startswith(REDIRECT_URI))
             self.assertNotIn("code", qs)
             self.assertIn("error", qs)
             self.assertTrue(qs["error"][0])

@@ -68,7 +68,9 @@ ignore = [
 # Test docstrings and assertions are routinely long; custom assertXxx methods
 # follow unittest.TestCase camelCase convention (N802); some test files use
 # hardcoded "secrets" intentionally (covered by `# nosec`/inline noqa).
-"tests/*" = [ "E501", "N802" ]
+# N806: factory functions like get_access_token_model() return classes and
+# are conventionally bound to PascalCase locals.
+"tests/*" = [ "E501", "N802", "N806" ]
 # Django test settings module name has a legacy uppercase suffix (AA4).
 "tests/test_settingsAA4.py" = [ "E501", "N802", "N999" ]
 

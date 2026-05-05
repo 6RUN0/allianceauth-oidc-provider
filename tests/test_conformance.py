@@ -25,7 +25,27 @@ import os
 
 from jwcrypto import jwk, jwt
 
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import SCOPE_OPENID, OIDCTestCase
+
+REQUIRED_DISCOVERY_KEYS = frozenset(
+    {
+        "issuer",
+        "authorization_endpoint",
+        "token_endpoint",
+        "userinfo_endpoint",
+        "jwks_uri",
+        "response_types_supported",
+        "subject_types_supported",
+        "id_token_signing_alg_values_supported",
+    }
+)
+
+ABSOLUTE_URL_DISCOVERY_KEYS = (
+    "authorization_endpoint",
+    "token_endpoint",
+    "userinfo_endpoint",
+    "jwks_uri",
+)
 
 
 def _b64url(raw: bytes) -> str:
@@ -41,30 +61,18 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         self.assertEqual(200, resp.status_code)
         doc = json.loads(resp.content.decode("utf-8"))
 
-        for key in (
-            "issuer",
-            "authorization_endpoint",
-            "token_endpoint",
-            "userinfo_endpoint",
-            "jwks_uri",
-            "response_types_supported",
-            "subject_types_supported",
-            "id_token_signing_alg_values_supported",
-        ):
-            with self.subTest(claim=key):
-                self.assertIn(key, doc)
-
+        missing = REQUIRED_DISCOVERY_KEYS - doc.keys()
+        self.assertFalse(
+            missing, f"discovery document missing keys: {sorted(missing)}"
+        )
         self.assertIn(
             "RS256", doc.get("id_token_signing_alg_values_supported", [])
         )
-        # Endpoints are absolute URIs.
-        for endpoint_key in (
-            "authorization_endpoint",
-            "token_endpoint",
-            "userinfo_endpoint",
-            "jwks_uri",
-        ):
-            self.assertTrue(doc[endpoint_key].startswith("http"))
+        for key in ABSOLUTE_URL_DISCOVERY_KEYS:
+            self.assertTrue(
+                doc[key].startswith("http"),
+                f"{key}={doc[key]!r} is not absolute",
+            )
 
     def test_jwks_advertises_an_rsa_key_with_kid_and_alg(self):
         """
@@ -138,7 +146,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
 
 
 class TestRevokeAndIntrospect(OIDCTestCase):
-    def _issue_access_token(self, *, scope: str = "openid") -> str:
+    def _issue_access_token(self, *, scope: str = SCOPE_OPENID) -> str:
         """Run the authorization-code flow and return a fresh access_token."""
         self.grant_oidc_access(self.user1)
         return self.run_code_flow(

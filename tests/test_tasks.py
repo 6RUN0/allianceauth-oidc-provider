@@ -25,8 +25,9 @@ from ._oidc_testcase import OIDCTestCase
 class TestClearExpiredTokensTask(OIDCTestCase):
     def test_expired_grants_are_deleted_live_grants_are_kept(self):
         """
-        Run the task with one expired and one live Grant. After the task
-        completes, only the live Grant must remain.
+        Run the task with one expired and one live Grant.
+
+        After the task completes, only the live Grant must remain.
         """
         Grant = get_grant_model()
         now = timezone.now()
@@ -64,8 +65,10 @@ class TestClearExpiredTokensTask(OIDCTestCase):
 
     def test_orphan_expired_access_tokens_are_deleted(self):
         """
-        AccessToken without a refresh_token and past its `expires` time
-        is the canonical orphan that DOT's clear_expired removes. Live
+        AccessToken without a refresh_token and past its `expires` time is the
+        canonical orphan that DOT's clear_expired removes.
+
+        Live
         access tokens (future `expires`) must stay.
         """
         AccessToken = get_access_token_model()
@@ -98,10 +101,9 @@ class TestClearExpiredTokensTask(OIDCTestCase):
         )
 
     def test_task_is_idempotent_on_clean_database(self):
-        """
-        Running the task on a database with no expired rows must be a
-        no-op — used to be the regression case where overzealous cleanup
-        would remove live tokens.
+        """Running the task on a database with no expired rows must be a no-op
+        — used to be the regression case where overzealous cleanup would remove
+        live tokens.
         """
         AccessToken = get_access_token_model()
         Grant = get_grant_model()
