@@ -25,7 +25,7 @@ from .security import (
     check_user_global_oidc_access,
     check_user_state_and_groups,
 )
-from .signals import oidc_token_issued
+from .signals import OIDCAuditBody, oidc_token_issued
 from .utils import app_log, build_oidc_debug_meta
 
 logger = logging.getLogger(f"extensions.{__name__}")
@@ -148,14 +148,15 @@ class TokenView(OAuthLibMixin, View):
         # send_robust returns [(receiver, response_or_exception), ...]
         # without propagating; one bad receiver can't break the others
         # or token issuance.
+        audit_body: OIDCAuditBody = {
+            "grant_type": request.POST.get("grant_type"),
+            "scope": request.POST.get("scope"),
+        }
         for receiver, response_or_exc in oidc_token_issued.send_robust(
             sender=self.__class__,
             request=request,
             token=token,
-            body={
-                "grant_type": request.POST.get("grant_type"),
-                "scope": request.POST.get("scope"),
-            },
+            body=audit_body,
         ):
             # `send_robust` itself only catches `Exception`, but matching
             # on `BaseException` here keeps the branch correct for future

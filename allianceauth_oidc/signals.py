@@ -1,14 +1,32 @@
 """``oidc_token_issued`` audit signal and the default audit receiver."""
 
 import logging
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, TypedDict
 
 from django.dispatch import Signal
 
 from .constants import AUDIT_DISPATCH_UID
 
 logger = logging.getLogger(f"extensions.{__name__}")
+
+
+class OIDCAuditBody(TypedDict, total=False):
+    """
+    Curated, secret-free payload of the ``oidc_token_issued`` signal.
+
+    Only the OAuth2 request fields safe for audit forwarding —
+    ``grant_type`` and ``scope``. NEVER add raw token strings,
+    ``client_secret``, ``code``, or any other authentication material:
+    receivers may forward this dict to SIEM/log sinks, and the
+    "no-secrets-in-audit" guarantee depends on the sender contract.
+    Use ``token`` (the persisted ``AccessToken`` model) for anything
+    derivable from the issued token; receivers can read ``token.scope``,
+    ``token.user``, ``token.application`` directly.
+    """
+
+    grant_type: str | None
+    scope: str | None
+
 
 # Custom signal instead of direct logging inside TokenView:
 # - TokenView is responsible for protocol/response, while auditing
@@ -24,7 +42,7 @@ def audit_oidc_token_issued(
     sender: object,
     request: object,
     token: object,
-    body: Mapping[str, Any] | None = None,
+    body: OIDCAuditBody | None = None,
     *args: Any,
     **kwargs: Any,
 ) -> None:
