@@ -85,6 +85,32 @@ class TestAuthorizeGate(OIDCTestCase):
         response = self.authorize_post(self.user1, data=data)
         self.assertDeniedGlobal(response, self.user1)
 
+    def test_global_denial_with_valid_client_id_does_not_leak_app_name(self):
+        """
+        Anti-enumeration: when a logged-in user lacks ``access_oidc`` and
+        hits authorize with a *valid* ``client_id``, the global gate runs
+        first and the per-app branch never executes.
+
+        Without this guarantee the denied page would render the app name
+        (admin-controlled string) into the response, which lets a phisher
+        confirm a tenant-display-name → client_id mapping.
+        """
+        params = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": "enum-probe",
+        }
+        response = self.authorize_get(self.user1, params=params)
+        self.assertDeniedGlobal(response, self.user1)
+        self.assertIsNone(response.context["app_name"])
+        self.assertNotIn(
+            self.oauth_app.name.encode("utf-8"),
+            response.content,
+            "app name must not appear in body when global gate denies",
+        )
+
     def test_with_perms_oauth_u1_all_scopes(self):
         """Check that all requested scopes are shown when user has access."""
         self.grant_oidc_access(self.user1)
