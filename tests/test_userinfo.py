@@ -231,6 +231,100 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertNotIn("name", info)
         self.assertNotIn("picture", info)
 
+    def test_eve_claims_emitted_for_user_with_main_character(self):
+        """
+        Default prefix ``eve_`` and scope ``profile``: the full set of
+        EVE claims (character/corporation/alliance) is emitted for a
+        user whose main_character is in a corp inside an alliance.
+        """
+        info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
+        # user1's main is char1, corp1 (NPC corp without an alliance).
+        self.assertEqual(self.char1.character_id, info["eve_character_id"])
+        self.assertEqual(self.char1.corporation_id, info["eve_corporation_id"])
+        self.assertEqual(
+            self.char1.corporation_name, info["eve_corporation_name"]
+        )
+        self.assertEqual(
+            self.char1.corporation_ticker, info["eve_corporation_ticker"]
+        )
+        # corp1 has no alliance — alliance-* claims must be omitted, not
+        # emitted as null. Tests the omit contract.
+        for omitted in (
+            "eve_alliance_id",
+            "eve_alliance_name",
+            "eve_alliance_ticker",
+        ):
+            self.assertNotIn(omitted, info)
+
+    def test_eve_alliance_claims_emitted_for_alliance_corp(self):
+        """
+        user2's main (char3) is in corp2/alli1 — the alliance trio of
+        claims must be present and reflect the corp's denormalised
+        alliance fields.
+        """
+        self.grant_oidc_access(self.user2)
+        tokens = self.run_code_flow(self.user2, state="alli-claims")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        info = json.loads(resp.content.decode("utf-8"))
+        self.assertEqual(self.char3.alliance_id, info["eve_alliance_id"])
+        self.assertEqual(self.char3.alliance_name, info["eve_alliance_name"])
+        self.assertEqual(
+            self.char3.alliance_ticker, info["eve_alliance_ticker"]
+        )
+
+    def test_eve_claim_prefix_override_documents_restart_requirement(self):
+        """
+        ``@override_settings(ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX="custom_")``
+        flips the prefix returned by ``app_settings.eve_claim_prefix()``
+        (lazy accessor) but does NOT rebind the class-level
+        ``oidc_claim_scope`` map — DOT reads that once on import.
+
+        Net effect: with a runtime-only override, claims emitted by
+        ``get_additional_claims`` under the new prefix are then
+        filtered out by DOT because the new prefix has no scope-map
+        entry. We pin this contract so a future maintainer trying to
+        "fix" the apparent inconsistency understands why the binding
+        is class-level and a process restart is needed for prefix
+        changes.
+        """
+        from allianceauth_oidc import app_settings
+
+        with override_settings(ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX="custom_"):
+            self.assertEqual("custom_", app_settings.eve_claim_prefix())
+            info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
+        # Neither prefix appears in userinfo: custom_ has no scope-map
+        # entry (filtered out), eve_ has a scope-map entry but the
+        # validator emitted under the runtime prefix.
+        self.assertNotIn("custom_character_id", info)
+        self.assertNotIn("eve_character_id", info)
+
+    def test_eve_claims_omitted_for_user_without_main_character(self):
+        """
+        user4 has no main_character; every EVE claim must be absent
+        regardless of scope. Mirrors the existing ``name``/``picture``
+        omit contract for the same fixture.
+        """
+        self.grant_oidc_access(self.user4)
+        tokens = self.run_code_flow(self.user4, state="eve-no-main")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        info = json.loads(resp.content.decode("utf-8"))
+        for claim in (
+            "eve_character_id",
+            "eve_corporation_id",
+            "eve_corporation_name",
+            "eve_corporation_ticker",
+            "eve_alliance_id",
+            "eve_alliance_name",
+            "eve_alliance_ticker",
+        ):
+            self.assertNotIn(claim, info)
+
     def test_groups_claim_is_deterministic_across_calls(self):
         """
         With many groups (enough to defeat any DB-default ordering luck),

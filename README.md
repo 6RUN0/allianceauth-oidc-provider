@@ -115,6 +115,35 @@ ALLIANCEAUTH_OIDC_LOG_MASK_TAIL = 2
 
 Security note: enable masked logging only if your log storage is properly restricted.
 
+### EVE-specific claims (`eve_*`)
+
+The provider emits Alliance-Auth-domain claims alongside the standard OIDC
+ones — character/corporation/alliance metadata read from the user's main
+character. Default prefix: `eve_`. Default scope: `profile` (already requested
+by most RPs as part of `openid profile`).
+
+| Claim | Source | Notes |
+|---|---|---|
+| `eve_character_id` | `main_character.character_id` | Integer EVE ID |
+| `eve_corporation_id` / `_name` / `_ticker` | `main_character.corporation_*` | Denormalised on the character row |
+| `eve_alliance_id` / `_name` / `_ticker` | `main_character.alliance_*` | Omitted for NPC corps without an alliance |
+
+Override the prefix or scope:
+
+```python
+# Default `eve_` — set to `""` for un-prefixed claims (collision-prone), or
+# any other prefix to namespace claims for federation with other providers.
+ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX = "eve_"
+
+# Default `profile`. Set to `eve` (or any custom value) to require an
+# explicit RP scope opt-in. NB: scope binding is class-level — changing this
+# setting requires an Auth process restart to take effect.
+ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE = "profile"
+```
+
+Empty fields are **omitted** rather than emitted as `null` so RPs that key off
+`claim in payload` behave consistently.
+
 ### Portrait (`picture` claim) URL
 
 The `picture` claim defaults to the official EVE image server. If you front it through

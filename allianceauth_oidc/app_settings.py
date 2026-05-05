@@ -24,6 +24,8 @@ _KEY_PORTRAIT_URL_TEMPLATE: Final[str] = (
     "ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE"
 )
 _KEY_PORTRAIT_SIZE: Final[str] = "ALLIANCEAUTH_OIDC_PORTRAIT_SIZE"
+_KEY_EVE_CLAIM_PREFIX: Final[str] = "ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX"
+_KEY_EVE_CLAIM_SCOPE: Final[str] = "ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE"
 
 
 def log_masked_secrets() -> bool:
@@ -90,3 +92,45 @@ def portrait_size() -> int:
     via ``ALLIANCEAUTH_OIDC_PORTRAIT_SIZE``.
     """
     return int(getattr(settings, _KEY_PORTRAIT_SIZE, _DEFAULT_PORTRAIT_SIZE))
+
+
+# EVE-domain claim prefix (e.g. ``eve_character_id`` vs ``character_id``
+# vs ``corp_character_id``). Default ``eve_`` keeps the AA-specific
+# claims out of the standard OIDC namespace so RP code can distinguish
+# them at a glance and is unlikely to collide with other OIDC providers
+# the same RP federates against.
+_DEFAULT_EVE_CLAIM_PREFIX: Final[str] = "eve_"
+# Scope under which EVE claims are emitted. Bound at module load via
+# ``AllianceAuthOAuth2Validator.oidc_claim_scope``; changing the setting
+# requires a process restart (DOT reads ``oidc_claim_scope`` from the
+# class, not via a per-request accessor).
+_DEFAULT_EVE_CLAIM_SCOPE: Final[str] = "profile"
+
+
+def eve_claim_prefix() -> str:
+    """
+    Prefix prepended to every EVE-specific claim name.
+
+    Default ``eve_``. Override via ``ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX``;
+    set to ``""`` for un-prefixed claims (collision-prone, not recommended).
+    Read on every claim emission, so changes via ``@override_settings``
+    take effect without a restart — handy for tests.
+    """
+    return str(
+        getattr(settings, _KEY_EVE_CLAIM_PREFIX, _DEFAULT_EVE_CLAIM_PREFIX)
+    )
+
+
+def eve_claim_scope() -> str:
+    """
+    OIDC scope under which EVE-specific claims are released.
+
+    Default ``profile`` — most RPs already request ``openid profile``
+    so claims arrive without RP-side configuration changes. Set to
+    ``eve`` (or any other value) via ``ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE``
+    to require an explicit opt-in scope. Bound to the validator class
+    at import time; rebinding requires a process restart.
+    """
+    return str(
+        getattr(settings, _KEY_EVE_CLAIM_SCOPE, _DEFAULT_EVE_CLAIM_SCOPE)
+    )

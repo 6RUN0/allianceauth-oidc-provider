@@ -1,6 +1,7 @@
 """Custom DOT OAuth2Validator that enforces Alliance Auth access policy."""
 
 import logging
+from typing import Final
 
 from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
@@ -10,6 +11,21 @@ from . import app_settings
 from .security import check_user_state_and_groups
 
 logger = logging.getLogger(f"extensions.{__name__}")
+
+
+# EVE-domain claim names emitted under the configured prefix/scope.
+# Order matches the natural grouping (character → corp → alliance) and
+# is used both at scope-binding time below and inside
+# `get_additional_claims` to assemble the payload.
+_EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
+    "character_id",
+    "corporation_id",
+    "corporation_name",
+    "corporation_ticker",
+    "alliance_id",
+    "alliance_name",
+    "alliance_ticker",
+)
 
 
 class AllianceAuthOAuth2Validator(OAuth2Validator):
@@ -22,6 +38,20 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     # or it will silently never reach userinfo / id_token.)
     oidc_claim_scope = OAuth2Validator.oidc_claim_scope.copy()
     oidc_claim_scope.update({"groups": "profile"})
+    # Bind EVE-specific claims (character/corporation/alliance) to the
+    # configured scope. This is class-level: changing the prefix or scope
+    # via Django settings requires a process restart, since DOT reads
+    # `oidc_claim_scope` from the class once. The prefix used inside
+    # `get_additional_claims` is read on every call (see
+    # `app_settings.eve_claim_prefix`), so the prefix CAN be flipped at
+    # runtime via @override_settings — but keeping it consistent with the
+    # bound scope map requires the same prefix here.
+    oidc_claim_scope.update(
+        {
+            f"{app_settings.eve_claim_prefix()}{n}": app_settings.eve_claim_scope()  # noqa: E501
+            for n in _EVE_CLAIM_NAMES
+        }
+    )
 
     # Cap the `groups` claim payload. JWTs are URL-encoded in headers /
     # cookies and a pathological 10k-group user would produce a 200KB
@@ -181,4 +211,16 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         locale = getattr(profile, "language", None)
         if locale:
             out["locale"] = locale
+        # EVE-specific claims. All denormalised on `EveCharacter`, so a
+        # single `getattr` chain replaces what would otherwise be three
+        # FK joins. Each field is emitted only when it carries real
+        # data — NPC corps have no alliance, alts are not always
+        # complete, etc. Empty fields are OMITTED rather than emitted
+        # as `null` so consumers that key off `claim in payload`
+        # behave consistently with the OIDC convention.
+        prefix = app_settings.eve_claim_prefix()
+        for name in _EVE_CLAIM_NAMES:
+            value = getattr(main_character, name, None)
+            if value:
+                out[f"{prefix}{name}"] = value
         return out
