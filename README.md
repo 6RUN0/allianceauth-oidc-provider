@@ -115,6 +115,23 @@ ALLIANCEAUTH_OIDC_LOG_MASK_TAIL = 2
 
 Security note: enable masked logging only if your log storage is properly restricted.
 
+### Portrait (`picture` claim) URL
+
+The `picture` claim defaults to the official EVE image server. If you front it through
+a CDN mirror or want a different size, override these settings:
+
+```python
+# Default: "https://images.evetech.net/characters/{character_id}/portrait?size={size}"
+ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE = "https://cdn.example/portraits/{character_id}-{size}.png"
+
+# EVE's image server supports 32/64/128/256/512/1024. Default: 128.
+ALLIANCEAUTH_OIDC_PORTRAIT_SIZE = 256
+```
+
+The template must contain `{character_id}` and `{size}` placeholders; a
+malformed template skips the `picture` claim with a warning instead of
+crashing the token endpoint.
+
 ### Periodic cleanup of expired tokens (Celery Beat)
 
 To prevent the database from growing indefinitely, schedule the cleanup task:
@@ -128,6 +145,27 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
     "apply_offset": True,
 }
 ```
+
+### Operational hardening (operator responsibility)
+
+This app implements OAuth2/OIDC protocol semantics, but the runtime
+hardening below is intentionally left to the deployment so it integrates
+with whatever edge / infra you already operate:
+
+- **Rate limiting on `/o/token/` and `/o/authorize/`.** Neither endpoint
+  is rate-limited by this app; brute-force defence belongs at the edge
+  (nginx `limit_req`, Cloudflare, a WAF) or via `django-ratelimit` in your
+  Auth deployment. Without it, a network-level attacker can probe
+  `client_secret` / `code` / `refresh_token` values at line speed.
+- **Celery broker authentication.** `clear_expired_tokens` is published to
+  whichever Celery broker your AA install uses; if that broker is reachable
+  by untrusted parties, a malicious task submission can repeatedly invoke
+  cleanup. The task itself is idempotent (it only deletes already-expired
+  rows), but broker auth + network ACLs are the defensive layer that
+  matters here.
+- **Security headers.** This app does not set CSP / HSTS / X-Frame-Options
+  / X-Content-Type-Options on its responses; rely on Alliance Auth's
+  middleware stack and Django's `SECURE_*` settings to add them globally.
 
 ## Application setup
 
@@ -211,7 +249,7 @@ api_url = https://<your.auth.url>/o/userinfo/
 1. then in your `gunicorn.log` look for long lines similar to this after you attempt to log in,
 
 ```text
-[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued app_id='...' client_id='...' user_id='...' meta={'grant_type': 'authorization_code', 'scope': 'openid email profile', 'client_id': '...', 'redirect_uri': '...', 'code': '<redacted>', 'refresh_token_req': None, 'client_secret': None, 'assertion': None, 'token_type': 'Bearer', 'expires_in': 111, 'scope_resp': 'openid email profile', 'access_token': '<redacted>', 'refresh_token': '<redacted>', 'id_token': '<redacted>'}
+[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued app_id=1 client_id=abc123 user_id=42 meta={'grant_type': 'authorization_code', 'scope': 'openid email profile', 'client_id': 'abc123', 'redirect_uri': 'https://app.example/cb', 'code': '<redacted>', 'refresh_token_req': None, 'client_secret': None, 'assertion': None, 'token_type': 'Bearer', 'expires_in': 111, 'scope_resp': 'openid email profile', 'access_token': '<redacted>', 'refresh_token': '<redacted>', 'id_token': '<redacted>'}
 ```
 
 1. take the `id_token` field and paste it into https://jwt.io/ to debug the data being sent to the application. it should be fairly self explanitory expect for these 2 fields.
