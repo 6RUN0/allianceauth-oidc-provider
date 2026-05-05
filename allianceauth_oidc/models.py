@@ -49,6 +49,13 @@ class AllianceAuthApplication(AbstractApplication):
         return self.active
 
     class Meta:
+        # `ordering` makes the admin changelist's pagination stable.
+        # Without it, PostgreSQL returns rows in storage order, which
+        # shifts as updates rewrite tuples — page 2 today is not page 2
+        # tomorrow. `name` matches the admin's primary search field.
+        ordering = ("name",)
+        verbose_name = "Alliance Auth OIDC application"
+        verbose_name_plural = "Alliance Auth OIDC applications"
         permissions = [
             (
                 PERM_ACCESS_OIDC_CODENAME,

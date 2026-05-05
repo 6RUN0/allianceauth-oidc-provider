@@ -16,6 +16,11 @@ class ApplicationAdmin(admin.ModelAdmin):
         "client_type",
         "authorization_grant_type",
     )
+    # `user` is rendered in `list_display` for every row in the
+    # changelist; without `list_select_related`, Django issues one
+    # extra query per row to fetch the FK. Trivial today (most
+    # installs have <100 OAuth apps) but free to fix.
+    list_select_related = ("user",)
     list_filter = (
         "client_type",
         "authorization_grant_type",
