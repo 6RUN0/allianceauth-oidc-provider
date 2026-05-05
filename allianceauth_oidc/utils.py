@@ -4,11 +4,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from .app_settings import (
-    ALLIANCEAUTH_OIDC_LOG_MASK_HEAD,
-    ALLIANCEAUTH_OIDC_LOG_MASK_TAIL,
-    ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS,
-)
+from . import app_settings
 
 
 def app_log(
@@ -96,12 +92,12 @@ def redact_secret(value: object) -> str | None:
     """
     if value is None:
         return None
-    if not ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS:
+    if not app_settings.log_masked_secrets():
         return "<redacted>"
     return mask_secret(
         value,
-        head=ALLIANCEAUTH_OIDC_LOG_MASK_HEAD,
-        tail=ALLIANCEAUTH_OIDC_LOG_MASK_TAIL,
+        head=app_settings.log_mask_head(),
+        tail=app_settings.log_mask_tail(),
     )
 
 

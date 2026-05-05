@@ -70,21 +70,19 @@ class TestRedactSecret(SimpleTestCase):
 
     @override_settings(ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True)
     def test_masked_mode_uses_mask_secret(self):
-        # Settings flag is read at app_settings.py import; force a reimport
-        # of the module-level constant to take the override into account.
-        import importlib
+        # Lazy accessors in app_settings.py read settings at call time, so
+        # @override_settings now works without reimport gymnastics.
+        self.assertEqual("su…et", redact_secret("super-secret"))
 
-        import allianceauth_oidc.app_settings as app_settings
-        import allianceauth_oidc.utils as utils
-
-        importlib.reload(app_settings)
-        importlib.reload(utils)
-        try:
-            self.assertEqual("su…et", utils.redact_secret("super-secret"))
-        finally:
-            # Reload back so other tests see the default again.
-            importlib.reload(app_settings)
-            importlib.reload(utils)
+    @override_settings(
+        ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True,
+        ALLIANCEAUTH_OIDC_LOG_MASK_HEAD=1,
+        ALLIANCEAUTH_OIDC_LOG_MASK_TAIL=3,
+    )
+    def test_masked_mode_honours_head_and_tail_overrides(self):
+        # Regression for the lazy-accessor refactor: head/tail overrides
+        # used to be invisible because they were snapshotted at import.
+        self.assertEqual("s…ret", redact_secret("super-secret"))
 
 
 class TestBuildOidcDebugMeta(SimpleTestCase):
