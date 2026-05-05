@@ -53,7 +53,8 @@ class TestSafeImageUrlFilter(SimpleTestCase):
         self.assertEqual("", safe_image_url(None))
 
     def test_handles_non_string(self) -> None:
-        """A model field may, in theory, hand the template something
+        """
+        A model field may, in theory, hand the template something
         that ``str()`` would coerce — the filter must not trust
         ``__str__`` to be safe and instead return empty.
         """
@@ -61,11 +62,12 @@ class TestSafeImageUrlFilter(SimpleTestCase):
         self.assertEqual("", safe_image_url(object()))
 
     def test_filter_is_registered_for_template_use(self) -> None:
-        """End-to-end: ``{% load oidc_tags %}`` + ``|safe_image_url``
+        """
+        End-to-end: ``{% load oidc_tags %}`` + ``|safe_image_url``
         must work in a real template context.
         """
         tpl = Template(
-            "{% load oidc_tags %}<img src=\"{{ url|safe_image_url }}\">"
+            '{% load oidc_tags %}<img src="{{ url|safe_image_url }}">'
         )
         rendered_safe = tpl.render(Context({"url": "https://x.test/p.png"}))
         self.assertIn('src="https://x.test/p.png"', rendered_safe)
