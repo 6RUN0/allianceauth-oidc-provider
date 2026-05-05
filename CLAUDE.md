@@ -21,9 +21,13 @@ make test                             # == uv run nox -s tests
 make lint                             # == uv run nox -s lint
 uv run nox                            # both
 
-# run a single test class / method (forwarded to runtests.py)
-uv run nox -s tests -- tests.test_token_policy.TestTokenPolicy
-uv run nox -s tests -- tests.test_token_policy.TestTokenPolicy.test_userinfo_returns_expected_claims
+# run a single test class / method (extra args go to `django test`)
+uv run nox -s tests -- tests.test_token.TestCodeFlowAndTokenPolicy
+uv run nox -s tests -- tests.test_token.TestCodeFlowAndTokenPolicy.test_full_chain_u1_with_perms_and_state
+uv run nox -s tests -- --keepdb         # skip migrations on reruns
+
+# run against a real Redis instead of the fakeredis monkey-patch
+AA_USE_FAKE_REDIS=0 uv run nox -s tests
 
 # type checking and coverage
 make typecheck                        # mypy + basedpyright
@@ -37,11 +41,13 @@ uv run pre-commit run pip-audit --hook-stage=manual --all-files
 make package
 ```
 
-`runtests.py` does two notable things: it monkey-patches `django_redis.get_redis_connection` to a `FakeRedis` (so no real Redis is needed), and it shims `redis_version` to `7.4.0` because Alliance Auth checks that on startup. Honor `AA_USE_FAKE_REDIS=0` only if you actually want to talk to a real Redis.
+`tests/_fakeredis.py` is invoked from the test settings module *before* Alliance Auth is imported. It monkey-patches `django_redis.get_redis_connection` with a `fakeredis`-backed shim and stubs `info()['redis_version']` to `7.4.0`, which AA's startup feature-detection probes. Set `AA_USE_FAKE_REDIS=0` to skip the patch and run against a real Redis.
 
 All tests live in `tests/` at the repo root, deliberately outside the `allianceauth_oidc/` package so `flit build` does not ship them in the wheel/sdist:
 - `tests/test_*.py` — actual test cases (Django `unittest.TestCase`-based).
-- `tests/_oidc_testcase.py` — shared `OIDCTestCase` with fixtures, helpers, and assertion shortcuts. Re-exported from `tests/__init__.py` so tests use `from . import OIDCTestCase`.
+- `tests/_oidc_testcase.py` — shared `OIDCTestCase` with the fixture builder, code-flow helpers (`run_code_flow`, `authorize_to_code`, `authorize_get_default`), assertion shortcuts, and module-level constants (`REDIRECT_URI`, `SCOPE_FULL`, etc.).
+- `tests/_factories.py` — composable fixture builders (`make_alliance`, `make_corp`, `make_character`, `make_user`, `make_app`).
+- `tests/_fakeredis.py` — opt-out monkey-patch for `django_redis`; called from the test settings module.
 - `tests/test_settingsAA4.py` — Django settings module (`DJANGO_SETTINGS_MODULE=tests.test_settingsAA4`).
 - `tests/urls.py`, `tests/views.py`, `tests/celery.py` — minimal Django app wiring for the test environment.
 - `tests/oidc-test.key` — RSA key used by the OIDC config in test settings.

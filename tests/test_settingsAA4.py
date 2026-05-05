@@ -1,8 +1,15 @@
 """Alliance Auth Test Suite Django settings."""
 
-from pathlib import Path
+# Activate the fakeredis monkey-patch BEFORE importing any AA module —
+# AppConfig.ready() in allianceauth.* talks to Redis on startup. Settings
+# module-level is the earliest hook available to us.
+from tests._fakeredis import install_if_enabled
 
-from allianceauth.project_template.project_name.settings.base import *  # noqa F403
+install_if_enabled()
+
+from pathlib import Path  # noqa: E402
+
+from allianceauth.project_template.project_name.settings.base import *  # noqa: E402, F403
 
 SITE_URL = "https://example.com"
 CSRF_TRUSTED_ORIGINS = [SITE_URL]
