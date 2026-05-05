@@ -48,7 +48,11 @@ def make_alliance(
     name: str | None = None,
     executor_corp_id: int = 0,
 ) -> EveAllianceInfo:
-    """Create an Alliance row. ``ticker`` doubles as the default name."""
+    """
+    Create an Alliance row.
+
+    ``ticker`` doubles as the default name.
+    """
     aid = alliance_id if alliance_id is not None else next(_alliance_id)
     return EveAllianceInfo.objects.create(
         alliance_id=aid,
