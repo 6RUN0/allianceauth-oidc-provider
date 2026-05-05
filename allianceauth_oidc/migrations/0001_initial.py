@@ -8,7 +8,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
     dependencies = [
@@ -46,7 +45,7 @@ class Migration(migrations.Migration):
                     "post_logout_redirect_uris",
                     models.TextField(
                         blank=True,
-                        help_text="Allowed Post Logout URIs list, space separated",  # noqa 501
+                        help_text="Allowed Post Logout URIs list, space separated",
                     ),
                 ),
                 (
@@ -77,8 +76,8 @@ class Migration(migrations.Migration):
                     oauth2_provider.models.ClientSecretField(
                         blank=True,
                         db_index=True,
-                        default=oauth2_provider.generators.generate_client_secret,  # noqa 501
-                        help_text="Hashed on Save. Copy it now if this is a new secret.",  # noqa 501
+                        default=oauth2_provider.generators.generate_client_secret,
+                        help_text="Hashed on Save. Copy it now if this is a new secret.",
                         max_length=255,
                     ),
                 ),

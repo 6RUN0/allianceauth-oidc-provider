@@ -6,11 +6,11 @@ from . import OIDCTestCase
 
 
 class TestCorptoolsCharAccessPerms(OIDCTestCase):
-
     def test_anonymous_post_is_redirected_to_login_with_next(self):
         """
-        Anonymous POST to /o/authorize/ must redirect to the login page
-        with a "next" param.
+        Anonymous POST to /o/authorize/ must redirect to the login page with a
+        "next" param.
+
         Only the path is preserved for POST (body params are not).
         """
         data = {
@@ -32,9 +32,8 @@ class TestCorptoolsCharAccessPerms(OIDCTestCase):
         self.assertEqual("/o/authorize/", actual_next)
 
     def test_anonymous_is_redirected_to_login_with_next(self):
-        """
-        Anonymous GET to /o/authorize/ must redirect to the login page
-        with a "next" param.
+        """Anonymous GET to /o/authorize/ must redirect to the login page with
+        a "next" param.
         """
         params = {
             "response_type": "code",
@@ -72,9 +71,7 @@ class TestCorptoolsCharAccessPerms(OIDCTestCase):
         self.assertDeniedGlobal(response, self.user1)
 
     def test_with_perms_oauth_u1_all_scopes(self):
-        """
-        Check that all requested scopes are shown when user has access
-        """
+        """Check that all requested scopes are shown when user has access."""
         self.grant_oidc_access(self.user1)
         params = {
             "response_type": "code",
@@ -89,9 +86,7 @@ class TestCorptoolsCharAccessPerms(OIDCTestCase):
         )
 
     def test_with_perms_oauth_u1_email_only(self):
-        """
-        Check that only requested scopes are shown when user has access
-        """
+        """Check that only requested scopes are shown when user has access."""
         self.grant_oidc_access(self.user1)
         params = {
             "response_type": "code",
@@ -104,8 +99,8 @@ class TestCorptoolsCharAccessPerms(OIDCTestCase):
         self.assertAuthorizePage(response, self.oauth_app, ["email"])
 
     def test_with_perms_and_state_oauth_u1(self):
-        """
-        Check that scopes are shown when user has access and correct state
+        """Check that scopes are shown when user has access and correct
+        state.
         """
         self.oauth_app.states.add(State.objects.get(name="Member"))
         self.user1.user_permissions.add(self.access_oauth)
@@ -123,9 +118,8 @@ class TestCorptoolsCharAccessPerms(OIDCTestCase):
         )
 
     def test_full_chain_u1_with_perms_and_state(self):
-        """
-        Test full OAuth2 authorization code flow for user1
-        with proper permissions and state
+        """Test full OAuth2 authorization code flow for user1 with proper
+        permissions and state.
         """
         self.oauth_app.states.add(State.objects.get(name="Member"))
         self.user1.user_permissions.add(self.access_oauth)
@@ -153,9 +147,7 @@ class TestCorptoolsCharAccessPerms(OIDCTestCase):
         )
 
     def test_full_chain_u1_with_perms_and_wrong_state(self):
-        """
-        Test full OAuth2 authorization code flow for user1
-        """
+        """Test full OAuth2 authorization code flow for user1."""
         self.oauth_app.states.add(State.objects.get(name="Guest"))
         self.user1.user_permissions.add(self.access_oauth)
         self.user1.refresh_from_db()

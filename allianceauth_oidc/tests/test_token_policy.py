@@ -1,7 +1,9 @@
 import json
+
 from django.conf import settings
 from django.test import override_settings
 from oauth2_provider.settings import oauth2_settings
+
 from . import OIDCTestCase
 
 
@@ -13,7 +15,6 @@ def _enable_rp_logout():
 
 
 class TestTokenPolicy(OIDCTestCase):
-
     def _issue_code_user1_with_group_access(self) -> str:
         self.oauth_app.groups.add(self.test_grp)
         self.grant_oidc_access(self.user1)
@@ -36,8 +37,7 @@ class TestTokenPolicy(OIDCTestCase):
         return code
 
     def test_token_exchange_denied_if_group_removed_after_code_issued(self):
-        """
-        If the user stops matching policy (group/state) after code issuance,
+        """If the user stops matching policy (group/state) after code issuance,
         /o/token/ must fail with invalid_grant.
         """
         code = self._issue_code_user1_with_group_access()
@@ -54,9 +54,8 @@ class TestTokenPolicy(OIDCTestCase):
         self.assertOAuthError(resp, expected_error="invalid_grant")
 
     def test_refresh_token_denied_if_group_removed(self):
-        """
-        Refresh token exchange must enforce policy and deny if access
-        was removed.
+        """Refresh token exchange must enforce policy and deny if access was
+        removed.
         """
         code = self._issue_code_user1_with_group_access()
 
@@ -82,6 +81,7 @@ class TestTokenPolicy(OIDCTestCase):
     def test_userinfo_returns_expected_claims(self):
         """
         /o/userinfo/ returns additional claims:
+
         name, picture, groups (+ email if set).
         """
         self.grant_oidc_access(self.user1)
@@ -112,7 +112,7 @@ class TestTokenPolicy(OIDCTestCase):
         access_token = tokens["access_token"]
 
         resp = self.client.get(
-            "/o/userinfo/", HTTP_AUTHORIZATION=f"Bearer {access_token}"
+            "/o/userinfo/", headers={"authorization": f"Bearer {access_token}"}
         )
         self.assertEqual(200, resp.status_code)
         info = json.loads(resp.content.decode("utf-8"))
@@ -130,6 +130,7 @@ class TestTokenPolicy(OIDCTestCase):
     def test_inactive_app_cannot_issue_code(self):
         """
         AllianceAuthApplication.active=False must make the app unusable.
+
         It must not issue a code redirect to redirect_uri.
         """
         self.grant_oidc_access(self.user1)
@@ -157,9 +158,8 @@ class TestTokenPolicy(OIDCTestCase):
             self.assertNotEqual(302, resp.status_code)
 
     def test_token_exchange_denied_if_redirect_uri_mismatch(self):
-        """
-        If redirect_uri used in /o/token/ doesn't match the one used
-        in /o/authorize/, token exchange must fail (typically invalid_grant).
+        """If redirect_uri used in /o/token/ doesn't match the one used in
+        /o/authorize/, token exchange must fail (typically invalid_grant).
         """
         self.grant_oidc_access(self.user1)
 
@@ -188,6 +188,7 @@ class TestTokenPolicy(OIDCTestCase):
     def test_debug_logging_does_not_leak_tokens_or_secrets(self):
         """
         When app.debug_mode=True, TokenView logs safe metadata.
+
         Ensure raw tokens/secrets are never present in logs.
         """
         self.grant_oidc_access(self.user1)
@@ -232,8 +233,7 @@ class TestTokenPolicy(OIDCTestCase):
         self.assertNotIn(self.oauth_secret, log_text)
 
     def test_refresh_token_denied_if_global_permission_removed(self):
-        """
-        If the user loses the global OIDC permission after receiving a
+        """If the user loses the global OIDC permission after receiving a
         refresh_token, refresh must fail with invalid_grant.
         """
         self.grant_oidc_access(self.user1)
@@ -268,9 +268,8 @@ class TestTokenPolicy(OIDCTestCase):
         self.assertEqual("invalid_grant", err.get("error"))
 
     def test_token_exchange_denied_if_client_secret_invalid(self):
-        """
-        Confidential clients must not exchange a code
-        with an invalid client_secret.
+        """Confidential clients must not exchange a code with an invalid
+        client_secret.
         """
         self.grant_oidc_access(self.user1)
 
@@ -289,7 +288,7 @@ class TestTokenPolicy(OIDCTestCase):
         resp = self.exchange_code_for_token(
             code=code,
             redirect_uri="http://localhost/redir/",
-            client_secret="WRONG_SECRET",
+            client_secret="WRONG_SECRET",  # nosec B106
             expected_status=(400, 401),
         )
         body = json.loads(resp.content.decode("utf-8"))
@@ -300,18 +299,18 @@ class TestTokenPolicy(OIDCTestCase):
         )
 
     def test_userinfo_requires_bearer_token(self):
-        """
-        /o/userinfo/ must require Authorization: Bearer <token>.
-        """
+        """/o/userinfo/ must require Authorization: Bearer <token>."""
         resp = self.client.get("/o/userinfo/")
         self.assertIn(resp.status_code, (401, 403))
 
     def test_logout_allows_only_configured_post_logout_redirect_uri(self):
         """
-        /o/logout/ should only redirect to post_logout_redirect_uri if it is allowed
-        by the application allowlist (AllianceAuthApplication.post_logout_redirect_uris).
-        Different DOT versions may respond with 302 or 400, but must never redirect
-        to an unlisted URI.
+        /o/logout/ should only redirect to post_logout_redirect_uri if it is
+        allowed by the application allowlist
+        (AllianceAuthApplication.post_logout_redirect_uris).
+
+        Different DOT versions may respond with 302 or 400, but must never
+        redirect to an unlisted URI.
         """
         try:
             with override_settings(OAUTH2_PROVIDER=_enable_rp_logout()):

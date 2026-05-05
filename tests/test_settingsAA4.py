@@ -1,6 +1,4 @@
-"""
-Alliance Auth Test Suite Django settings.
-"""
+"""Alliance Auth Test Suite Django settings."""
 
 from pathlib import Path
 

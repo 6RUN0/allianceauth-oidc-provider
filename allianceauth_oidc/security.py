@@ -13,9 +13,7 @@ logger = logging.getLogger(f"extensions.{__name__}")
 
 
 def is_superuser(user: object) -> bool:
-    """
-    Helper to check if user is superuser.
-    """
+    """Helper to check if user is superuser."""
     return getattr(user, "is_superuser", False)
 
 

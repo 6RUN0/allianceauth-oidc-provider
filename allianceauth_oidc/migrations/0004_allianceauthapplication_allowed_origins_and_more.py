@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         (
             "allianceauth_oidc",
@@ -19,7 +18,7 @@ class Migration(migrations.Migration):
             field=models.TextField(
                 blank=True,
                 default="",
-                help_text="Allowed origins list to enable CORS, space separated",  # noqa E501
+                help_text="Allowed origins list to enable CORS, space separated",
             ),
         ),
         migrations.AddField(

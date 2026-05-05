@@ -18,6 +18,7 @@ def app_log(
 ) -> None:
     """
     Log at INFO level if application in debug_mode, else at DEBUG level.
+
     Rationale:
     - debug_mode is enabled per OAuth application so admins can diagnose issues
       safely without adding noise to production logs.
@@ -78,6 +79,7 @@ def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
 def redact_secret(value: object) -> str | None:
     """
     Return a redacted version of the secret value for logging.
+
     Why "<redacted>" by default:
     - it is the safest mode: it reveals neither length nor prefixes/suffixes.
     - if an admin explicitly enables masking, they accept the metadata
@@ -104,8 +106,9 @@ def build_oidc_debug_meta(
     payload: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Build a dict safe for logging in debug_mode.
-    Never returns raw token strings or secrets.
+    Build a dict safe for logging in debug_mode. Never returns raw token
+    strings or secrets.
+
     Why we return a curated "meta" instead of logging request/response as-is:
     - the token endpoint can contain access_token/refresh_token/id_token;
       logging them would be a serious credential leak.

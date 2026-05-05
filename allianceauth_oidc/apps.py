@@ -10,4 +10,5 @@ class AllianceAuthOIDC(AppConfig):
     verbose_name = f"Alliance Auth OIDC v{__version__}"
 
     def ready(self):
-        import allianceauth_oidc.signals  # noqa F401
+        # Side-effect import: connects oidc_token_issued signal receivers.
+        import allianceauth_oidc.signals  # noqa: F401  # pyright: ignore[reportUnusedImport]

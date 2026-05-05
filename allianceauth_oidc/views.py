@@ -31,8 +31,8 @@ logger = logging.getLogger(f"extensions.{__name__}")
 @method_decorator(csrf_exempt, name="dispatch")
 class TokenView(OAuthLibMixin, View):
     """
-    Implements an endpoint to provide access tokens
-    for anyone who meets the requirements of the application
+    Implements an endpoint to provide access tokens for anyone who meets the
+    requirements of the application.
 
     The endpoint is used in the following flows:
     * Authorization code
@@ -112,8 +112,8 @@ class AuthAuthorizationView(AuthorizationView):
 
     def _get_app(self, request: HttpRequest) -> AbstractApplication | None:
         """
-        Retrieve the OAuth2 Application object by client_id
-        from GET or POST parameters.
+        Retrieve the OAuth2 Application object by client_id from GET or POST
+        parameters.
 
         Args:
             request (HttpRequest): The user's HTTP request.

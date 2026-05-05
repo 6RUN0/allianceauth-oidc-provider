@@ -20,9 +20,7 @@ from oauth2_provider.models import get_application_model
 
 
 class OIDCTestCase(TestCase):
-    """
-    Shared test helpers and test data for OIDC provider tests.
-    """
+    """Shared test helpers and test data for OIDC provider tests."""
 
     alliances: ClassVar[list[EveAllianceInfo]]
     corps: ClassVar[list[EveCorporationInfo]]
@@ -30,15 +28,13 @@ class OIDCTestCase(TestCase):
     users: ClassVar[list[User]]
 
     def grant_oidc_access(self, user: User) -> None:
-        """
-        Grant the global OIDC permission to a user.
-        """
+        """Grant the global OIDC permission to a user."""
         user.user_permissions.add(self.access_oauth)
         user.refresh_from_db()
 
     def assertDenied(self, response: Any, user: User) -> None:
-        """
-        Assert that response is the standard denied page for the given user.
+        """Assert that response is the standard denied page for the given
+        user.
         """
         self.assertEqual(403, response.status_code)
         self.assertTemplateUsed(response, "allianceauth_oidc/denied.html")
@@ -46,9 +42,7 @@ class OIDCTestCase(TestCase):
         self.assertIn(str(user), response.context["reason"])
 
     def assertDeniedGlobal(self, response: Any, user: User) -> None:
-        """
-        Assert that the denial reason is the global permission gate.
-        """
+        """Assert that the denial reason is the global permission gate."""
         self.assertDenied(response, user)
         self.assertIn(
             "has no permission to use OIDC applications",
@@ -60,8 +54,8 @@ class OIDCTestCase(TestCase):
         )
 
     def assertDeniedApp(self, response: Any, user: User, app: Any) -> None:
-        """
-        Assert that the denial reason is application policy (state/groups).
+        """Assert that the denial reason is application policy
+        (state/groups).
         """
         self.assertDenied(response, user)
         self.assertIn(
@@ -76,8 +70,8 @@ class OIDCTestCase(TestCase):
     def assertAuthorizePage(
         self, response: Any, app: Any, scopes: list[str] | None = None
     ) -> None:
-        """
-        Assert that the authorization consent page rendered for the given app.
+        """Assert that the authorization consent page rendered for the given
+        app.
         """
         self.assertEqual(200, response.status_code)
         self.assertTemplateUsed(response, "allianceauth_oidc/authorize.html")
@@ -86,7 +80,7 @@ class OIDCTestCase(TestCase):
         if scopes is not None:
             got = response.context.get("scopes")
             self.assertIsInstance(got, (list, tuple))
-            self.assertEqual(sorted(scopes), sorted(list(got)))
+            self.assertEqual(sorted(scopes), sorted(got))
 
     def parse_redirect(
         self,
@@ -95,6 +89,7 @@ class OIDCTestCase(TestCase):
     ) -> tuple[str, str, dict[str, list[str]]]:
         """
         Parses a redirect response from the authorize endpoint.
+
         Returns (location, path, parsed_qs_dict).
         """
         self.assertIn(response.status_code, status_codes)
@@ -116,9 +111,8 @@ class OIDCTestCase(TestCase):
     def authorize_post_and_extract_code(
         self, user: User, data: dict, expected_redirect_uri: str | None = None
     ) -> tuple[str, str, dict]:
-        """
-        POST /o/authorize/ (allow=True) -> redirect to redirect_uri
-        with code+state.
+        """POST /o/authorize/ (allow=True) -> redirect to redirect_uri with
+        code+state.
         """
         resp = self.authorize_post(user, data=data)
         loc, _, qs = self.parse_redirect(resp, (302,))
@@ -156,9 +150,7 @@ class OIDCTestCase(TestCase):
         scope: str | None = None,
         expected_status: int | tuple[int, ...] = 200,
     ) -> Any:
-        """
-        Exchange authorization code for a token response.
-        """
+        """Exchange authorization code for a token response."""
         payload = {
             "grant_type": "authorization_code",
             "client_id": client_id or self.oauth_id,
@@ -186,9 +178,7 @@ class OIDCTestCase(TestCase):
         scope: str | None = None,
         expected_status: int | tuple[int, ...] = 200,
     ) -> Any:
-        """
-        Exchange refresh_token for a new token response.
-        """
+        """Exchange refresh_token for a new token response."""
         payload = {
             "grant_type": "refresh_token",
             "client_id": client_id or self.oauth_id,
@@ -211,9 +201,7 @@ class OIDCTestCase(TestCase):
         *,
         expected_error: str,
     ) -> Any:
-        """
-        Assert that the response body is an OAuth2 error payload.
-        """
+        """Assert that the response body is an OAuth2 error payload."""
         body = json.loads(response.content.decode("utf-8"))
         self.assertIsInstance(body, dict)
         self.assertEqual(expected_error, body.get("error"))
@@ -226,9 +214,7 @@ class OIDCTestCase(TestCase):
         expected_scope: str | None = None,
         expected_expires_in: int | None = None,
     ) -> Any:
-        """
-        Assert that a successful token response contains required fields.
-        """
+        """Assert that a successful token response contains required fields."""
         body = json.loads(response.content.decode("utf-8"))
         self.assertIsInstance(body, dict)
         self.assertIn("access_token", body)
@@ -248,9 +234,7 @@ class OIDCTestCase(TestCase):
     def create_char(
         char_id: int, char_name: str, corp: EveCorporationInfo
     ) -> EveCharacter:
-        """
-        Create a character row with corp/alliance fields denormalized.
-        """
+        """Create a character row with corp/alliance fields denormalized."""
         return EveCharacter.objects.create(
             character_id=char_id,
             character_name=char_name,

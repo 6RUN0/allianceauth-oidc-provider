@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         (
             "allianceauth_oidc",
@@ -22,7 +21,7 @@ class Migration(migrations.Migration):
             name="debug_mode",
             field=models.BooleanField(
                 default=False,
-                help_text="Prints token-post request to logging for debuging purposes. These logs are at the Warning Level.",  # noqa 501
+                help_text="Prints token-post request to logging for debuging purposes. These logs are at the Warning Level.",
             ),
         ),
         migrations.AddField(
@@ -30,7 +29,7 @@ class Migration(migrations.Migration):
             name="logo_url",
             field=models.TextField(
                 blank=True,
-                help_text="Url to the Applications Icon (128x128), can be a local static file or a full URL",  # noqa 501
+                help_text="Url to the Applications Icon (128x128), can be a local static file or a full URL",
                 max_length=1024,
                 null=True,
             ),

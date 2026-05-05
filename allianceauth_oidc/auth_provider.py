@@ -12,9 +12,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     oidc_claim_scope.update({"groups": "profile"})
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
-        """
-        Ensure app/user policy is enforced during authorization_code exchange
-        (before a token is persisted).
+        """Ensure app/user policy is enforced during authorization_code
+        exchange (before a token is persisted).
         """
         ok = super().validate_code(
             client_id, code, client, request, *args, **kwargs
@@ -32,9 +31,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     def validate_refresh_token(
         self, refresh_token, client, request, *args, **kwargs
     ):
-        """
-        Ensure app/user policy is enforced during refresh_token flow.
-        """
+        """Ensure app/user policy is enforced during refresh_token flow."""
         ok = super().validate_refresh_token(
             refresh_token, client, request, *args, **kwargs
         )
@@ -61,8 +58,12 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             if user is not None and client is not None:
                 check_user_state_and_groups(user, client)
         except PermissionDenied:
-            # Convert to OAuth error response (no 500).
-            raise oauth_errors.InvalidGrantError(description="Access denied")
+            # Convert to OAuth error response (no 500). `from None` suppresses
+            # the PermissionDenied chain so the OAuth client only sees the
+            # protocol-level error, not Django internals.
+            raise oauth_errors.InvalidGrantError(
+                description="Access denied"
+            ) from None
         return super().save_bearer_token(token, request, *args, **kwargs)
 
     def get_additional_claims(self, request):
@@ -81,7 +82,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         character_id = getattr(main_character, "character_id", None)
         if character_id:
             out["picture"] = (
-                f"https://images.evetech.net/characters/{character_id}/portrait?size=128"  # noqa E501
+                f"https://images.evetech.net/characters/{character_id}/portrait?size=128"
             )
         # name
         character_name = getattr(main_character, "character_name", None)
