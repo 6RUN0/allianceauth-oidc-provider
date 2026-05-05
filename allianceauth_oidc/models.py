@@ -9,11 +9,11 @@ from oauth2_provider.models import AbstractApplication
 class AllianceAuthApplication(AbstractApplication):
     """OAuth2 Application restricted by Alliance Auth states and groups."""
 
-    logo_url = models.TextField(
+    logo_url = models.URLField(
         max_length=1024,
         blank=True,
-        null=True,
-        help_text="Url to the Applications Icon (128x128), can be a local static file or a full URL",  # noqa E501
+        default="",
+        help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.",  # noqa: E501
     )
     states = models.ManyToManyField(State, blank=True)
     groups = models.ManyToManyField(Group, blank=True)
