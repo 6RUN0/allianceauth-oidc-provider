@@ -1,6 +1,7 @@
 {% extends "allianceauth/base-bs5.html" %}
 
 {% load i18n %}
+{% load oidc_tags %}
 {% block page_title %}{{page_title}}{% endblock %}
 {% block extra_css %}
 <style>
@@ -36,7 +37,7 @@
                                 <div class="text-center">
                                     <img class="rounded-border" width="128px" height="128px" style="margin-right: -10px" src="{{request.user.profile.main_character.portrait_url_256}}"/>
                                     <i style="opacity:0.5;" class="fa-solid fa-link fa-fw"></i>
-                                    <img class="rounded-border" width="128px" height="128px" style="margin-left: -10px" src="{{application.logo_url}}"/>
+                                    <img class="rounded-border" width="128px" height="128px" style="margin-left: -10px" src="{{ application.logo_url|safe_image_url }}"/>
                                 </div>
                                 <h3 class="text-center">{{ application.name }} </h3>
                                 <p class="text-center">{% translate 'is requesting access to your Alliance Auth User data'%}</p>
