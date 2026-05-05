@@ -1,79 +1,43 @@
 # Apply to all files without committing:
-#   uv run pre-commit run --all
+#   uv run pre-commit run --all-files
 # Update this file:
 #   uv run pre-commit autoupdate
 
 repos:
-  # Code Upgrades
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.17.0
-    hooks:
-      - id: pyupgrade
-        args: [--py310-plus]
-  - repo: https://github.com/adamchainz/django-upgrade
-    rev: 1.29.1
-    hooks:
-      - id: django-upgrade
-        args: [--target-version=4.2]
-  # Code Logic
-  - repo: https://github.com/pycqa/isort
-    rev: 7.0.0
-    hooks:
-      - id: isort
-        args: ["--profile", "black", "--line-length", "79"]
-  - repo: https://github.com/pre-commit/pygrep-hooks
-    rev: v1.10.0
-    hooks:
-      - id: python-check-mock-methods
-      - id: python-no-log-warn
-      - id: python-use-type-annotations
-      - id: text-unicode-replacement-char
-  # Formatting
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-      # Identify invalid files
       - id: check-ast
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
       - id: check-yaml
-      - id: check-json
       - id: check-toml
-      - id: check-xml
-      # git checks
+      - id: check-json
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=10000]
       - id: detect-private-key
         exclude: ^tests/oidc-test\.key$
-      - id: check-case-conflict
-      # Python checks
-      - id: check-docstring-first
       - id: debug-statements
-      #      - id: requirements-txt-fixer
+      - id: end-of-file-fixer
+        exclude: |
+          (?x)(
+            \.po|
+            \.mo
+          )
       - id: fix-byte-order-marker
-      # General quality checks
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
         exclude: |
           (?x)(
-            \.min\.css|
-            \.min\.js|
             \.po|
-            \.mo|
-            swagger\.json
+            \.mo
           )
-      - id: check-executables-have-shebangs
-      - id: end-of-file-fixer
-        exclude: |
-          (?x)(
-            \.min\.css|
-            \.min\.js|
-            \.po|
-            \.mo|
-            swagger\.json
-          )
-      - id: check-shebang-scripts-are-executable
+
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.6.0
     hooks:
@@ -81,44 +45,84 @@ repos:
         exclude: |
           (?x)(
             LICENSE|
-            allianceauth\/static\/allianceauth\/css\/themes\/bootstrap-locals.less|
             \.po|
-            \.mo|
-            swagger\.json
+            \.mo
           )
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.3.0
-    hooks:
-      - id: flake8
-        additional_dependencies: [Flake8-pyproject]
-  - repo: https://github.com/asottile/yesqa
-    rev: v1.5.0
-    hooks:
-      - id: yesqa
-  # Infrastructure
-  - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.11.1
-    hooks:
-      - id: pyproject-fmt
-        name: pyproject.toml formatter
-        description: "Format the pyproject.toml file."
-        args:
-          - --indent=4
+
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.24.1
+    rev: v0.25
     hooks:
       - id: validate-pyproject
-        name: Validate pyproject.toml
-        description: "Validate the pyproject.toml file."
-  - repo: https://github.com/psf/black
-    rev: 26.1.0
+        additional_dependencies: ["validate-pyproject-schema-store[all]"]
+
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.7
     hooks:
-      - id: black
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+      - id: docformatter
+        args:
+          - --wrap-summaries=79
+          - --wrap-descriptions=79
+          - --pre-summary-newline
+          - --close-quotes-on-newline
+          - --in-place
+
+  - repo: https://github.com/adamchainz/django-upgrade
+    rev: 1.29.1
     hooks:
+      - id: django-upgrade
+        args: [--target-version=4.2]
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check (project venv)
+        entry: uv
+        language: system
+        types_or: [python, pyi]
+        args: ["run", "ruff", "check", "--fix", "--show-fixes"]
+
+      - id: ruff-format
+        name: ruff format (project venv)
+        entry: uv
+        language: system
+        types_or: [python, pyi]
+        args: ["run", "ruff", "format"]
+
       - id: mypy
+        name: mypy (project venv)
+        entry: uv
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: ["run", "mypy", "--config-file", "pyproject.toml", "allianceauth_oidc"]
+
+      - id: basedpyright
+        name: basedpyright (project venv)
+        entry: uv
+        language: system
+        pass_filenames: false
+        args: ["run", "basedpyright", "--project", "pyproject.toml"]
+
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.9.3
+    rev: 1.9.4
     hooks:
       - id: bandit
+        args: ["-c", "pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
+        files: ^allianceauth_oidc/.*\.py$
+
+  # pip-audit is opt-in (stage: manual) because Alliance Auth pins old
+  # transitive deps with public CVEs that cannot be upgraded from this repo.
+  # Run on demand:
+  #   uv run nox -s audit
+  #   uv run pre-commit run pip-audit --hook-stage=manual --all-files
+  - repo: local
+    hooks:
+      - id: pip-audit
+        name: pip-audit (project venv)
+        entry: uv
+        language: system
+        pass_filenames: false
+        stages: [manual]
+        files: ^(pyproject\.toml|uv\.lock)$
+        args: ["run", "pip-audit"]

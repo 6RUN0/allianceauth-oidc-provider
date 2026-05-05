@@ -1,30 +1,41 @@
-.PHONY: help clean dev docs package test
+.PHONY: help clean dev test lint typecheck coverage audit package deploy
 
 help:
-	@echo "This project assumes that an active Python virtualenv is present."
-	@echo "The following make targets are available:"
-	@echo "  dev        install all deps for dev environment"
-	@echo "  clean      remove all old packages"
-	@echo "  test       run tests"
-	@echo "  deploy     Configure the PyPi config file in CI"
-	@echo "  package	Build the PyPi package"
+	@echo "Available targets (all run via uv):"
+	@echo "  dev        sync dev dependencies (uv sync --all-groups + pre-commit install)"
+	@echo "  test       run Django test suite (nox -s tests)"
+	@echo "  lint       run pre-commit on all files (nox -s lint)"
+	@echo "  typecheck  run mypy + basedpyright (nox -s typecheck)"
+	@echo "  coverage   run tests with coverage report (nox -s coverage)"
+	@echo "  audit      pip-audit dependencies (nox -s audit)"
+	@echo "  clean      remove build artifacts"
+	@echo "  package    build distributions (flit)"
+	@echo "  deploy     upload distributions to PyPI (twine)"
+
+dev:
+	uv sync --all-groups
+	uv run pre-commit install
+
+test:
+	uv run nox -s tests
+
+lint:
+	uv run nox -s lint
+
+typecheck:
+	uv run nox -s typecheck
+
+coverage:
+	uv run nox -s coverage
+
+audit:
+	uv run nox -s audit
 
 clean:
 	rm -rf dist/*
 
-dev:
-	pip install --upgrade pip
-	pip install wheel -U
-	pip install tox -U
-	pip install -e .
-
-test:
-	tox
+package:
+	uv run --with flit flit build
 
 deploy:
-	pip install twine
-	twine upload dist/*
-
-package:
-	pip install flit
-	flit build
+	uv run --with twine twine upload dist/*
