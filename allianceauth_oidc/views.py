@@ -167,9 +167,15 @@ class AuthAuthorizationView(AuthorizationView):
         )
         if not client_id:
             return None
+        # prefetch states/groups: check_user_state_and_groups() does
+        # `app_states.exists()` + `app_states.filter(...).exists()` (and
+        # the same for groups), which is 3-4 queries per authorize without
+        # prefetching. With prefetch the related sets are loaded once and
+        # the per-request DB cost drops to a single multi-join query.
         return (
             get_application_model()
             .objects.filter(client_id=client_id, active=True)
+            .prefetch_related("states", "groups")
             .first()
         )
 
