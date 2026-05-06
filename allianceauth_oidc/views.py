@@ -53,8 +53,14 @@ class TokenAudit:
     but does not propagate to the OAuth client.
     """
 
-    request: HttpRequest
-    body: Any  # str | bytes | None — DOT returns whatever oauthlib hands back
+    # ``request`` is ``HttpRequest`` in production (TokenView.post hands
+    # it in) but ``Optional`` so parser-only test paths can construct a
+    # ``TokenAudit`` without a real request — ``parse_body`` and
+    # ``_body_byte_length`` never read it. ``_log_debug`` /
+    # ``_dispatch_signal`` do, but those are only reachable after a
+    # successful ``_find_token`` lookup.
+    request: HttpRequest | None
+    body: str | bytes | None
     sender: type
     max_body_bytes: int = _DEFAULT_MAX_BODY_BYTES_FOR_AUDIT_PARSE
     log: logging.Logger = field(default=logger)
@@ -134,6 +140,8 @@ class TokenAudit:
 
     def _log_debug(self, token: object, payload: dict[str, Any]) -> None:
         """Emit the per-app debug-mode log line, if applicable."""
+        if self.request is None:
+            return
         app = getattr(token, "application", None)
         if not getattr(app, "debug_mode", False):
             return
@@ -151,6 +159,8 @@ class TokenAudit:
 
     def _dispatch_signal(self, token: object) -> None:
         """Fan out to ``oidc_token_issued`` receivers, logging failures."""
+        if self.request is None:
+            return
         # send_robust returns [(receiver, response_or_exception), ...]
         # without propagating; one bad receiver can't break the others
         # or token issuance.

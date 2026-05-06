@@ -10,8 +10,6 @@ assertions). This file is the table-driven complement.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from django.test import SimpleTestCase
 
 from allianceauth_oidc.views import (
@@ -20,17 +18,22 @@ from allianceauth_oidc.views import (
 )
 
 
-def _audit(body: object, *, max_body_bytes: int | None = None) -> TokenAudit:
+def _audit(
+    body: str | bytes | None,
+    *,
+    max_body_bytes: int | None = None,
+) -> TokenAudit:
     """
     Construct a ``TokenAudit`` for a parser-only test.
 
-    ``request`` and ``sender`` are stubbed because ``parse_body`` /
-    ``_body_byte_length`` never touch them. ``max_body_bytes`` defaults
-    to the module constant so callers can opt into a tighter cap for
-    size-cap tests.
+    ``request=None`` and a stub ``sender`` are fine because
+    ``parse_body`` / ``_body_byte_length`` never touch them, and
+    ``_log_debug`` / ``_dispatch_signal`` short-circuit when
+    ``request is None`` — keeping parser-only tests free of an
+    ``HttpRequest`` fixture.
     """
     return TokenAudit(
-        request=SimpleNamespace(),  # type: ignore[arg-type]
+        request=None,
         body=body,
         sender=type("StubSender", (), {}),
         max_body_bytes=(
