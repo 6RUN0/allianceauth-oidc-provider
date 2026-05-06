@@ -5,7 +5,6 @@ import logging
 from typing import Any, Final
 
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
@@ -21,10 +20,7 @@ from oauth2_provider.models import (
 from oauth2_provider.views.base import AuthorizationView
 from oauth2_provider.views.mixins import OAuthLibMixin
 
-from .security import (
-    check_user_global_oidc_access,
-    check_user_state_and_groups,
-)
+from .security import DenyReason, evaluate_access
 from .signals import OIDCAuditBody, oidc_token_issued
 from .utils import app_log, build_oidc_debug_meta
 
@@ -253,9 +249,22 @@ class AuthAuthorizationView(AuthorizationView):
         #   differently.
         # - if checks are only in get()/post(), it's easy to miss a code path.
         user = getattr(request, "user", None)
-        try:
-            check_user_global_oidc_access(user)
-        except PermissionDenied:
+        app = self._get_app(request)
+        decision = evaluate_access(user, app)
+
+        if decision.allowed:
+            app_log(
+                logger,
+                decision.app,
+                "OIDC ALLOWED: user=%s app=%s path=%s method=%s",
+                user,
+                decision.app,
+                getattr(request, "path", None),
+                getattr(request, "method", None),
+            )
+            return super().dispatch(request, *args, **kwargs)
+
+        if decision.deny_reason is DenyReason.GLOBAL:
             logger.warning(
                 "OIDC DENIED: global access user=%s path=%s method=%s",
                 user,
@@ -268,32 +277,19 @@ class AuthAuthorizationView(AuthorizationView):
                 error_message=_("User not allowed global OIDC access"),
             )
 
-        app = self._get_app(request)
-        if app is not None:
-            try:
-                check_user_state_and_groups(user, app)
-            except PermissionDenied:
-                logger.warning(
-                    "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501
-                    user,
-                    app,
-                    getattr(app, "client_id", None),
-                    getattr(request, "path", None),
-                    getattr(request, "method", None),
-                )
-                return self._access_denied_response(
-                    request,
-                    username=str(user),
-                    app_name=str(app),
-                    error_message=_("User not allowed for this application"),
-                )
-        app_log(
-            logger,
-            app,
-            "OIDC ALLOWED: user=%s app=%s path=%s method=%s",
+        # DenyReason.APP — decision.app is non-None when reason is APP.
+        denied_app = decision.app
+        logger.warning(
+            "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501
             user,
-            app,
+            denied_app,
+            getattr(denied_app, "client_id", None),
             getattr(request, "path", None),
             getattr(request, "method", None),
         )
-        return super().dispatch(request, *args, **kwargs)
+        return self._access_denied_response(
+            request,
+            username=str(user),
+            app_name=str(denied_app),
+            error_message=_("User not allowed for this application"),
+        )

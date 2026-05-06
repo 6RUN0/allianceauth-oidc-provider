@@ -1,6 +1,10 @@
 """Per-user / per-application OIDC access policy checks."""
 
+from __future__ import annotations
+
 import logging
+from enum import Enum
+from typing import NamedTuple
 
 from django.core.exceptions import PermissionDenied
 
@@ -13,6 +17,69 @@ from .utils import app_log
 # - failures should become PermissionDenied, not AttributeError.
 
 logger = logging.getLogger(f"extensions.{__name__}")
+
+
+class DenyReason(str, Enum):
+    """
+    Structured reason for an authorize-request denial.
+
+    The values are stable identifiers safe for Prometheus labels,
+    structured logs, and audit sinks — translated user-facing text
+    lives at the rendering boundary (``views.py``), not on this enum.
+    Mixin with ``str`` (instead of ``StrEnum``, 3.11+) keeps the floor
+    at Python 3.10.
+    """
+
+    GLOBAL = "global"  # missing PERM_ACCESS_OIDC permission
+    APP = "app"  # state/group restriction failed for the chosen app
+
+
+class AccessDecision(NamedTuple):
+    """
+    Outcome of ``evaluate_access`` — three-way (allowed, denied-global,
+    denied-app) folded into a typed record.
+
+    ``app`` is echoed back so the caller can render it without a second
+    lookup; for an allowed request with no ``client_id`` the field is
+    ``None``.
+    """
+
+    allowed: bool
+    deny_reason: DenyReason | None
+    app: object | None
+
+
+def evaluate_access(user: object, app: object | None) -> AccessDecision:
+    """
+    Run the global + per-app policy and return a structured decision.
+
+    Splits the policy out of the view so it can be unit-tested without
+    spinning up ``RequestFactory`` + template loader. The exception-
+    raising checkers stay in place (they're the protocol the validator
+    layer uses) — this function just composes them and converts the
+    raises into a ``DenyReason``.
+
+    Order is preserved from the previous in-line ``dispatch`` body:
+    global first, app-level second. ``app=None`` (no ``client_id`` in
+    the request, or unknown / inactive client) skips the app branch and
+    delegates the missing-client_id error to DOT's ``AuthorizationView``
+    downstream.
+    """
+    try:
+        check_user_global_oidc_access(user)
+    except PermissionDenied:
+        return AccessDecision(
+            allowed=False, deny_reason=DenyReason.GLOBAL, app=None
+        )
+    if app is None:
+        return AccessDecision(allowed=True, deny_reason=None, app=None)
+    try:
+        check_user_state_and_groups(user, app)
+    except PermissionDenied:
+        return AccessDecision(
+            allowed=False, deny_reason=DenyReason.APP, app=app
+        )
+    return AccessDecision(allowed=True, deny_reason=None, app=app)
 
 
 def is_superuser(user: object) -> bool:
