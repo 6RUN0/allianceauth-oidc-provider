@@ -279,6 +279,39 @@ def markdown_lint(session: nox.Session) -> None:
 
 
 @nox.session
+def actions_lint(session: nox.Session) -> None:
+    """
+    Lint GitHub Actions workflows via ``actionlint``, if installed.
+
+    ``actionlint`` is a Go binary; install via the system package
+    manager (Gentoo: ``dev-util/actionlint``) or the upstream release
+    page (https://github.com/rhysd/actionlint). The session is a noop
+    with a warning when the binary is missing — same opt-in pattern as
+    ``markdown_lint``.
+
+    actionlint runs three checks in one pass: YAML schema validation
+    against the GitHub Actions grammar, expression-language lint for
+    ``${{ ... }}`` blocks, and shellcheck integration for every
+    ``run:`` script.
+    """
+    workflow_dir = pathlib.Path(".github/workflows")
+    workflows = sorted(
+        str(p) for p in workflow_dir.glob("*.yml")
+    ) + sorted(str(p) for p in workflow_dir.glob("*.yaml"))
+    if not workflows:
+        session.skip("no GitHub Actions workflows to lint")
+    if not shutil.which("actionlint"):
+        session.warn(
+            "actionlint not installed; skipping. "
+            "Install via system package manager (Gentoo: "
+            "dev-util/actionlint) or "
+            "https://github.com/rhysd/actionlint"
+        )
+        return
+    session.run("actionlint", "-color", *workflows, external=True)
+
+
+@nox.session
 def makemigrations(session: nox.Session) -> None:
     """
     Generate Django migrations for the ``allianceauth_oidc`` app.
