@@ -98,7 +98,18 @@ def audit_oidc_token_issued(
         )
 
 
-oidc_token_issued.connect(
-    audit_oidc_token_issued,
-    dispatch_uid=AUDIT_DISPATCH_UID,
-)
+def connect_default_receiver() -> None:
+    """
+    Wire ``audit_oidc_token_issued`` to ``oidc_token_issued``.
+
+    Called from ``AllianceAuthOIDC.ready()`` rather than at module
+    import — Django's documented signal-handling idiom — so that
+    importing names from this module (e.g. ``OIDCAuditBody``) does
+    not have the side effect of connecting the default receiver.
+    Tests that need a clean signal can ``oidc_token_issued.disconnect``
+    by ``dispatch_uid`` and re-call this function in cleanup.
+    """
+    oidc_token_issued.connect(
+        audit_oidc_token_issued,
+        dispatch_uid=AUDIT_DISPATCH_UID,
+    )
