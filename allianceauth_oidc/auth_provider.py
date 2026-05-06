@@ -38,6 +38,14 @@ _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
 # the validator class.
 _DEFAULT_MAX_GROUPS_IN_CLAIM: Final[int] = 256
 
+# AA-specific "groups" claim — emitted by ``ClaimsBuilder._groups``
+# AND bound under the ``profile`` scope inside
+# ``_build_oidc_claim_scope``. Pinned in one place so a future rename
+# (e.g. ``"groups"`` → ``"roles"``) lands in a single edit; previously
+# the two ends were stringly-coupled and could silently desync.
+_GROUPS_CLAIM_NAME: Final[str] = "groups"
+_GROUPS_CLAIM_SCOPE: Final[str] = "profile"
+
 
 @functools.lru_cache(maxsize=1)
 def _build_oidc_claim_scope(settings: OIDCSettings) -> dict[str, str]:
@@ -56,7 +64,7 @@ def _build_oidc_claim_scope(settings: OIDCSettings) -> dict[str, str]:
     would corrupt other validators sharing the same cache entry.
     """
     scopes: dict[str, str] = OAuth2Validator.oidc_claim_scope.copy()
-    scopes["groups"] = "profile"
+    scopes[_GROUPS_CLAIM_NAME] = _GROUPS_CLAIM_SCOPE
     scopes.update(
         {
             f"{settings.eve_claim_prefix}{n}": settings.eve_claim_scope
@@ -99,7 +107,7 @@ class ClaimsBuilder:
         if (name := self._name()) is not None:
             out["name"] = name
         if (groups := self._groups()) is not None:
-            out["groups"] = groups
+            out[_GROUPS_CLAIM_NAME] = groups
         if (locale := self._locale()) is not None:
             out["locale"] = locale
         out.update(self._eve_claims())
