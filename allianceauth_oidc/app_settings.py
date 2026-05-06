@@ -15,11 +15,12 @@ hand-craft a config without ``@override_settings``.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
 from django.conf import settings
-from typing_extensions import Self
+from django.test.signals import setting_changed
 
 # Setting keys: pin each name in one place so the docstring, the
 # ``getattr`` lookup, and any test using ``override_settings`` cannot
@@ -211,20 +212,65 @@ class OIDCSettings:
             raise ValueError(msg)
 
     @classmethod
-    def from_django(cls) -> Self:
+    def from_django(cls) -> OIDCSettings:
         """
-        Build a snapshot from the live ``django.conf.settings``.
+        Return a cached snapshot built from the live
+        ``django.conf.settings``.
 
-        Reads each value via the existing module-level accessor so the
-        coercion / default rules stay in one place — this is a typed
-        view over those, not a competing implementation.
+        Delegates to a process-global ``lru_cache`` so the seven
+        ``getattr`` reads + ``__post_init__`` validation only run on
+        the first call (and after every cache invalidation).
+        ``connect_invalidator`` wires a ``setting_changed`` receiver
+        that clears the cache when any ``ALLIANCEAUTH_OIDC_*``
+        setting flips, which keeps ``@override_settings`` honest in
+        tests while production benefits from "compute once".
         """
-        return cls(
-            log_masked_secrets=log_masked_secrets(),
-            log_mask_head=log_mask_head(),
-            log_mask_tail=log_mask_tail(),
-            portrait_url_template=portrait_url_template(),
-            portrait_size=portrait_size(),
-            eve_claim_prefix=eve_claim_prefix(),
-            eve_claim_scope=eve_claim_scope(),
-        )
+        return _cached_snapshot()
+
+
+# Process-wide cache for ``OIDCSettings.from_django()``. Module-level
+# rather than ``classmethod``-decorated because ``functools.lru_cache``
+# on a bound method silently leaks ``cls``-typed entries across
+# subclasses and test reloads. A bare cache keyed on no arguments is
+# the simplest correct shape.
+@functools.lru_cache(maxsize=1)
+def _cached_snapshot() -> OIDCSettings:
+    return OIDCSettings(
+        log_masked_secrets=log_masked_secrets(),
+        log_mask_head=log_mask_head(),
+        log_mask_tail=log_mask_tail(),
+        portrait_url_template=portrait_url_template(),
+        portrait_size=portrait_size(),
+        eve_claim_prefix=eve_claim_prefix(),
+        eve_claim_scope=eve_claim_scope(),
+    )
+
+
+# ``dispatch_uid`` for the ``setting_changed`` receiver. Tests that
+# disconnect/reconnect the invalidator reuse this; production code
+# never disconnects.
+_INVALIDATOR_DISPATCH_UID: Final[str] = (
+    "allianceauth_oidc.app_settings.invalidate_cached_snapshot"
+)
+
+
+def _invalidate_cached_snapshot(
+    sender: object, setting: str, **kwargs: Any
+) -> None:
+    """Drop the cached snapshot on any AA-OIDC setting flip."""
+    if setting.startswith("ALLIANCEAUTH_OIDC_"):
+        _cached_snapshot.cache_clear()
+
+
+def connect_invalidator() -> None:
+    """
+    Wire the ``setting_changed`` invalidator to the snapshot cache.
+
+    Called from ``AllianceAuthOIDC.ready()`` so the cache is honest
+    under ``@override_settings`` in tests; production never emits
+    ``setting_changed`` so the cache lives for the process lifetime.
+    """
+    setting_changed.connect(
+        _invalidate_cached_snapshot,
+        dispatch_uid=_INVALIDATOR_DISPATCH_UID,
+    )

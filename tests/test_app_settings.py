@@ -14,6 +14,7 @@ from django.test import SimpleTestCase, override_settings
 from allianceauth_oidc.app_settings import (
     EVE_PORTRAIT_VALID_SIZES,
     OIDCSettings,
+    _cached_snapshot,
 )
 
 
@@ -105,3 +106,50 @@ class TestOIDCSettingsFromDjango(SimpleTestCase):
         self.assertEqual(512, snap.portrait_size)
         self.assertEqual("custom_", snap.eve_claim_prefix)
         self.assertEqual("eve", snap.eve_claim_scope)
+
+
+class TestSnapshotCaching(SimpleTestCase):
+    """
+    Cover the ``functools.lru_cache`` backing of ``from_django()``.
+
+    Production avoids the seven-getattr + validation cost on every
+    claim build; tests cover identity cache hit, ``setting_changed``
+    invalidation under ``@override_settings``, and the ``startswith``
+    filter that prevents non-OIDC setting flips from busting the cache.
+    """
+
+    def setUp(self) -> None:
+        # Each test starts with a clean cache so prior tests'
+        # @override_settings exits cannot leak a stale entry.
+        _cached_snapshot.cache_clear()
+
+    def test_repeated_from_django_returns_same_instance(self):
+        a = OIDCSettings.from_django()
+        b = OIDCSettings.from_django()
+        self.assertIs(a, b)
+        info = _cached_snapshot.cache_info()
+        self.assertEqual(1, info.hits)
+        self.assertEqual(1, info.misses)
+
+    def test_override_settings_invalidates_cache(self):
+        first = OIDCSettings.from_django()
+        self.assertEqual(128, first.portrait_size)
+        with override_settings(ALLIANCEAUTH_OIDC_PORTRAIT_SIZE=512):
+            second = OIDCSettings.from_django()
+        self.assertEqual(512, second.portrait_size)
+        # Exiting the override block re-fires setting_changed, so the
+        # next read is the post-override value (back to default).
+        third = OIDCSettings.from_django()
+        self.assertEqual(128, third.portrait_size)
+        self.assertIsNot(first, second)
+        self.assertIsNot(second, third)
+
+    @override_settings(USE_TZ=False)
+    def test_unrelated_setting_does_not_bust_cache(self):
+        # Only ALLIANCEAUTH_OIDC_* changes should clear the cache.
+        # Without this guard, every Django setting flip would force a
+        # snapshot rebuild; the @override_settings above would have
+        # cleared the cache during setUp.
+        a = OIDCSettings.from_django()
+        b = OIDCSettings.from_django()
+        self.assertIs(a, b)

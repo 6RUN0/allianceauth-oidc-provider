@@ -22,9 +22,12 @@ class AllianceAuthOIDC(AppConfig):
     )
 
     def ready(self):
-        """Connect the default audit receiver to ``oidc_token_issued``."""
-        # Explicit connect call — see signals.connect_default_receiver
-        # for why this isn't a side-effect on module import.
+        """Wire OIDC signals + cache invalidators on app load."""
+        # Explicit connect calls — see ``signals.connect_default_receiver``
+        # and ``app_settings.connect_invalidator`` for why these are
+        # not side-effects on module import.
+        from .app_settings import connect_invalidator
         from .signals import connect_default_receiver
 
         connect_default_receiver()
+        connect_invalidator()
