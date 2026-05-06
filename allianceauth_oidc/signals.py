@@ -4,13 +4,14 @@ import logging
 from typing import Any, TypedDict
 
 from django.dispatch import Signal
+from typing_extensions import NotRequired
 
 from .constants import AUDIT_DISPATCH_UID
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
 
-class OIDCAuditBody(TypedDict, total=False):
+class OIDCAuditBody(TypedDict):
     """
     Curated, secret-free payload of the ``oidc_token_issued`` signal.
 
@@ -22,10 +23,15 @@ class OIDCAuditBody(TypedDict, total=False):
     Use ``token`` (the persisted ``AccessToken`` model) for anything
     derivable from the issued token; receivers can read ``token.scope``,
     ``token.user``, ``token.application`` directly.
+
+    Each field is ``NotRequired`` (PEP 655) so a sender can omit a key
+    rather than emitting it as ``None``, while still letting future
+    additions mark themselves required without churning the existing
+    optional ones.
     """
 
-    grant_type: str | None
-    scope: str | None
+    grant_type: NotRequired[str | None]
+    scope: NotRequired[str | None]
 
 
 # Custom signal instead of direct logging inside TokenView:
