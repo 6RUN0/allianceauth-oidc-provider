@@ -35,8 +35,15 @@ management_urlpatterns = [
 ]
 
 oidc_urlpatterns = [
-    path(
-        ".well-known/openid-configuration/",
+    # Trailing slash is OPTIONAL per OIDC Discovery 1.0 §4 / RFC 8414
+    # §3.1 — the canonical URL has no slash. Mirrors DOT's own
+    # ``re_path(r"^\.well-known/openid-configuration/?$", ...)`` so the
+    # OpenID Conformance Suite's
+    # ``oidcc-discovery-endpoint-verification`` module sees a direct 200
+    # rather than Django's APPEND_SLASH 301-redirect. ``path()`` cannot
+    # express the optional trailing slash — re_path is required.
+    re_path(
+        r"^\.well-known/openid-configuration/?$",
         views.ConnectDiscoveryInfoView.as_view(),
         name="oidc-connect-discovery-info",
     ),

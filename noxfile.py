@@ -426,6 +426,15 @@ def conformance(session: nox.Session) -> None:
     takes 10-15 minutes; see tests/conformance/README.md for context.
     """
     compose_file = "tests/conformance/docker-compose.yml"
+    cert_path = "tests/conformance/tls/ca.crt"
+    # Generate the self-signed CA + provider cert if missing. The
+    # conformance suite enforces ``https://`` for OIDC discovery, so
+    # the provider container serves TLS via ``runsslserver`` and the
+    # suite container imports the CA cert into its Java truststore on
+    # startup. Certs are gitignored — re-running ``gen.sh`` is safe
+    # (it overwrites). See ``tests/conformance/tls/`` for details.
+    if not pathlib.Path(cert_path).is_file():
+        session.run("sh", "tests/conformance/tls/gen.sh", external=True)
     try:
         session.run(
             "docker",

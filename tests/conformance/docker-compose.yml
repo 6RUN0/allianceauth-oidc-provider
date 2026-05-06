@@ -56,7 +56,17 @@ services:
         max-file: "5"
 
   server:
-    image: registry.gitlab.com/openid/conformance-suite:${IMAGE_TAG:-release-v5.1.43}
+    # Build a thin overlay on the upstream conformance image that
+    # imports the provider's self-signed CA into Java's truststore at
+    # build time. The upstream image's ENTRYPOINT exec's ``java``
+    # directly without invoking ``__cacert_entrypoint.sh``, so the
+    # eclipse-temurin ``USE_SYSTEM_CA_CERTS=1`` path is bypassed —
+    # build-time keytool import is the simpler alternative.
+    build:
+      context: ./tls
+      dockerfile: Dockerfile.suite
+      args:
+        IMAGE_TAG: ${IMAGE_TAG:-release-v5.1.43}
     restart: unless-stopped
     environment:
       BASE_URL: ${CONFORMANCE_BASE_URL:-https://localhost.emobix.co.uk:8443}
@@ -87,9 +97,10 @@ services:
     restart: unless-stopped
     environment:
       DJANGO_SETTINGS_MODULE: tests.conformance.conformance_settings
-      # Suite-side reach to provider is via Docker DNS; this is also
-      # what we advertise as ``iss`` so id_tokens validate.
-      CONFORMANCE_PUBLIC_URL: http://provider:8080
+      # Suite-side reach to provider is via Docker DNS over HTTPS; the
+      # suite enforces ``https://`` for OIDC discovery. The cert is
+      # signed by the CA mounted into the suite container above.
+      CONFORMANCE_PUBLIC_URL: https://provider:8443/o
       CONFORMANCE_CLIENT_ID: conformance-client
       CONFORMANCE_CLIENT_SECRET: conformance-secret
       CONFORMANCE_USERNAME: conformance
@@ -98,16 +109,21 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-    # Expose 8080 on the host too, so a developer can poke the
-    # provider directly with curl while a plan is running.
+    # Expose 8443 on host:8444 (the suite's nginx already owns
+    # host:8443) so a developer can poke the provider directly with
+    # ``curl --cacert tls/ca.crt https://localhost:8444/o/...`` while
+    # a plan is running. Internal Docker DNS still uses ``provider:8443``.
     ports:
-      - "8080:8080"
+      - "8444:8443"
     healthcheck:
+      # ``ssl=False`` not used here: the provider serves a self-signed
+      # cert, but we have the CA on disk inside the image (copied at
+      # build time), so verify against it for a real round-trip check.
       test:
         - "CMD"
         - "python"
         - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/o/.well-known/openid-configuration/').read()"
+        - "import ssl,urllib.request;ctx=ssl.create_default_context(cafile='/app/tests/conformance/tls/ca.crt');urllib.request.urlopen('https://127.0.0.1:8443/o/.well-known/openid-configuration',context=ctx).read()"
       interval: 10s
       timeout: 5s
       retries: 12

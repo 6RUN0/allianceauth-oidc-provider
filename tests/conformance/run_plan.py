@@ -51,10 +51,13 @@ SUITE_URL = os.environ.get(
 # Provider URL the suite uses for discoveryUrl + iss. Must align with
 # ``OIDC_ISS_ENDPOINT`` in conformance_settings.py — same value lives
 # on both sides (run_plan.py runs on host, settings on container) so
-# the issuer claim validates.
+# the issuer claim validates. ``https://`` because the conformance
+# suite enforces TLS for OIDC discovery; the provider serves a
+# self-signed cert backed by ``tls/ca.crt`` which the suite container
+# imports at startup via ``USE_SYSTEM_CA_CERTS=1``.
 PUBLIC_URL = os.environ.get(
     "CONFORMANCE_PUBLIC_URL",
-    "http://provider:8080/o",
+    "https://provider:8443/o",
 )
 CLIENT_ID = os.environ.get("CONFORMANCE_CLIENT_ID", "conformance-client")
 CLIENT_SECRET = os.environ.get(
@@ -81,6 +84,21 @@ DEFAULT_VARIANT: dict[str, str] = {
     "server_metadata": "discovery",
     "response_type": "code",
     "response_mode": "default",
+}
+
+# Plan-level variant defaults for plans that REQUIRE specific keys at
+# creation time (rather than pre-baking them). The suite's API
+# rejects both "key is missing" and "key has been set by user but
+# the plan pre-bakes it" with the same 400 status, so the default has
+# to be the exact accepted subset for each plan. Probe a new plan via
+# trial-and-error against ``/api/plan?planName=<x>&variant=<json>``
+# until the suite stops complaining. Plans not listed here default to
+# an empty plan-variant; pass ``--plan-variant`` to override.
+PLAN_VARIANT_DEFAULTS: dict[str, dict[str, str]] = {
+    "oidcc-basic-certification-test-plan": {
+        "client_registration": "static_client",
+        "server_metadata": "discovery",
+    },
 }
 
 # Result codes the suite emits. See ConformanceTestResult.java.
@@ -363,7 +381,10 @@ def main(argv: list[str] | None = None) -> int:
     module_variant = (
         json.loads(args.variant) if args.variant else DEFAULT_VARIANT
     )
-    plan_variant = json.loads(args.plan_variant) if args.plan_variant else None
+    if args.plan_variant:
+        plan_variant = json.loads(args.plan_variant)
+    else:
+        plan_variant = PLAN_VARIANT_DEFAULTS.get(args.plan)
     return run_plan(
         args.plan,
         module_variant=module_variant,

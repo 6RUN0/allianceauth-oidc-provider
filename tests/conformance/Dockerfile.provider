@@ -56,6 +56,14 @@ COPY tests ./tests
 
 RUN uv sync --all-groups --frozen
 
-EXPOSE 8080
+# ``gunicorn`` is a dev-only dependency for the conformance stack —
+# Django's stock ``runserver`` does not speak TLS, and the conformance
+# suite enforces ``https://`` for OIDC discovery. Production deployments
+# serve TLS at the reverse proxy, not at Django, so gunicorn stays out
+# of the project's pyproject. Installed into the existing uv-managed
+# venv via ``uv pip install``.
+RUN uv pip install --no-cache "gunicorn>=23.0,<24"
+
+EXPOSE 8443
 
 ENTRYPOINT ["/app/tests/conformance/entrypoint.sh"]

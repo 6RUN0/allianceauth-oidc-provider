@@ -29,21 +29,23 @@ from tests.test_settingsAA4 import OAUTH2_PROVIDER
 # Public URL the conformance suite uses to reach the provider. The
 # default matches the docker-compose layout: ``provider`` is the
 # Docker DNS name for our service, reachable from the suite container
-# on the shared bridge network. The trailing ``/o`` matters: OIDC
-# Discovery 1.0 requires ``iss`` to equal ``discoveryUrl`` with the
+# on the shared bridge network. ``https://`` (not http://) because the
+# suite enforces TLS for OIDC discovery — see
+# ``CheckDiscEndpointAllEndpointsAreHttps``. The trailing ``/o`` matters:
+# OIDC Discovery 1.0 requires ``iss`` to equal ``discoveryUrl`` with the
 # ``/.well-known/openid-configuration`` suffix removed. Our discovery
 # lives at ``/o/.well-known/...`` (DOT mounts everything under ``/o/``
 # in tests/urls.py), so ``iss`` must include ``/o`` to match.
 CONFORMANCE_PUBLIC_URL = os.environ.get(
     "CONFORMANCE_PUBLIC_URL",
-    "http://provider:8080/o",
+    "https://provider:8443/o",
 )
 
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 CSRF_TRUSTED_ORIGINS = [
-    "http://provider:8080",
-    "http://localhost:8080",
+    "https://provider:8443",
+    "https://localhost:8443",
     # Suite's TLS-terminated ingress; included so an operator iterating
     # via the UI on the host can drive consent / login forms without
     # CSRF rejections.

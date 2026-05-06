@@ -1,0 +1,6 @@
+# Generated key/cert files — re-create with ``sh gen.sh``.
+ca.crt
+ca.key
+provider.crt
+provider.key
+*.srl

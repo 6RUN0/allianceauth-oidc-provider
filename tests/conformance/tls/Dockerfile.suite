@@ -1,0 +1,30 @@
+# Extends the upstream OIDC Conformance Suite image with our self-signed
+# CA imported into Java's truststore. The suite's HttpClient validates
+# the provider's certificate against this truststore when fetching the
+# discovery document and other OIDC endpoints.
+#
+# The base image's ENTRYPOINT exec's ``java`` directly without going
+# through ``__cacert_entrypoint.sh``, so the eclipse-temurin
+# auto-import path (``USE_SYSTEM_CA_CERTS``) is bypassed. Importing at
+# build time is the cleanest fix — it survives container restarts and
+# avoids fragile entrypoint juggling.
+ARG IMAGE_TAG=release-v5.1.43
+FROM registry.gitlab.com/openid/conformance-suite:${IMAGE_TAG}
+
+# Build context is ``tls/`` so the CA cert is alongside this file.
+COPY ca.crt /tmp/conformance-provider-ca.crt
+
+# ``$JAVA_HOME/lib/security/cacerts`` is the standard JKS keystore;
+# ``changeit`` is the immutable JDK default password. We use a stable
+# alias so re-builds are idempotent — keytool refuses duplicates by
+# default, hence the explicit ``-noprompt`` + cleanup-on-conflict
+# wrapper.
+RUN keytool -delete -alias allianceauth-oidc-provider-ca \
+        -keystore "$JAVA_HOME/lib/security/cacerts" \
+        -storepass changeit 2>/dev/null || true \
+    && keytool -import -trustcacerts \
+        -alias allianceauth-oidc-provider-ca \
+        -file /tmp/conformance-provider-ca.crt \
+        -keystore "$JAVA_HOME/lib/security/cacerts" \
+        -storepass changeit -noprompt \
+    && rm /tmp/conformance-provider-ca.crt
