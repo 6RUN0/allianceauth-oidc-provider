@@ -96,18 +96,18 @@ flowchart LR
     runner["run_plan.py<br/>(host)"]
     browser["host browser<br/>(localhost.emobix.co.uk:8443)"]
 
-    subgraph compose["docker-compose bridge network"]
+    subgraph compose [docker-compose bridge network]
         nginx["nginx<br/>(TLS, :8443)"]
         server["server<br/>(suite Java)"]
         provider["provider<br/>(:8080)"]
         mongo["mongodb"]
     end
 
-    runner -- "REST over TLS" --> nginx
-    browser -- "UI" --> nginx
-    nginx -- "proxy HTTP" --> server
-    server -- "OIDC discovery / authorize / token" --> provider
-    server -- "state" --> mongo
+    runner -->|REST over TLS| nginx
+    browser -->|UI| nginx
+    nginx -->|proxy HTTP| server
+    server -->|OIDC discovery / authorize / token| provider
+    server -->|state| mongo
 ```
 
 - The suite (Java service) and its embedded headless browser both
