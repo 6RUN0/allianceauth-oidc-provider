@@ -30,25 +30,43 @@ Every authorization-code exchange runs through three independent gates. Each lay
 removing any of them opens a hole, which is why the regression tests exercise each layer
 separately.
 
-```mermaid
-sequenceDiagram
-    participant RP as Relying Party
-    participant Auth as /o/authorize/
-    participant DOT as django-oauth-toolkit
-    participant Token as /o/token/
-    participant Validator as AllianceAuthOAuth2Validator
-
-    RP->>Auth: GET/POST authorize, response_type=code
-    Note over Auth: Layer 1 — dispatch() runs global access_oidc + state/group whitelist
-    Auth->>DOT: forward (if policy passes)
-    DOT-->>RP: 302 redirect with auth code
-    RP->>Token: POST code + client_secret
-    Token->>Validator: validate_code(code, request)
-    Note over Validator: Layer 2 — re-checks state/group on exchange
-    Validator-->>Token: ok / invalid_grant
-    Token->>Validator: save_bearer_token(...)
-    Note over Validator: Layer 3 — last guard, PermissionDenied becomes invalid_grant
-    Validator-->>RP: 200 access_token + id_token
+```text
+   Relying Party                    Django + django-oauth-toolkit
+   -------------                    -----------------------------
+        |
+        |  GET/POST /o/authorize/?response_type=code
+        |------------------------------>  AuthAuthorizationView.dispatch()
+        |                                   Layer 1: views.py
+        |                                   - global access_oidc permission
+        |                                   - per-app state/group whitelist
+        |                                   - runs on GET *and* POST
+        |                                            |
+        |                                            v
+        |                                   django-oauth-toolkit issues code
+        |  <-----------------------------  302 redirect with auth code
+        |
+        |  POST /o/token/  code + client_secret
+        |------------------------------>  TokenView
+        |                                            |
+        |                                            v
+        |                                   AllianceAuthOAuth2Validator
+        |                                   Layer 2: auth_provider.py
+        |                                   - validate_code() re-checks
+        |                                     state/group whitelist
+        |                                   - returns invalid_grant if
+        |                                     user lost access
+        |                                            |
+        |                                   [policy passes]
+        |                                            v
+        |                                   Layer 3: auth_provider.py
+        |                                   - save_bearer_token()
+        |                                   - PermissionDenied here is
+        |                                     converted to InvalidGrantError
+        |                                     (never a 500, never a leaked
+        |                                     persisted-but-rejected token)
+        |                                            |
+        |                                            v
+        |  <-----------------------------  200 access_token + id_token
 ```
 
 ## Install

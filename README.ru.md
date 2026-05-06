@@ -28,25 +28,47 @@
 Каждый обмен `authorization_code` проходит через три независимые проверки. Любое упрощение —
 дыра в безопасности; именно поэтому в регрессии есть тесты под каждый слой по отдельности.
 
-```mermaid
-sequenceDiagram
-    participant RP as Relying Party
-    participant Auth as /o/authorize/
-    participant DOT as django-oauth-toolkit
-    participant Token as /o/token/
-    participant Validator as AllianceAuthOAuth2Validator
-
-    RP->>Auth: GET/POST authorize, response_type=code
-    Note over Auth: Слой 1 — dispatch() запускает глобальный access_oidc и whitelist по state/группам
-    Auth->>DOT: forward (если политика прошла)
-    DOT-->>RP: 302 redirect с auth code
-    RP->>Token: POST code + client_secret
-    Token->>Validator: validate_code(code, request)
-    Note over Validator: Слой 2 — повторная проверка state/групп при обмене
-    Validator-->>Token: ok / invalid_grant
-    Token->>Validator: save_bearer_token(...)
-    Note over Validator: Слой 3 — последний guard, PermissionDenied становится invalid_grant
-    Validator-->>RP: 200 access_token + id_token
+```text
+   Relying Party                    Django + django-oauth-toolkit
+   -------------                    -----------------------------
+        |
+        |  GET/POST /o/authorize/?response_type=code
+        |------------------------------>  AuthAuthorizationView.dispatch()
+        |                                   Слой 1: views.py
+        |                                   - глобальное право access_oidc
+        |                                   - whitelist по state/группам
+        |                                     (на уровне приложения)
+        |                                   - срабатывает на GET *и* POST
+        |                                            |
+        |                                            v
+        |                                   django-oauth-toolkit
+        |                                   выдаёт authorization code
+        |  <-----------------------------  302 redirect с auth code
+        |
+        |  POST /o/token/  code + client_secret
+        |------------------------------>  TokenView
+        |                                            |
+        |                                            v
+        |                                   AllianceAuthOAuth2Validator
+        |                                   Слой 2: auth_provider.py
+        |                                   - validate_code() повторно
+        |                                     проверяет state/группы
+        |                                   - возвращает invalid_grant,
+        |                                     если пользователь потерял
+        |                                     доступ между шагами
+        |                                            |
+        |                                   [политика прошла]
+        |                                            v
+        |                                   Слой 3: auth_provider.py
+        |                                   - save_bearer_token()
+        |                                   - PermissionDenied здесь
+        |                                     превращается в
+        |                                     InvalidGrantError (никогда
+        |                                     не 500, никогда не утечка
+        |                                     уже сохранённого токена)
+        |                                            |
+        |                                            v
+        |  <-----------------------------  200 access_token + id_token
 ```
 
 ## Установка
