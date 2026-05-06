@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 
 from tests.test_settingsAA4 import *  # noqa: F403
-from tests.test_settingsAA4 import OAUTH2_PROVIDER
+from tests.test_settingsAA4 import OAUTH2_PROVIDER, STORAGES
 
 # Public URL the conformance suite uses to reach the provider. The
 # default matches the docker-compose layout: ``provider`` is the
@@ -79,3 +79,22 @@ OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"] = 3600
 # settings module — production AA settings are unaffected.
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
+
+# Alliance Auth's base settings use ``AaManifestStaticFilesStorage``,
+# which expects ``collectstatic`` to have populated a manifest of
+# hashed filenames. Templates rendered by the suite's headless Chromium
+# (login form, consent page) reference static assets via
+# ``{% static ... %}``, and the manifest backend raises ``ValueError``
+# at template render time if the file is not in the manifest. We do
+# not run ``collectstatic`` in the conformance container — it is a
+# CI-style ephemeral harness, not a real deployment — so swap the
+# staticfiles backend for the non-manifest variant. Asset URLs still
+# resolve at template-render time; the headless browser will 404 on
+# the icons themselves, but the form renders and the suite's
+# Selenium driver fills/clicks regardless.
+STORAGES = {
+    **STORAGES,
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
