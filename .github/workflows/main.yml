@@ -6,9 +6,14 @@ on:
     tags-ignore: ["**"]
   pull_request:
     branches: ["**"]
-    tags-ignore: ["**"]
   # Manual trigger from the Actions tab.
   workflow_dispatch:
+
+# Default to the most-restrictive token. Jobs can grant themselves
+# extra scopes as needed; CI doesn't push, comment, or release, so
+# read-only is sufficient for everything below.
+permissions:
+  contents: read
 
 # Cancel superseded runs on the same ref so a flurry of pushes
 # doesn't queue up redundant CI minutes.
@@ -16,19 +21,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Third-party actions are pinned to commit SHAs (not moving tags) to
+# defend against the supply-chain attack class popularised by
+# CVE-2025-30066 (`tj-actions/changed-files`, March 2025). Dependabot
+# (.github/dependabot.yml) keeps these current.
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         # Mirror pyproject's ``requires-python = ">=3.10,<3.14"``.
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
 
@@ -43,7 +54,7 @@ jobs:
 
       - name: Upload test coverage
         if: ${{ !env.ACT }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: coverage-py${{ matrix.python-version }}
           path: htmlcov/
@@ -51,11 +62,12 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
 
@@ -70,11 +82,12 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
 
@@ -89,9 +102,10 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [test, lint, typecheck]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Install GNU gettext
         # ``django-admin compilemessages`` shells out to ``msgfmt`` from
@@ -101,7 +115,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends gettext
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
 
@@ -118,7 +132,7 @@ jobs:
         run: uv build
 
       - name: Upload distribution artefacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: dist
           path: dist/

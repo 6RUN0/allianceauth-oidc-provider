@@ -1,0 +1,45 @@
+# Dependabot config — keeps SHA-pinned third-party actions current.
+#
+# Why this file exists
+# --------------------
+# Both workflows (``main.yml``, ``release.yml``) pin third-party
+# ``uses:`` to commit SHAs (with the human-readable version as a
+# trailing comment). SHA-pinning blocks the supply-chain attack class
+# where a compromised maintainer retags an existing release —
+# CVE-2025-30066 (``tj-actions/changed-files``, March 2025) is the
+# canonical example.
+#
+# Without Dependabot, those SHAs would silently rot. Dependabot opens
+# a weekly PR per third-party action update, with the changelog and
+# diff visible — the operator merges or reviews per-PR.
+#
+# Scope
+# -----
+# Only the ``github-actions`` ecosystem is enabled here. Python deps
+# are managed by ``uv.lock`` + ``pip-audit`` (``make audit`` /
+# ``nox -s audit``); adding a ``pip``/``uv`` ecosystem here would
+# duplicate that pipeline.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Cap concurrent PRs so Dependabot doesn't flood the queue if
+    # several actions ship updates the same week.
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+    # Group all action updates into a single PR per week. Each action
+    # is a small, low-risk bump; reviewing them together is cheaper
+    # than five separate PRs.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
