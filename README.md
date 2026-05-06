@@ -367,3 +367,18 @@ The session is excluded from the default `nox` run because real-HTTP
 tests are an order of magnitude slower than the test-client suite and
 force `--parallel=1` (LiveServerTestCase is incompatible with the test
 runner's `fork()`).
+
+### Conformance Suite (`nox -s conformance`)
+
+`nox -s conformance` runs the [OpenID Foundation Conformance Suite][suite]
+against the provider via Docker Compose: MongoDB + the suite + a
+provider container. The default plan is driven through the suite's
+REST API by `tests/conformance/run_plan.py`.
+
+This is the level above our own integration tests — it catches spec
+edge cases that our regression tests wouldn't think to check. Run
+before tagging a release. See [tests/conformance/README.md](tests/conformance/README.md)
+for prerequisites, the manual / iterative workflow, configuration
+overrides, and the list of known conformance findings to triage.
+
+[suite]: https://gitlab.com/openid/conformance-suite

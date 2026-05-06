@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+#
+# Provider image for OIDC Conformance Suite.
+#
+# Pragmatic minimal image (option (c) from the design doc): rather
+# than reproduce a full Alliance Auth production deployment, we
+# install the project deps via uv and use the same ``test_settingsAA4``
+# the test suite uses, swapping in ``conformance_settings`` for the
+# bits the suite needs (HTTPS-aware iss, public ALLOWED_HOSTS, …).
+#
+# Heavy on-image lifting:
+# - System packages required by AA's wheel deps (libffi, libssl).
+# - uv for fast dependency resolution.
+# - Sqlite (default) is fine for the conformance run; no Postgres
+#   needed.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DJANGO_SETTINGS_MODULE=tests.conformance.conformance_settings \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_LINK_MODE=copy
+
+# System deps:
+#   build-essential, libffi/libssl/xml*           — generic native wheels
+#   pkg-config + default-libmysqlclient-dev       — required by AA's
+#       transitive ``mysqlclient`` dep, which has no wheels and
+#       compiles against MySQL client headers even when the runtime
+#       DB is SQLite.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        default-libmysqlclient-dev \
+        libffi-dev \
+        libssl-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -s /root/.local/bin/uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy lock + project metadata first so the dep layer is reusable
+# across source-only changes. ``LICENSE`` is required because
+# pyproject.toml declares ``license = { file = "LICENSE" }`` and the
+# flit_core build backend reads it; ``README.md`` is the project's
+# ``readme`` source.
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY allianceauth_oidc ./allianceauth_oidc
+COPY tests ./tests
+
+RUN uv sync --all-groups --frozen
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/tests/conformance/entrypoint.sh"]

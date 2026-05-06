@@ -1,0 +1,196 @@
+"""
+Seed deterministic test data for the conformance-suite run.
+
+Idempotent: re-running on an existing DB updates the rows in place
+without changing client_id / client_secret. This matters because the
+conformance suite is configured against a fixed credential pair.
+
+Reads:
+
+- ``CONFORMANCE_CLIENT_ID``      (default: ``conformance-client``)
+- ``CONFORMANCE_CLIENT_SECRET``  (default: ``conformance-secret``)
+- ``CONFORMANCE_USERNAME``       (default: ``conformance``)
+- ``CONFORMANCE_PASSWORD``       (default: ``conformance-pass``)
+- ``CONFORMANCE_REDIRECT_URI``   (default: suite's well-known callback)
+
+Run via Django's ``manage.py shell -c`` from the entrypoint script.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+import django
+
+django.setup()
+
+from allianceauth.authentication.models import (  # noqa: E402
+    EveAllianceInfo,
+    EveCharacter,
+    EveCorporationInfo,
+    State,
+)
+from allianceauth.tests.auth_utils import AuthUtils  # noqa: E402
+from django.contrib.auth.models import Permission  # noqa: E402
+from django.utils import timezone  # noqa: E402
+from oauth2_provider.models import (  # noqa: E402
+    AbstractApplication,
+    get_application_model,
+)
+
+from allianceauth_oidc.constants import (  # noqa: E402
+    PERM_ACCESS_OIDC_CODENAME,
+)
+
+CLIENT_ID = os.environ.get("CONFORMANCE_CLIENT_ID", "conformance-client")
+CLIENT_SECRET = os.environ.get(
+    "CONFORMANCE_CLIENT_SECRET",
+    "conformance-secret",  # nosec B105
+)
+# OIDCC basic-certification plans drive a *second* client through some
+# modules (multi-client tests). We pre-register a separate one to
+# satisfy the suite's static-registration variant.
+CLIENT2_ID = os.environ.get("CONFORMANCE_CLIENT2_ID", "conformance-client2")
+CLIENT2_SECRET = os.environ.get(
+    "CONFORMANCE_CLIENT2_SECRET",
+    "conformance-secret-2",  # nosec B105
+)
+USERNAME = os.environ.get("CONFORMANCE_USERNAME", "conformance")
+PASSWORD = os.environ.get(
+    "CONFORMANCE_PASSWORD",
+    "conformance-pass",  # nosec B105
+)
+# Each client gets its own callback path on the suite — the suite
+# routes by ``alias`` segment.
+REDIRECT_URI = os.environ.get(
+    "CONFORMANCE_REDIRECT_URI",
+    "https://localhost.emobix.co.uk:8443/test/a/conformance/callback",
+)
+REDIRECT_URI_2 = os.environ.get(
+    "CONFORMANCE_REDIRECT_URI_2",
+    "https://localhost.emobix.co.uk:8443/test/a/conformance/callback2",
+)
+
+
+def _ensure_alliance_chain() -> EveCharacter:
+    """Create an Alliance/Corp/Character so EVE claims emit values."""
+    alli, _ = EveAllianceInfo.objects.update_or_create(
+        alliance_id=9001,
+        defaults={
+            "alliance_name": "ConformanceAlliance",
+            "alliance_ticker": "CONF",
+            "executor_corp_id": 9101,
+        },
+    )
+    corp, _ = EveCorporationInfo.objects.update_or_create(
+        corporation_id=9101,
+        defaults={
+            "corporation_name": "ConformanceCorp",
+            "corporation_ticker": "CCRP",
+            "ceo_id": 9101,
+            "member_count": 1,
+            "alliance": alli,
+        },
+    )
+    char, _ = EveCharacter.objects.update_or_create(
+        character_id=9201,
+        defaults={
+            "character_name": "ConformanceMain",
+            "corporation_id": corp.corporation_id,
+            "corporation_name": corp.corporation_name,
+            "corporation_ticker": corp.corporation_ticker,
+            "alliance_id": alli.alliance_id,
+            "alliance_name": alli.alliance_name,
+            "alliance_ticker": alli.alliance_ticker,
+        },
+    )
+    return char
+
+
+def _ensure_user(main_char: EveCharacter):
+    """Create the conformance user and grant ``access_oidc``."""
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    try:
+        user = AuthUtils.create_user(USERNAME)
+    except Exception:
+        user = User.objects.get(username=USERNAME)
+    user.set_password(PASSWORD)
+    user.email = "conformance@example.test"
+    if user.last_login is None:
+        user.last_login = timezone.now()
+    user.save()
+
+    user.profile.main_character = main_char
+    user.profile.save()
+
+    perm = Permission.objects.get_by_natural_key(
+        PERM_ACCESS_OIDC_CODENAME,
+        "allianceauth_oidc",
+        "allianceauthapplication",
+    )
+    user.user_permissions.add(perm)
+
+    # Drop the user into the Member state so any state-restricted apps
+    # we add later inherit a sensible default.
+    State.objects.get(name="Member").member_characters.add(main_char)
+    return user
+
+
+def _ensure_app(
+    owner,
+    *,
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str,
+    name: str,
+) -> None:
+    """Create or update an OIDC application with the given credentials."""
+    Application = get_application_model()
+    # ``skip_authorization`` removes the consent screen so the
+    # suite's Selenium driver only has to fill the login form.
+    Application.objects.update_or_create(
+        client_id=client_id,
+        defaults={
+            "client_secret": client_secret,
+            "user": owner,
+            "name": name,
+            "client_type": AbstractApplication.CLIENT_CONFIDENTIAL,
+            "authorization_grant_type": (
+                AbstractApplication.GRANT_AUTHORIZATION_CODE
+            ),
+            "redirect_uris": redirect_uri,
+            "algorithm": "RS256",
+            "skip_authorization": True,
+            "active": True,
+        },
+    )
+
+
+def main() -> None:
+    main_char = _ensure_alliance_chain()
+    user = _ensure_user(main_char)
+    _ensure_app(
+        user,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        redirect_uri=REDIRECT_URI,
+        name="Conformance Test Client",
+    )
+    _ensure_app(
+        user,
+        client_id=CLIENT2_ID,
+        client_secret=CLIENT2_SECRET,
+        redirect_uri=REDIRECT_URI_2,
+        name="Conformance Test Client (secondary)",
+    )
+    sys.stdout.write(
+        f"OK seeded client_ids=[{CLIENT_ID}, {CLIENT2_ID}] "
+        f"username={USERNAME}\n"
+    )
+
+
+if __name__ == "__main__":
+    main()

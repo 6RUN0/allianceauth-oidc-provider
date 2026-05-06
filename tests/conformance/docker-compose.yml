@@ -1,0 +1,121 @@
+# OIDC Conformance Suite stack for the provider.
+#
+# Layout mirrors the upstream prebuilt setup
+# (https://gitlab.com/openid/conformance-suite/-/raw/master/docker-compose-prebuilt.yml)
+# extended with our provider container:
+#
+#   mongodb:  state for the suite (test plans, results)
+#   nginx:    TLS terminator on 8443 (cert valid for localhost.emobix.co.uk)
+#   server:   the OpenID Conformance Suite Java service
+#   provider: our Django provider (Dockerfile.provider)
+#
+# Networking notes:
+# - All four services share the default compose bridge network so the
+#   suite reaches our provider via Docker DNS at ``http://provider:8080``.
+#   ``run_plan.py`` ships that URL as ``discoveryUrl`` in the plan
+#   config; the suite (Java code) and its embedded headless browser
+#   both resolve it the same way.
+# - The HOST OS must map ``localhost.emobix.co.uk`` to 127.0.0.1 in
+#   /etc/hosts (the public DNS record does this too, so usually no
+#   action is needed). The host's web browser uses that hostname to
+#   open the suite UI on https://localhost.emobix.co.uk:8443/.
+#
+# Pinned to a specific release for reproducibility; flip ``IMAGE_TAG``
+# to ``latest`` to track master.
+
+x-conformance-image: &conformance_image_tag "release-v5.1.43"
+
+services:
+  mongodb:
+    image: mongo:6.0.13
+    restart: unless-stopped
+    volumes:
+      - conformance_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500k"
+        max-file: "5"
+
+  nginx:
+    image: registry.gitlab.com/openid/conformance-suite/nginx:${IMAGE_TAG:-release-v5.1.43}
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    depends_on:
+      - server
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500k"
+        max-file: "5"
+
+  server:
+    image: registry.gitlab.com/openid/conformance-suite:${IMAGE_TAG:-release-v5.1.43}
+    restart: unless-stopped
+    environment:
+      BASE_URL: ${CONFORMANCE_BASE_URL:-https://localhost.emobix.co.uk:8443}
+      MONGODB_HOST: mongodb
+      SPRING_PROFILES_ACTIVE: dev
+      # The suite registers Spring OAuth2 clients for its own "Login
+      # with Google/GitLab" admin UI; Spring validates the registry at
+      # startup and refuses to boot if any of these is empty. Mirror
+      # the upstream prebuilt compose's placeholder defaults — we
+      # never use the buttons, but the bean must construct.
+      OIDC_GOOGLE_CLIENTID: ${OIDC_GOOGLE_CLIENTID:-google-client}
+      OIDC_GOOGLE_SECRET: ${OIDC_GOOGLE_SECRET:-google-secret}
+      OIDC_GITLAB_CLIENTID: ${OIDC_GITLAB_CLIENTID:-gitlab-client}
+      OIDC_GITLAB_SECRET: ${OIDC_GITLAB_SECRET:-gitlab-secret}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500k"
+        max-file: "5"
+
+  provider:
+    build:
+      context: ../..
+      dockerfile: tests/conformance/Dockerfile.provider
+    restart: unless-stopped
+    environment:
+      DJANGO_SETTINGS_MODULE: tests.conformance.conformance_settings
+      # Suite-side reach to provider is via Docker DNS; this is also
+      # what we advertise as ``iss`` so id_tokens validate.
+      CONFORMANCE_PUBLIC_URL: http://provider:8080
+      CONFORMANCE_CLIENT_ID: conformance-client
+      CONFORMANCE_CLIENT_SECRET: conformance-secret
+      CONFORMANCE_USERNAME: conformance
+      CONFORMANCE_PASSWORD: conformance-pass
+      AA_USE_FAKE_REDIS: "1"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    # Expose 8080 on the host too, so a developer can poke the
+    # provider directly with curl while a plan is running.
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/o/.well-known/openid-configuration/').read()"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500k"
+        max-file: "5"
+
+volumes:
+  conformance_mongo_data:

@@ -144,6 +144,54 @@ def audit(session: nox.Session) -> None:
 
 
 @nox.session
+def conformance(session: nox.Session) -> None:
+    """
+    Run the OpenID Conformance Suite against a Docker-Compose-built
+    provider stack.
+
+    Brings up MongoDB + the conformance suite + our provider, runs the
+    default plan via ``run_plan.py``, and tears the stack down
+    regardless of outcome. ``--`` args after the session name are
+    forwarded to the runner — e.g.::
+
+        uv run nox -s conformance -- --plan oidcc-basic-certification-test-plan
+        uv run nox -s conformance -- --strict-warnings
+
+    Excluded from default sessions because it pulls Docker images and
+    takes 10-15 minutes; see tests/conformance/README.md for context.
+    """
+    compose_file = "tests/conformance/docker-compose.yml"
+    try:
+        session.run(
+            "docker",
+            "compose",
+            "-f",
+            compose_file,
+            "up",
+            "-d",
+            "--wait",
+            external=True,
+        )
+        session.run(
+            "python",
+            "tests/conformance/run_plan.py",
+            *session.posargs,
+            external=True,
+        )
+    finally:
+        session.run(
+            "docker",
+            "compose",
+            "-f",
+            compose_file,
+            "down",
+            "-v",
+            external=True,
+            success_codes=[0, 1],
+        )
+
+
+@nox.session
 def integration(session: nox.Session) -> None:
     """
     Run wire-level integration tests (mock-RP via LiveServerTestCase).
