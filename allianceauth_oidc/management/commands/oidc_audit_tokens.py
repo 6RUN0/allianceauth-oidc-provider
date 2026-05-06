@@ -78,6 +78,11 @@ class Command(BaseCommand):
                 ) from exc
             qs = qs.filter(application=app)
 
+        # ``pkce`` reflects the matching ``AllianceAuthApplication``'s
+        # ``pkce_required`` flag. The ``select_related("application")``
+        # above keeps this an in-memory attribute access — no extra
+        # query per row. Useful when triaging "did this token come from
+        # a strict-PKCE client?" without context-switching to admin.
         rows = [
             {
                 "id": t.id,
@@ -85,13 +90,21 @@ class Command(BaseCommand):
                 "client_id": getattr(t.application, "client_id", None),
                 "scope": t.scope,
                 "expires": t.expires.isoformat() if t.expires else "",
+                "pkce": getattr(t.application, "pkce_required", None),
             }
             for t in qs.order_by("-expires").iterator()
         ]
         self.stdout.write(
             render_rows(
                 rows,
-                columns=("id", "user", "client_id", "scope", "expires"),
+                columns=(
+                    "id",
+                    "user",
+                    "client_id",
+                    "scope",
+                    "expires",
+                    "pkce",
+                ),
                 fmt=options["format"],
             )
         )

@@ -139,6 +139,47 @@ class TestOIDCCreateAppCommand(OIDCTestCase):
         self.assertIn("Member", app.states.values_list("name", flat=True))
         self.assertIn(grp, app.groups.all())
 
+    def test_default_pkce_required_is_true(self) -> None:
+        """
+        No flag → app.pkce_required matches the model default (True,
+        per RFC 9700 secure-by-default). The rendered row also shows
+        the flag so the operator sees what was created.
+        """
+        out = StringIO()
+        call_command(
+            "oidc_create_app",
+            "--name=Default PKCE",
+            f"--user-id={self.user1.pk}",
+            "--format=json",
+            stdout=out,
+        )
+        row = json.loads(out.getvalue())[0]
+        self.assertTrue(row["pkce_required"])
+        Application = get_application_model()
+        app = Application.objects.get(client_id=row["client_id"])
+        self.assertTrue(app.pkce_required)
+
+    def test_no_pkce_required_flag_disables(self) -> None:
+        """
+        ``--no-pkce-required`` (BooleanOptionalAction) is the documented
+        opt-out for legacy clients. The created row must persist with
+        ``pkce_required=False``.
+        """
+        out = StringIO()
+        call_command(
+            "oidc_create_app",
+            "--name=Legacy Client",
+            f"--user-id={self.user1.pk}",
+            "--no-pkce-required",
+            "--format=json",
+            stdout=out,
+        )
+        row = json.loads(out.getvalue())[0]
+        self.assertFalse(row["pkce_required"])
+        Application = get_application_model()
+        app = Application.objects.get(client_id=row["client_id"])
+        self.assertFalse(app.pkce_required)
+
 
 class TestOIDCRotateSecretCommand(OIDCTestCase):
     def test_dry_run_does_not_change_secret(self) -> None:
@@ -331,3 +372,30 @@ class TestOIDCAuditTokensCommand(OIDCTestCase):
                 "--username=ghost",
                 stdout=StringIO(),
             )
+
+    def test_audit_surfaces_pkce_required_per_application(self) -> None:
+        """
+        Each row exposes the application's ``pkce_required`` flag so an
+        operator triaging tokens can see "is this from a strict-PKCE
+        client?" without context-switching to admin. Both directions of
+        the flag are pinned to guard against a regression that hard-
+        codes the column to ``True`` (or strips it on
+        ``None``-coalesce).
+        """
+        self._seed_token()
+        # Shared fixture ships ``pkce_required=False``; flip it
+        # explicitly to assert both directions in one test.
+        self.oauth_app.pkce_required = True
+        self.oauth_app.save()
+        out = StringIO()
+        call_command("oidc_audit_tokens", "--format=json", stdout=out)
+        rows = json.loads(out.getvalue())
+        self.assertEqual(1, len(rows))
+        self.assertTrue(rows[0]["pkce"])
+
+        self.oauth_app.pkce_required = False
+        self.oauth_app.save()
+        out = StringIO()
+        call_command("oidc_audit_tokens", "--format=json", stdout=out)
+        rows = json.loads(out.getvalue())
+        self.assertFalse(rows[0]["pkce"])

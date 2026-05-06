@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 from typing import Any
 
@@ -88,6 +89,22 @@ class Command(BaseCommand):
             help=_("Allowed Django group name (repeat for multiple)."),
         )
         parser.add_argument("--debug-mode", action="store_true")
+        # Default ``True`` matches ``AllianceAuthApplication.pkce_required``'s
+        # field default (RFC 9700 secure-by-default). ``BooleanOptionalAction``
+        # surfaces both ``--pkce-required`` and ``--no-pkce-required`` so the
+        # operator can be explicit either way; ``--debug-mode`` uses
+        # ``store_true`` because its default is ``False`` and there is no
+        # opt-out direction worth naming.
+        parser.add_argument(
+            "--pkce-required",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help=_(
+                "Require PKCE on the authorization endpoint for this app "
+                "(RFC 7636 / 9700). Default: True. Pass --no-pkce-required "
+                "for known-incompatible legacy clients."
+            ),
+        )
         parser.add_argument(
             "--format",
             default="table",
@@ -133,6 +150,7 @@ class Command(BaseCommand):
                 authorization_grant_type=options["grant_type"],
                 redirect_uris=" ".join(options["redirect_uri"]),
                 debug_mode=options["debug_mode"],
+                pkce_required=options["pkce_required"],
             )
             if states:
                 app.states.set(states)
@@ -182,6 +200,7 @@ class Command(BaseCommand):
                     "client_secret": raw_secret,
                     "name": app.name,
                     "grant_type": options["grant_type"],
+                    "pkce_required": app.pkce_required,
                 }
             ],
             columns=(
@@ -190,6 +209,7 @@ class Command(BaseCommand):
                 "client_secret",
                 "name",
                 "grant_type",
+                "pkce_required",
             ),
             fmt=options["format"],
         )
