@@ -78,9 +78,7 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
         self.grant_oidc_access(self.user1)
         decision = evaluate_access(self.user1, self.oauth_app)
         self.assertEqual(
-            AccessDecision(
-                allowed=True, deny_reason=None, app=self.oauth_app
-            ),
+            AccessDecision(allowed=True, deny_reason=None, app=self.oauth_app),
             decision,
         )
 

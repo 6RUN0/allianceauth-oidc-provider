@@ -172,8 +172,10 @@ class TestPictureClaim(SimpleTestCase):
             out = builder.build()
         self.assertNotIn("picture", out)
         self.assertTrue(
-            any("invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE" in m
-                for m in cap.output)
+            any(
+                "invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE" in m
+                for m in cap.output
+            )
         )
 
 
@@ -217,9 +219,7 @@ class TestGroupsClaim(SimpleTestCase):
             user=_user(group_names=["zeta", "alpha"], state_name="Blue"),
             settings=_settings(),
         )
-        self.assertEqual(
-            ["alpha", "zeta", "Blue"], builder.build()["groups"]
-        )
+        self.assertEqual(["alpha", "zeta", "Blue"], builder.build()["groups"])
 
     def test_oversized_groups_truncated_with_warning(self):
         # 300 groups > default cap of 256 → truncate, then append
@@ -252,9 +252,7 @@ class TestGroupsClaim(SimpleTestCase):
 class TestLocaleClaim(SimpleTestCase):
     def test_omitted_when_blank(self):
         # ``UserProfile.language`` defaults to "" — must not be emitted.
-        builder = ClaimsBuilder(
-            user=_user(language=""), settings=_settings()
-        )
+        builder = ClaimsBuilder(user=_user(language=""), settings=_settings())
         self.assertNotIn("locale", builder.build())
 
     def test_emitted_when_set(self):
