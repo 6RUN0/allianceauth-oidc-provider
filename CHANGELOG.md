@@ -14,16 +14,31 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
-## [0.1.0b2] - 2026-05-06
+## [0.1.0b3] - 2026-05-06
 
-The `v0.1.0b1` tag exists in git history but never reached PyPI —
-the release pipeline failed at the bundled twine pre-check inside
-`pypa/gh-action-pypi-publish` (it does not understand
-`Metadata-Version: 2.4` produced by modern flit-core). `v0.1.0b2`
-re-runs the same release content with the pre-check skipped (PyPI
-server-side validation is unaffected) and is therefore the actual
-first PyPI publication of the fork. See `fix(ci):` commit for the
+`v0.1.0b1` and `v0.1.0b2` were tagged but never reached PyPI:
+
+- `v0.1.0b1` — the bundled twine pre-check inside
+  `pypa/gh-action-pypi-publish@v1.9.0` rejects
+  `Metadata-Version: 2.4` produced by modern flit-core (PEP 685,
+  2024).
+- `v0.1.0b2` — the same broken twine runs again *during*
+  `twine upload` itself (not only the pre-check), so disabling the
+  pre-check via `verify-metadata: false` was insufficient.
+
+`v0.1.0b3` switches the publisher to `uv publish`, which understands
+`Metadata-Version: 2.4` natively and supports PyPI Trusted
+Publishing automatically. It is therefore the actual first PyPI
+publication of the fork. The earlier tags remain in git history as
+markers of the failed attempts. See the `fix(ci):` commits for the
 full diagnosis.
+
+This release also bumps three actions to Node 24 (`actions/checkout`
+v4 → v6, `actions/upload-artifact` v4 → v7, `astral-sh/setup-uv` v5
+→ v8) to clear the GitHub-Actions Node-20 deprecation warning, and
+applies zizmor's security findings (`persist-credentials: false` on
+all checkouts, `enable-cache: false` on all setup-uv usages — the
+latter to mitigate cache-poisoning across release runs).
 
 ### Added
 

@@ -167,6 +167,8 @@ Talovikov
 rumdl
 lychee
 vale
+actionlint
+zizmor
 envs
 Makefile
 argparse

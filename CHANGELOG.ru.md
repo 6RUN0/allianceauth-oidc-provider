@@ -14,16 +14,33 @@
 
 ## [Unreleased]
 
-## [0.1.0b2] - 2026-05-06
+## [0.1.0b3] - 2026-05-06
 
-Тег `v0.1.0b1` существует в истории git, но до PyPI не доехал —
-release-pipeline упал на встроенной twine-предпроверке внутри
-`pypa/gh-action-pypi-publish` (она не понимает
-`Metadata-Version: 2.4`, который выдаёт современный flit-core).
-`v0.1.0b2` повторяет тот же набор изменений с отключённой
-предпроверкой (валидация на стороне PyPI не затронута) и
-является фактически первой публикацией форка на PyPI. Полный
-разбор причин — в коммите `fix(ci):`.
+Теги `v0.1.0b1` и `v0.1.0b2` зафиксированы в git, но до PyPI не
+доехали:
+
+- `v0.1.0b1` — встроенная twine-предпроверка внутри
+  `pypa/gh-action-pypi-publish@v1.9.0` отвергает
+  `Metadata-Version: 2.4`, который выдаёт современный flit-core
+  (PEP 685, 2024).
+- `v0.1.0b2` — тот же сломанный twine запускается ещё раз во
+  *время* `twine upload`, так что отключение предпроверки через
+  `verify-metadata: false` оказалось недостаточным.
+
+`v0.1.0b3` переключает publisher на `uv publish`, который
+понимает `Metadata-Version: 2.4` нативно и поддерживает PyPI
+Trusted Publishing автоматически. Это фактически первая
+публикация форка на PyPI. Прежние теги остаются в истории git как
+метки неудачных попыток. Полный разбор причин — в коммитах
+`fix(ci):`.
+
+Этот релиз также переводит три action'а на Node 24
+(`actions/checkout` v4 → v6, `actions/upload-artifact` v4 → v7,
+`astral-sh/setup-uv` v5 → v8) — снимает deprecation-warning
+GitHub Actions про Node 20, — и применяет находки zizmor по
+безопасности (`persist-credentials: false` на всех checkout-шагах,
+`enable-cache: false` на всех setup-uv — последнее закрывает
+cache-poisoning vector между release-прогонами).
 
 ### Добавлено
 
