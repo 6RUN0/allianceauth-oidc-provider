@@ -18,6 +18,7 @@ Examples::
     uv run nox -s compilemessages                  # compile .po -> .mo
     uv run nox -s makemigrations                   # generate Django migrations
     uv run nox -s markdown_lint                    # rumdl + lychee + vale
+    uv run nox -s tests_matrix                     # tests on every supported Python
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
@@ -58,6 +59,13 @@ TEST_ARGS_BASE = [
 # both ``makemessages`` (extract) and ``compilemessages`` (compile).
 LOCALES = ["en", "ru", "uk"]
 PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
+
+# Per-version Python interpreters used by ``tests_matrix``. Mirrors
+# ``pyproject.toml::requires-python = ">=3.10,<3.14"``: 3.10 is the
+# floor (mypy / basedpyright also pin to it), 3.13 is the most recent
+# tested. Update this list when bumping ``requires-python`` upper
+# bound.
+PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
 
 
 def _resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:
@@ -103,6 +111,37 @@ def tests(session: nox.Session) -> None:
     `... -- --parallel 1` for a focused subset where the fork overhead
     outweighs the speed-up, or while debugging a flaky test.
     """
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "test",
+        *TEST_ARGS_BASE,
+        "--parallel=auto",
+        *_resolve_test_labels(tuple(session.posargs)),
+        env=_test_env(session),
+    )
+
+
+@nox.session(python=PYTHON_VERSIONS, venv_backend="uv")
+def tests_matrix(session: nox.Session) -> None:
+    """
+    Run the Django test suite against every supported Python version.
+
+    Spawns a per-interpreter uv-managed venv (vs the default ``none``
+    backend that re-uses the active venv) and ``uv sync --all-groups``s
+    into it before running ``django test``. Slower than ``tests`` but
+    catches version-specific regressions — typing-extension semantics,
+    deprecated stdlib modules, native wheel availability gaps. Pass
+    extra args to ``django test`` after ``--`` like with ``tests``.
+    """
+    session.run_install(
+        "uv",
+        "sync",
+        "--all-groups",
+        f"--python={session.python}",
+        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
+    )
     session.run(
         "python",
         "-m",
