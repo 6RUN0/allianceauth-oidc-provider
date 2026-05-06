@@ -18,7 +18,7 @@ Examples::
     uv run nox -s compilemessages                  # compile .po -> .mo
     uv run nox -s makemigrations                   # generate Django migrations
     uv run nox -s markdown_lint                    # rumdl + lychee + vale
-    uv run nox -s tests_matrix                     # tests on every supported Python
+    uv run nox -s tests_matrix                     # tests on every Python
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
