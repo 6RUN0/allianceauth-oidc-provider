@@ -12,7 +12,7 @@ from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
 from .app_settings import OIDCSettings
-from .security import check_user_state_and_groups
+from .security import DEFAULT_POLICY
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
@@ -227,8 +227,12 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         return _build_oidc_claim_scope(OIDCSettings.from_django())
 
-    @staticmethod
-    def _enforce_policy(request, client) -> bool:
+    # Class-level so tests can ``patch.object(AllianceAuthOAuth2Validator,
+    # "policy", AccessPolicy(log=...))`` to exercise validators with a
+    # captured logger or a custom DI'd policy.
+    policy: Final = DEFAULT_POLICY
+
+    def _enforce_policy(self, request, client) -> bool:
         """
         Run the per-app state/groups gate against ``request.user``.
 
@@ -237,23 +241,20 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         so the same gate runs on every token-issuing path; missing it on either
         side leaves a hole.
         """
-        try:
-            user = getattr(request, "user", None)
-            # Treat AnonymousUser the same as None: client_credentials and
-            # similar end-user-less grants must not be funnelled through the
-            # state/group gate. A future DOT version may set
-            # request.user = AnonymousUser instead of None for those grants;
-            # `is_authenticated` is the canonical Django check that covers
-            # both cases.
-            if (
-                user is not None
-                and getattr(user, "is_authenticated", False)
-                and client is not None
-            ):
-                check_user_state_and_groups(user, client)
-        except PermissionDenied:
-            return False
-        return True
+        user = getattr(request, "user", None)
+        # Treat AnonymousUser the same as None: client_credentials and
+        # similar end-user-less grants must not be funnelled through the
+        # state/group gate. A future DOT version may set
+        # request.user = AnonymousUser instead of None for those grants;
+        # `is_authenticated` is the canonical Django check that covers
+        # both cases.
+        if (
+            user is None
+            or not getattr(user, "is_authenticated", False)
+            or client is None
+        ):
+            return True
+        return self.policy.is_allowed(user, client)
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """
@@ -282,25 +283,26 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
         This prevents "token issued then denied" races/500s.
         """
-        try:
-            user = getattr(request, "user", None)
-            client = getattr(request, "client", None) or getattr(
-                request, "application", None
-            )
-            # See `_enforce_policy` for the AnonymousUser rationale.
-            if (
-                user is not None
-                and getattr(user, "is_authenticated", False)
-                and client is not None
-            ):
-                check_user_state_and_groups(user, client)
-        except PermissionDenied:
-            # Convert to OAuth error response (no 500). `from None` suppresses
-            # the PermissionDenied chain so the OAuth client only sees the
-            # protocol-level error, not Django internals.
-            raise oauth_errors.InvalidGrantError(
-                description="Access denied"
-            ) from None
+        user = getattr(request, "user", None)
+        client = getattr(request, "client", None) or getattr(
+            request, "application", None
+        )
+        # See `_enforce_policy` for the AnonymousUser rationale.
+        if (
+            user is not None
+            and getattr(user, "is_authenticated", False)
+            and client is not None
+        ):
+            try:
+                self.policy.enforce(user, client)
+            except PermissionDenied:
+                # Convert to OAuth error response (no 500). ``from None``
+                # suppresses the PermissionDenied chain so the OAuth
+                # client only sees the protocol-level error, not Django
+                # internals.
+                raise oauth_errors.InvalidGrantError(
+                    description="Access denied"
+                ) from None
         return super().save_bearer_token(token, request, *args, **kwargs)
 
     def get_additional_claims(self, request):

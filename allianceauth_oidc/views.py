@@ -23,7 +23,7 @@ from oauth2_provider.models import (
 from oauth2_provider.views.base import AuthorizationView
 from oauth2_provider.views.mixins import OAuthLibMixin
 
-from .security import DenyReason, evaluate_access
+from .security import DEFAULT_POLICY, DenyReason
 from .signals import OIDCAuditBody, oidc_token_issued
 from .utils import app_log, build_oidc_debug_meta
 
@@ -299,7 +299,7 @@ class AuthAuthorizationView(AuthorizationView):
         # - if checks are only in get()/post(), it's easy to miss a code path.
         user = getattr(request, "user", None)
         app = self._get_app(request)
-        decision = evaluate_access(user, app)
+        decision = DEFAULT_POLICY.decide(user, app)
 
         if decision.allowed:
             app_log(

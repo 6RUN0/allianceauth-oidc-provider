@@ -1,13 +1,13 @@
 """
-Unit tests for ``allianceauth_oidc.security.evaluate_access`` —
-the pure-Python decision function extracted from
+Unit tests for ``allianceauth_oidc.security.AccessPolicy.decide`` —
+the pure-Python decision method that drives
 ``AuthAuthorizationView.dispatch``.
 
 These reuse the existing ``OIDCTestCase`` fixture rather than mocking
-out ``has_perm`` / queryset manager so the check functions hit real
-ORM behaviour. The composition (which ``DenyReason`` for which path,
+out ``has_perm`` / queryset manager so the policy hits real ORM
+behaviour. The composition (which ``DenyReason`` for which path,
 ``app`` echo semantics) is what's being tested here — the underlying
-``check_user_*`` rules have their own coverage in the HTTP-level
+gate rules have their own coverage in the HTTP-level
 ``test_authorize`` suite.
 """
 
@@ -17,11 +17,13 @@ from django.test import SimpleTestCase
 
 from allianceauth_oidc.security import (
     AccessDecision,
+    AccessPolicy,
     DenyReason,
-    evaluate_access,
 )
 
 from ._oidc_testcase import OIDCTestCase
+
+policy = AccessPolicy()
 
 
 class TestEvaluateAccessPure(SimpleTestCase):
@@ -32,7 +34,7 @@ class TestEvaluateAccessPure(SimpleTestCase):
         # callable ``has_perm`` — synthetic users / bad mocks can hit
         # this in production-adjacent code paths.
         user = SimpleNamespace(is_superuser=False)  # no has_perm attr
-        decision = evaluate_access(user, app=None)
+        decision = policy.decide(user, app=None)
         self.assertEqual(
             AccessDecision(
                 allowed=False, deny_reason=DenyReason.GLOBAL, app=None
@@ -43,7 +45,7 @@ class TestEvaluateAccessPure(SimpleTestCase):
     def test_superuser_with_no_app_is_allowed(self):
         # Superusers bypass both checks; no app means no app-level gate.
         user = SimpleNamespace(is_superuser=True)
-        decision = evaluate_access(user, app=None)
+        decision = policy.decide(user, app=None)
         self.assertEqual(
             AccessDecision(allowed=True, deny_reason=None, app=None),
             decision,
@@ -55,7 +57,7 @@ class TestEvaluateAccessPure(SimpleTestCase):
         # AuthorizationView downstream surfaces the missing-client_id
         # error itself, with consistent wording.
         user = SimpleNamespace(is_superuser=True)
-        decision = evaluate_access(user, app=None)
+        decision = policy.decide(user, app=None)
         self.assertTrue(decision.allowed)
         self.assertIsNone(decision.app)
 
@@ -65,7 +67,7 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
 
     def test_unprivileged_user_denied_global(self):
         # User1 has no ``access_oidc`` permission by default.
-        decision = evaluate_access(self.user1, self.oauth_app)
+        decision = policy.decide(self.user1, self.oauth_app)
         self.assertFalse(decision.allowed)
         self.assertIs(DenyReason.GLOBAL, decision.deny_reason)
         # Anti-enumeration invariant from test_authorize.py:
@@ -76,7 +78,7 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
         # oauth_app from the fixture has no states/groups configured,
         # so any user with the global perm passes the app check.
         self.grant_oidc_access(self.user1)
-        decision = evaluate_access(self.user1, self.oauth_app)
+        decision = policy.decide(self.user1, self.oauth_app)
         self.assertEqual(
             AccessDecision(allowed=True, deny_reason=None, app=self.oauth_app),
             decision,
@@ -90,7 +92,7 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
         self.oauth_app.states.set(
             self.oauth_app.states.model.objects.filter(name="Blue")
         )
-        decision = evaluate_access(self.user1, self.oauth_app)
+        decision = policy.decide(self.user1, self.oauth_app)
         self.assertFalse(decision.allowed)
         self.assertIs(DenyReason.APP, decision.deny_reason)
         self.assertIs(self.oauth_app, decision.app)

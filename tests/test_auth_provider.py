@@ -8,10 +8,9 @@ grant flow (which DOT does not register by default in the test settings).
 """
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import AnonymousUser
-from django.core.exceptions import PermissionDenied
 from django.test import SimpleTestCase, override_settings
 
 from allianceauth_oidc.auth_provider import AllianceAuthOAuth2Validator
@@ -19,12 +18,22 @@ from allianceauth_oidc.auth_provider import AllianceAuthOAuth2Validator
 from ._oidc_testcase import OIDCTestCase
 
 
+def _stub_policy(*, is_allowed: bool = True) -> MagicMock:
+    """Build a ``MagicMock`` that mimics the ``AccessPolicy`` surface."""
+    pol = MagicMock(name="StubAccessPolicy")
+    pol.is_allowed.return_value = is_allowed
+    pol.enforce.return_value = None
+    return pol
+
+
 class TestEnforcePolicyAuthGuard(OIDCTestCase):
     def setUp(self) -> None:
         super().setUp()
         # Policy gate runs against the application object; only its
-        # presence is checked here, the gate itself is mocked out.
+        # presence is checked here, the policy itself is stubbed out
+        # via ``patch.object(AllianceAuthOAuth2Validator, "policy", ...)``.
         self.client_obj = self.oauth_app
+        self.validator = AllianceAuthOAuth2Validator()
 
     def test_anonymous_user_skips_policy_check(self):
         """
@@ -33,19 +42,16 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
 
         client_credentials and similar end-user-less grants present
         ``AnonymousUser`` (or ``None``) on ``request.user``. Letting
-        ``check_user_state_and_groups`` run on those tokens would deny every
-        machine-to-machine token because anonymous users carry no Django
-        state/groups.
+        the policy run on those tokens would deny every
+        machine-to-machine token because anonymous users carry no
+        Django state/groups.
         """
         request = SimpleNamespace(user=AnonymousUser())
-        with patch(
-            "allianceauth_oidc.auth_provider.check_user_state_and_groups"
-        ) as gate:
-            allowed = AllianceAuthOAuth2Validator._enforce_policy(
-                request, self.client_obj
-            )
+        pol = _stub_policy()
+        with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
+            allowed = self.validator._enforce_policy(request, self.client_obj)
         self.assertTrue(allowed)
-        gate.assert_not_called()
+        pol.is_allowed.assert_not_called()
 
     def test_none_user_skips_policy_check(self):
         """
@@ -53,53 +59,45 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         for the original guard before the ``is_authenticated`` tightening.
         """
         request = SimpleNamespace(user=None)
-        with patch(
-            "allianceauth_oidc.auth_provider.check_user_state_and_groups"
-        ) as gate:
-            allowed = AllianceAuthOAuth2Validator._enforce_policy(
-                request, self.client_obj
-            )
+        pol = _stub_policy()
+        with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
+            allowed = self.validator._enforce_policy(request, self.client_obj)
         self.assertTrue(allowed)
-        gate.assert_not_called()
+        pol.is_allowed.assert_not_called()
 
     def test_authenticated_user_runs_policy_check(self):
         """
-        Authenticated user with a permissive gate ⇒ the gate runs once and
-        the policy passes.
+        Authenticated user with a permissive policy ⇒ ``is_allowed`` runs
+        once and the policy passes.
         """
         request = SimpleNamespace(user=self.user1)
-        with patch(
-            "allianceauth_oidc.auth_provider.check_user_state_and_groups"
-        ) as gate:
-            allowed = AllianceAuthOAuth2Validator._enforce_policy(
-                request, self.client_obj
-            )
+        pol = _stub_policy(is_allowed=True)
+        with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
+            allowed = self.validator._enforce_policy(request, self.client_obj)
         self.assertTrue(allowed)
-        gate.assert_called_once_with(self.user1, self.client_obj)
+        pol.is_allowed.assert_called_once_with(self.user1, self.client_obj)
 
     def test_authenticated_user_denied_returns_false(self):
         """
-        ``PermissionDenied`` from the gate ⇒ policy returns False (the OAuth
+        Denying policy ⇒ ``_enforce_policy`` returns False (the OAuth
         flow then translates this into ``invalid_grant``).
         """
         request = SimpleNamespace(user=self.user1)
-        with patch(
-            "allianceauth_oidc.auth_provider.check_user_state_and_groups",
-            side_effect=PermissionDenied("blocked"),
-        ):
-            allowed = AllianceAuthOAuth2Validator._enforce_policy(
-                request, self.client_obj
-            )
+        pol = _stub_policy(is_allowed=False)
+        with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
+            allowed = self.validator._enforce_policy(request, self.client_obj)
         self.assertFalse(allowed)
 
 
 class TestSaveBearerTokenAuthGuard(OIDCTestCase):
     """
-    ``save_bearer_token`` mirrors ``_enforce_policy``'s guard.
+    ``save_bearer_token`` mirrors ``_enforce_policy``'s guard but uses
+    the raise-form (``policy.enforce``) so PermissionDenied → 401
+    translation lives at the boundary.
 
     Direct unit test rather than driving the full client_credentials
-    flow: we mock the DOT super() call so the test stays focused on
-    the AA-specific guard behavior.
+    flow: we stub the DOT super() call so the test stays focused on
+    the AA-specific guard behaviour.
     """
 
     def setUp(self) -> None:
@@ -112,17 +110,16 @@ class TestSaveBearerTokenAuthGuard(OIDCTestCase):
             client=self.oauth_app,
             application=None,
         )
+        pol = _stub_policy()
         with (
-            patch(
-                "allianceauth_oidc.auth_provider.check_user_state_and_groups"
-            ) as gate,
+            patch.object(AllianceAuthOAuth2Validator, "policy", pol),
             patch(
                 "oauth2_provider.oauth2_validators.OAuth2Validator.save_bearer_token",
                 return_value=None,
             ) as super_save,
         ):
             self.validator.save_bearer_token({"access_token": "x"}, request)
-        gate.assert_not_called()
+        pol.enforce.assert_not_called()
         super_save.assert_called_once()
 
 
