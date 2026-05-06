@@ -119,11 +119,15 @@ services:
       # ``ssl=False`` not used here: the provider serves a self-signed
       # cert, but we have the CA on disk inside the image (copied at
       # build time), so verify against it for a real round-trip check.
+      # The custom User-Agent header lets operators filter healthcheck
+      # noise out of the access log when triaging conformance runs —
+      # urllib's default ``Python-urllib/3.x`` is indistinguishable
+      # from arbitrary Python clients on the network.
       test:
         - "CMD"
         - "python"
         - "-c"
-        - "import ssl,urllib.request;ctx=ssl.create_default_context(cafile='/app/tests/conformance/tls/ca.crt');urllib.request.urlopen('https://127.0.0.1:8443/o/.well-known/openid-configuration',context=ctx).read()"
+        - "import ssl,urllib.request;ctx=ssl.create_default_context(cafile='/app/tests/conformance/tls/ca.crt');req=urllib.request.Request('https://127.0.0.1:8443/o/.well-known/openid-configuration',headers={'User-Agent':'conformance-provider-healthcheck/1.0'});urllib.request.urlopen(req,context=ctx).read()"
       interval: 10s
       timeout: 5s
       retries: 12

@@ -436,6 +436,10 @@ def conformance(session: nox.Session) -> None:
     if not pathlib.Path(cert_path).is_file():
         session.run("sh", "tests/conformance/tls/gen.sh", external=True)
     try:
+        # ``--build`` forces a rebuild on every invocation so a stale
+        # provider image does not silently mask code edits between
+        # iterations. Cheap when nothing changed (Docker reuses the
+        # cached layers).
         session.run(
             "docker",
             "compose",
@@ -444,6 +448,7 @@ def conformance(session: nox.Session) -> None:
             "up",
             "-d",
             "--wait",
+            "--build",
             external=True,
         )
         session.run(
@@ -453,6 +458,9 @@ def conformance(session: nox.Session) -> None:
             external=True,
         )
     finally:
+        # ``-v`` wipes the named MongoDB volume so the next run starts
+        # from a clean suite-state. Runs unconditionally (try/finally)
+        # so an interrupted plan still tears the stack down.
         session.run(
             "docker",
             "compose",
