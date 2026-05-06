@@ -69,8 +69,24 @@ myauth/
 Если у вас другой layout — важны не сами имена файлов, а в каком файле лежит `INSTALLED_APPS`
 (settings) и в каком `urlpatterns` (URL conf). Все правки ниже идут в эти два файла.
 
-1. Поставьте форк прямо из git. Имя пакета на PyPI занято апстримом — поэтому через VCS-URL,
-   а не `pip install allianceauth-oidc-provider`:
+1. Поставьте форк из PyPI. Форк опубликован под именем
+   `allianceauth-oidc-provider-eveo7`, чтобы не конфликтовать с
+   апстримным `allianceauth-oidc-provider`; import-path
+   (`allianceauth_oidc`) остался прежним, так что настройки и импорты
+   совместимы drop-in:
+
+   ```sh
+   pip install allianceauth-oidc-provider-eveo7
+   ```
+
+   **Не ставьте** одновременно `allianceauth-oidc-provider` и
+   `allianceauth-oidc-provider-eveo7` в одно окружение — оба
+   распаковываются в директорию `allianceauth_oidc/`, pip откажет на
+   втором установке с file-conflict'ом. Удалите апстримный пакет, если
+   он установлен.
+
+   Если хочется отслеживать `main` напрямую — установка из git тоже
+   работает:
 
    ```sh
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"

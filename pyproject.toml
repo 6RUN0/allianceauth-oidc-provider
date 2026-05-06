@@ -3,10 +3,11 @@ build-backend = "flit_core.buildapi"
 requires = [ "flit-core>=3.2,<4" ]
 
 [project]
-name = "allianceauth-oidc-provider"
+name = "allianceauth-oidc-provider-eveo7"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [ { name = "AaronKable", email = "aaronkable@gmail.com" } ]
+maintainers = [ { name = "Boris Talovikov", email = "boris.t.66@gmail.com" } ]
 requires-python = ">=3.10,<3.14"
 classifiers = [
     "Environment :: Web Environment",

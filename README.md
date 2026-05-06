@@ -72,8 +72,23 @@ If you have a different layout, the file *names* are what matters: locate the fi
 `INSTALLED_APPS` (settings) and the file that holds `urlpatterns` (URL conf), and apply the
 edits below to those.
 
-1. Install the fork from git. The package name `allianceauth-oidc-provider` collides with the
-   upstream PyPI release, so install by VCS URL — not `pip install allianceauth-oidc-provider`:
+1. Install the fork from PyPI. The fork is published under
+   `allianceauth-oidc-provider-eveo7` to avoid colliding with the upstream
+   `allianceauth-oidc-provider` release; the import path
+   (`allianceauth_oidc`) is unchanged, so settings/imports stay drop-in
+   compatible:
+
+   ```sh
+   pip install allianceauth-oidc-provider-eveo7
+   ```
+
+   Do **not** install both `allianceauth-oidc-provider` and
+   `allianceauth-oidc-provider-eveo7` into the same environment — both
+   ship into the `allianceauth_oidc/` directory and pip will refuse the
+   second install with a file conflict. Remove the upstream package
+   first if it is present.
+
+   Tracking `main` directly is also supported:
 
    ```sh
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"
