@@ -49,11 +49,6 @@ class AccessDecision(NamedTuple):
     app: object | None
 
 
-def is_superuser(user: object) -> bool:
-    """Return whether ``user`` is a superuser (defensive against mocks)."""
-    return getattr(user, "is_superuser", False)
-
-
 @dataclass(frozen=True, slots=True)
 class AccessPolicy:
     """
@@ -78,6 +73,13 @@ class AccessPolicy:
     """
 
     log: logging.Logger = field(default=logger)
+
+    # ---- helpers --------------------------------------------------
+
+    @staticmethod
+    def is_superuser(user: object) -> bool:
+        """Return whether ``user`` is a superuser (defensive against mocks)."""
+        return getattr(user, "is_superuser", False)
 
     # ---- public API ------------------------------------------------
 
@@ -128,7 +130,7 @@ class AccessPolicy:
         pure gate that raises ``PermissionDenied`` on failure. No log
         here would otherwise duplicate the caller's structured warning.
         """
-        if is_superuser(user):
+        if self.is_superuser(user):
             return
         has_perm = getattr(user, "has_perm", None)
         # has_perm is the standard Django contract. If it's missing,
@@ -151,7 +153,7 @@ class AccessPolicy:
         SELECT all instead of one ``exists()`` plus one ``filter
         ... exists()``.
         """
-        if is_superuser(user):
+        if self.is_superuser(user):
             return
 
         debug_mode = getattr(app, "debug_mode", False)
