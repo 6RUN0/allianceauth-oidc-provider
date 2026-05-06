@@ -1,13 +1,17 @@
 """Custom DOT OAuth2Validator that enforces Alliance Auth access policy."""
 
+from __future__ import annotations
+
 import logging
-from typing import Final
+from dataclasses import dataclass, field
+from typing import Any, Final
 
 from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
 from . import app_settings
+from .app_settings import OIDCSettings
 from .security import check_user_state_and_groups
 
 logger = logging.getLogger(f"extensions.{__name__}")
@@ -16,7 +20,7 @@ logger = logging.getLogger(f"extensions.{__name__}")
 # EVE-domain claim names emitted under the configured prefix/scope.
 # Order matches the natural grouping (character → corp → alliance) and
 # is used both at scope-binding time below and inside
-# `get_additional_claims` to assemble the payload.
+# `ClaimsBuilder._eve_claims` to assemble the payload.
 _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
     "character_id",
     "corporation_id",
@@ -26,6 +30,143 @@ _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
     "alliance_name",
     "alliance_ticker",
 )
+
+
+# Default cap on the ``groups`` claim payload — see
+# ``AllianceAuthOAuth2Validator.MAX_GROUPS_IN_CLAIM`` for rationale.
+# Module-level so ``ClaimsBuilder`` can default to it without importing
+# the validator class.
+_DEFAULT_MAX_GROUPS_IN_CLAIM: Final[int] = 256
+
+
+@dataclass
+class ClaimsBuilder:
+    """
+    Build the AA-specific OIDC claim payload for a single user.
+
+    Each ``_xxx`` method returns the claim's value (or ``None`` to omit
+    it); ``build()`` composes them into the final dict. Splitting this
+    way lets each branch be unit-tested on synthetic users
+    (``types.SimpleNamespace``) without spinning up Alliance Auth's
+    ORM stack — most edge cases (missing main, no email, broken
+    portrait template, oversized groups list) reduce to a 5-line
+    test.
+
+    ``settings`` is an injected ``OIDCSettings`` snapshot rather than a
+    free read of ``django.conf.settings``: tests construct a builder
+    with hand-crafted settings and skip ``@override_settings``.
+    """
+
+    user: object
+    settings: OIDCSettings
+    max_groups: int = _DEFAULT_MAX_GROUPS_IN_CLAIM
+    log: logging.Logger = field(default=logger)
+
+    def build(self) -> dict[str, Any]:
+        """Assemble the AA-specific claim dict (caller merges into base)."""
+        out: dict[str, Any] = {}
+        if (email := self._email()) is not None:
+            out["email"] = email
+        if (picture := self._picture()) is not None:
+            out["picture"] = picture
+        if (name := self._name()) is not None:
+            out["name"] = name
+        if (groups := self._groups()) is not None:
+            out["groups"] = groups
+        if (locale := self._locale()) is not None:
+            out["locale"] = locale
+        out.update(self._eve_claims())
+        return out
+
+    def _email(self) -> str | None:
+        # Django sets a blank string when no email is registered;
+        # only emit when there's a real value. Strip whitespace so
+        # accidental "  " entries don't leak into the claim and break
+        # downstream RFC 5321 contracts.
+        email = getattr(self.user, "email", None)
+        if isinstance(email, str):
+            email = email.strip() or None
+        return email if email else None
+
+    def _main_character(self) -> object | None:
+        profile = getattr(self.user, "profile", None)
+        return getattr(profile, "main_character", None)
+
+    def _picture(self) -> str | None:
+        # A misconfigured template (missing/extra placeholders, stray
+        # ``{``) would otherwise raise inside id-token signing and 500
+        # the token endpoint; degrade gracefully and skip the claim.
+        character_id = getattr(self._main_character(), "character_id", None)
+        if not character_id:
+            return None
+        try:
+            return self.settings.portrait_url_template.format(
+                character_id=character_id,
+                size=self.settings.portrait_size,
+            )
+        except (KeyError, IndexError, ValueError, TypeError) as exc:
+            # TypeError covers the "template ended up not a str" case —
+            # ``OIDCSettings`` already coerces with ``str(...)`` but a
+            # future config layer could feed a non-stringable object
+            # that raises on ``.format`` lookup. Belt-and-braces; cheap.
+            self.log.warning(
+                "OIDC: invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE (%s); skipping `picture` claim",  # noqa: E501
+                exc,
+            )
+            return None
+
+    def _name(self) -> str | None:
+        name = getattr(self._main_character(), "character_name", None)
+        return name if name else None
+
+    def _groups(self) -> list[str] | None:
+        # Sort Django groups so the claim is deterministic across
+        # calls (downstream consumers hash claim payloads for caching).
+        # The state name is appended after sorting so its position in
+        # the list is stable.
+        groups = getattr(self.user, "groups", None)
+        profile = getattr(self.user, "profile", None)
+        state_name = getattr(getattr(profile, "state", None), "name", None)
+        if groups is None:
+            groups_list: list[str] = []
+        else:
+            groups_list = sorted(groups.all().values_list("name", flat=True))
+        if len(groups_list) > self.max_groups:
+            self.log.warning(
+                "OIDC: groups claim truncated for user_id=%s (%d groups, cap=%d)",  # noqa: E501
+                getattr(self.user, "id", None),
+                len(groups_list),
+                self.max_groups,
+            )
+            groups_list = groups_list[: self.max_groups]
+        if state_name is not None:
+            groups_list.append(state_name)
+        return groups_list if groups_list else None
+
+    def _locale(self) -> str | None:
+        # ``UserProfile.language`` is a CharField with default="" when
+        # the user hasn't picked a language. The bare ``is not None``
+        # check would leak the empty string as a claim.
+        profile = getattr(self.user, "profile", None)
+        locale = getattr(profile, "language", None)
+        return locale if locale else None
+
+    def _eve_claims(self) -> dict[str, Any]:
+        # All denormalised on EveCharacter, so a single getattr chain
+        # replaces what would otherwise be three FK joins. Each field
+        # is emitted only when it carries real data — NPC corps have
+        # no alliance, alts are not always complete, etc. Empty fields
+        # are OMITTED rather than emitted as ``null`` so consumers
+        # that key off ``claim in payload`` behave consistently with
+        # the OIDC convention.
+        main = self._main_character()
+        prefix = self.settings.eve_claim_prefix
+        out: dict[str, Any] = {}
+        for name in _EVE_CLAIM_NAMES:
+            value = getattr(main, name, None)
+            if value:
+                out[f"{prefix}{name}"] = value
+        return out
 
 
 class AllianceAuthOAuth2Validator(OAuth2Validator):
@@ -143,84 +284,10 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         user = getattr(request, "user", None)
         if user is None:
             return out
-        # email — Django sets a blank string when no email is registered;
-        # only emit the claim when there's a real value. Strip whitespace
-        # so accidental "  " entries (from copy-paste or buggy admin
-        # imports) don't leak into the claim and break RFC 5321 contracts
-        # downstream.
-        email = getattr(user, "email", None)
-        if isinstance(email, str):
-            email = email.strip() or None
-        if email:
-            out["email"] = email
-        groups = getattr(user, "groups", None)
-        profile = getattr(user, "profile", None)
-        main_character = getattr(profile, "main_character", None)
-        # picture (avatar) — template + size are operator-overridable
-        # via Django settings (see app_settings.portrait_url_template).
-        # A misconfigured template (missing/extra placeholders, stray `{`)
-        # would otherwise raise inside id-token signing and 500 the token
-        # endpoint; degrade gracefully and skip the claim instead.
-        character_id = getattr(main_character, "character_id", None)
-        if character_id:
-            template = app_settings.portrait_url_template()
-            try:
-                out["picture"] = template.format(
-                    character_id=character_id,
-                    size=app_settings.portrait_size(),
-                )
-            except (KeyError, IndexError, ValueError, TypeError) as exc:
-                # TypeError catches the "template ended up not a str"
-                # case. `app_settings.portrait_url_template()` already
-                # coerces with `str(...)`, but a future config layer
-                # could feed a non-stringable object that raises on
-                # ``.format`` lookup. Belt-and-braces; cheap.
-                logger.warning(
-                    "OIDC: invalid ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE (%s); skipping `picture` claim",  # noqa: E501
-                    exc,
-                )
-        # name
-        character_name = getattr(main_character, "character_name", None)
-        if character_name:
-            out["name"] = character_name
-        # groups + state. Sort the Django groups so the claim is
-        # deterministic across calls (downstream consumers hash claim
-        # payloads for caching). The state name is appended after sorting
-        # so its position in the list is stable.
-        state = getattr(profile, "state", None)
-        state_name = getattr(state, "name", None)
-        if groups is None:
-            groups_list = []
-        else:
-            groups_list = sorted(groups.all().values_list("name", flat=True))
-        if len(groups_list) > self.MAX_GROUPS_IN_CLAIM:
-            logger.warning(
-                "OIDC: groups claim truncated for user_id=%s (%d groups, cap=%d)",  # noqa: E501
-                getattr(user, "id", None),
-                len(groups_list),
-                self.MAX_GROUPS_IN_CLAIM,
-            )
-            groups_list = groups_list[: self.MAX_GROUPS_IN_CLAIM]
-        if state_name is not None:
-            groups_list.append(state_name)
-        if groups_list:
-            out["groups"] = groups_list
-        # locale — UserProfile.language is a CharField with default="" when
-        # the user hasn't picked a language. The bare `is not None` check
-        # would leak the empty string as a claim.
-        locale = getattr(profile, "language", None)
-        if locale:
-            out["locale"] = locale
-        # EVE-specific claims. All denormalised on `EveCharacter`, so a
-        # single `getattr` chain replaces what would otherwise be three
-        # FK joins. Each field is emitted only when it carries real
-        # data — NPC corps have no alliance, alts are not always
-        # complete, etc. Empty fields are OMITTED rather than emitted
-        # as `null` so consumers that key off `claim in payload`
-        # behave consistently with the OIDC convention.
-        prefix = app_settings.eve_claim_prefix()
-        for name in _EVE_CLAIM_NAMES:
-            value = getattr(main_character, name, None)
-            if value:
-                out[f"{prefix}{name}"] = value
+        builder = ClaimsBuilder(
+            user=user,
+            settings=OIDCSettings.from_django(),
+            max_groups=self.MAX_GROUPS_IN_CLAIM,
+        )
+        out.update(builder.build())
         return out
