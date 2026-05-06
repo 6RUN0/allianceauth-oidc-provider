@@ -4,7 +4,7 @@
 > [Solar-Helix-Independent-Transport/allianceauth-oidc-provider](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider).
 > Живёт в
 > [6RUN0/allianceauth-oidc-provider](https://github.com/6RUN0/allianceauth-oidc-provider) и
-> добавляет: HTTP-уровень интеграционных тестов, обвязку OIDC Conformance Suite, операторские
+> добавляет: HTTP-уровень интеграционных тестов, обвязку OIDC Conformance Suite, сервисные
 > CLI-команды, EVE-специфичные claim'ы в id_token и userinfo, локализацию (en / ru / uk) и
 > английский [README.md](README.md).
 
@@ -51,6 +51,24 @@ sequenceDiagram
 
 ## Установка
 
+Плагин встаёт в стандартное дерево проекта Alliance Auth. AA-helper при `auth-helper init`
+делает примерно такой layout (`myauth` — имя проекта, которое вы выбрали; подставьте своё
+везде ниже):
+
+```text
+myauth/
+├── manage.py
+└── myauth/
+    ├── settings/
+    │   ├── base.py        # AA-шный, не трогаем
+    │   └── local.py       # ВАШИ настройки — все правки этого гайда сюда
+    ├── urls.py            # ВАШИ urlpatterns
+    └── ...
+```
+
+Если у вас другой layout — важны не сами имена файлов, а в каком файле лежит `INSTALLED_APPS`
+(settings) и в каком `urlpatterns` (URL conf). Все правки ниже идут в эти два файла.
+
 1. Поставьте форк прямо из git. Имя пакета на PyPI занято апстримом — поэтому через VCS-URL,
    а не `pip install allianceauth-oidc-provider`:
 
@@ -58,7 +76,7 @@ sequenceDiagram
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"
    ```
 
-2. Добавьте в `INSTALLED_APPS` в `local.py`:
+2. **В `myauth/settings/local.py`** добавьте к `INSTALLED_APPS`:
 
    ```python
    INSTALLED_APPS += [
@@ -67,7 +85,39 @@ sequenceDiagram
    ]
    ```
 
-3. Подключите URL-конф в `urls.py` проекта:
+3. **В тот же `myauth/settings/local.py`** допишите конфигурацию DOT + валидатора политики.
+   Весь блок обёрнут в guard `if "allianceauth_oidc" in INSTALLED_APPS …` — чтобы файл
+   оставался валидным, если плагин когда-нибудь снимут. Каждый ключ объяснён ниже в разделе
+   [Конфигурация → Ключи OAUTH2_PROVIDER](#ключи-oauth2_provider); сниппет можно вставлять
+   как есть и подкручивать по месту:
+
+   ```python
+   from pathlib import Path
+
+   if (
+       "allianceauth_oidc" in INSTALLED_APPS
+       and "oauth2_provider" in INSTALLED_APPS
+   ):
+       OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"
+       OAUTH2_PROVIDER = {
+           "OIDC_ENABLED": True,
+           "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key").read_text(),
+           "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
+           "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
+           "SCOPES": {
+               "openid": "User Profile",
+               "email": "Registered email",
+               "profile": "Main Character affiliation and Auth groups",
+           },
+           "PKCE_REQUIRED": True,
+           "ROTATE_REFRESH_TOKEN": True,
+           "REFRESH_TOKEN_REUSE_PROTECTION": True,
+           "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
+           "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
+       }
+   ```
+
+4. **В `myauth/urls.py`** подключите URL-конф под `/o/`:
 
    ```python
    from .settings.local import INSTALLED_APPS
@@ -81,13 +131,16 @@ sequenceDiagram
        )
    ```
 
-4. Настройте DOT и валидатор политики (см. [Конфигурация](#конфигурация)).
+5. Из корня проекта (`myauth/`) — миграции и перезапуск Auth:
 
-5. Прогоните миграции и перезапустите Auth.
+   ```sh
+   python manage.py migrate
+   supervisorctl restart myauth:    # или ваш аналог супервайзера
+   ```
 
 > [!NOTE]
 > Если у вас кастомный шаблон логина (`authentication/templates/public/login.html`),
-> следите чтобы SSO-ссылка URL-кодировала параметр `next`. Без этого query-параметры
+> следите, чтобы SSO-ссылка URL-кодировала параметр `next`. Без этого query-параметры
 > обрезаются после редиректа — и OAuth-flow ломается на потерянном `client_id`:
 >
 > ```html
@@ -96,10 +149,16 @@ sequenceDiagram
 
 ## Конфигурация
 
-Две части: словарь `OAUTH2_PROVIDER` от DOT (без него протокол не заработает) и наши
-опциональные `ALLIANCEAUTH_OIDC_*` (логирование, форма claim'ов, шаблон URL аватарки).
+В предыдущем разделе уже есть готовый сниппет. Этот раздел — попунктная справка для тонкой
+настройки. Две поверхности:
 
-### Ключи `OAUTH2_PROVIDER`
+- словарь DOT `OAUTH2_PROVIDER` — без него протокол не заработает;
+- наши опциональные Django-настройки `ALLIANCEAUTH_OIDC_*` — логирование / форма claim'ов /
+  шаблон URL аватарки. У всех есть разумные значения по умолчанию.
+
+И то и другое идёт в `myauth/settings/local.py` рядом с install-сниппетом.
+
+### Ключи OAUTH2_PROVIDER
 
 | Настройка | Рекомендуемое значение | Зачем |
 |---|---|---|
@@ -112,34 +171,10 @@ sequenceDiagram
 | `PKCE_REQUIRED` | `True` | Рекомендуется (RFC 9700). Отключайте только если контролируете все клиенты и они умеют PKCE. |
 | `ROTATE_REFRESH_TOKEN` | `True` | Рекомендуется. На каждом использовании выпускает свежий refresh-токен; старый аннулируется. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Рекомендуется. Защита от replay'я по RFC 6819 §5.2.2.3 — refresh-токен, предъявленный дважды, отзывает всё семейство токенов. |
-| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: меньше — `validate_code` срабатывает чаще (быстрее реагирует на отзыв); больше — реже refresh-обмены. |
+| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: короче TTL access-токена ⇒ RP вынуждены чаще ходить за refresh (быстрее реагирует на отзыв, больше нагрузки на token endpoint); длиннее ⇒ медленнее распространение отзыва, но трафика меньше. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | На вкус деплоя — какая толерантность к риску. |
 
-Готовый сниппет:
-
-```python
-from pathlib import Path
-
-OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"
-OAUTH2_PROVIDER = {
-    "OIDC_ENABLED": True,
-    "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key").read_text(),
-    "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
-    "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
-    "SCOPES": {
-        "openid": "User Profile",
-        "email": "Registered email",
-        "profile": "Main Character affiliation and Auth groups",
-    },
-    "PKCE_REQUIRED": True,
-    "ROTATE_REFRESH_TOKEN": True,
-    "REFRESH_TOKEN_REUSE_PROTECTION": True,
-    "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
-    "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
-}
-```
-
-### Настройки `ALLIANCEAUTH_OIDC_*`
+### Свои настройки (ALLIANCEAUTH_OIDC_*)
 
 | Настройка | По умолчанию | Что делает |
 |---|---|---|
@@ -205,16 +240,41 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 Префикс `eve_` настраивается. Пустые поля **не отдаются вовсе**, не как `null` — RP'ы, которые
 проверяют `claim in payload`, ведут себя предсказуемо.
 
+Claim `groups` ограничен **256 элементами** — это чтобы id_token влезал в типичный лимит 8 КБ
+для заголовков и cookie. Имя state дописывается **после** обрезки, так что потребители, которые
+рассчитывают на наличие state, не теряют его молча. Если 256 мало — наследуйтесь от
+`AllianceAuthOAuth2Validator` и переопределите атрибут класса `MAX_GROUPS_IN_CLAIM`.
+
+### Audit-сигнал
+
+На каждый успешный выпуск токена кидается Django-сигнал `oidc_token_issued`
+(`allianceauth_oidc.signals`). Дефолтный receiver пишет редактированную audit-запись в лог;
+подключите свой receiver, чтобы пушить это в SIEM, отдельную audit-таблицу или alerting:
+
+```python
+from django.dispatch import receiver
+from allianceauth_oidc.signals import oidc_token_issued
+
+@receiver(oidc_token_issued)
+def forward_to_siem(sender, *, app, user, request, body, **kwargs):
+    # body уже отредактирован (build_oidc_debug_meta); сырых секретов
+    # сюда возвращать не надо.
+    ...
+```
+
+Не наследуйтесь от `TokenView` ради этого — сигнал и есть документированная точка интеграции,
+он переживает bump'ы DOT, которые меняют внутренности view'хи.
+
 ## Эксплуатация
 
-### Операторские команды
+### Сервисные команды
 
-Четыре `manage.py`-команды закрывают рутинные операционные задачи и не требуют ходить в
-admin-UI. Все понимают `--format=table|json|csv`, у деструктивных есть `--dry-run`.
+Четыре `manage.py`-команды закрывают повседневные задачи обслуживания — без необходимости
+лезть в admin-UI. Все понимают `--format=table|json|csv`, у деструктивных есть `--dry-run`.
 
 | Команда | Зачем | Деструктивная? | Ключевые флаги |
 |---|---|---|---|
-| `oidc_create_app` | Завести новое OIDC-приложение неинтерактивно (CI / Ansible). Печатает «сырой» `client_secret` один раз. | да | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--debug-mode` |
+| `oidc_create_app` | Завести новое OIDC-приложение неинтерактивно (CI / Ansible). Печатает «сырой» `client_secret` один раз. | да | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--client-type`, `--grant-type`, `--debug-mode` |
 | `oidc_rotate_secret` | Перегенерировать `client_secret`. Уже выпущенные токены живут до своего истечения. | да | `--client-id`, `--dry-run` |
 | `oidc_revoke_user_tokens` | Отозвать все access + refresh у пользователя (offboarding, реакция на компрометацию). Идемпотентно. | да | `--username`, `--dry-run` |
 | `oidc_audit_tokens` | Read-only список активных токенов. | нет | `--username`, `--client-id`, `--include-expired` |
@@ -237,7 +297,7 @@ python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
 
 Per-application `Debug Mode` (включается в админке) поднимает уровень token-flow логов с `DEBUG`
 до `INFO`. «Сырые» значения токенов и секретов **никогда** не логируются; настройка
-`_LOG_MASKED_SECRETS` (см. [ALLIANCEAUTH_OIDC_*](#настройки-allianceauth_oidc_)) определяет, как
+`_LOG_MASKED_SECRETS` (см. [Свои настройки](#свои-настройки-allianceauth_oidc_)) определяет, как
 они выводятся: как `<redacted>` или как маскированные фрагменты.
 
 При отладке приложения смотрите строки вроде:
@@ -260,10 +320,10 @@ meta={'grant_type': 'authorization_code', ..., 'access_token': '<redacted>', 'id
 ssh-keygen -y -e -m pem -f /path/to/key
 ```
 
-### Operational hardening — это уже на вашей стороне
+### Усиление безопасности — на стороне деплоя
 
-Провайдер реализует протокольную часть OAuth2 / OIDC, а runtime-обвязка ниже намеренно
-оставлена оператору — чтобы интеграция с вашим edge / инфраструктурой получилась нативной.
+Провайдер реализует протокольную часть OAuth2 / OIDC; runtime-обвязка ниже намеренно
+оставлена деплою — чтобы она органично легла на ваш edge / инфраструктуру.
 
 - **Rate-limit на `/o/token/` и `/o/authorize/`.** Встроенного нет ни на одном из endpoint'ов.
   Защита от brute-force — это либо edge (nginx `limit_req`, Cloudflare, WAF), либо

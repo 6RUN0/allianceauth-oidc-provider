@@ -53,14 +53,33 @@ sequenceDiagram
 
 ## Install
 
+The plugin slots into a standard Alliance Auth project tree. AA's `auth-helper` generates this
+layout (`myauth` is the project name you picked at `auth-helper init` time — substitute it
+everywhere below):
+
+```text
+myauth/
+├── manage.py
+└── myauth/
+    ├── settings/
+    │   ├── base.py        # AA-shipped, do not edit
+    │   └── local.py       # YOUR overrides — every setting in this guide goes here
+    ├── urls.py            # YOUR project URL patterns
+    └── ...
+```
+
+If you have a different layout, the file *names* are what matters: locate the file that holds
+`INSTALLED_APPS` (settings) and the file that holds `urlpatterns` (URL conf), and apply the
+edits below to those.
+
 1. Install the fork from git. The package name `allianceauth-oidc-provider` collides with the
-   upstream PyPI release, so install by VCS URL:
+   upstream PyPI release, so install by VCS URL — not `pip install allianceauth-oidc-provider`:
 
    ```sh
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"
    ```
 
-2. Add to `INSTALLED_APPS` in your `local.py`:
+2. **In `myauth/settings/local.py`**, append to `INSTALLED_APPS`:
 
    ```python
    INSTALLED_APPS += [
@@ -69,7 +88,39 @@ sequenceDiagram
    ]
    ```
 
-3. Mount the OIDC URL conf under `/o/` in your project's `urls.py`:
+3. **In the same `myauth/settings/local.py`**, append the DOT + policy-validator configuration.
+   The whole block is wrapped in an `if "allianceauth_oidc" in INSTALLED_APPS …` guard so the
+   file stays valid even if the plugin is uninstalled later. Each key is explained in
+   [Configuration → OAUTH2_PROVIDER keys](#oauth2_provider-keys); paste this verbatim and tune
+   to taste:
+
+   ```python
+   from pathlib import Path
+
+   if (
+       "allianceauth_oidc" in INSTALLED_APPS
+       and "oauth2_provider" in INSTALLED_APPS
+   ):
+       OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"
+       OAUTH2_PROVIDER = {
+           "OIDC_ENABLED": True,
+           "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key").read_text(),
+           "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
+           "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
+           "SCOPES": {
+               "openid": "User Profile",
+               "email": "Registered email",
+               "profile": "Main Character affiliation and Auth groups",
+           },
+           "PKCE_REQUIRED": True,
+           "ROTATE_REFRESH_TOKEN": True,
+           "REFRESH_TOKEN_REUSE_PROTECTION": True,
+           "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
+           "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
+       }
+   ```
+
+4. **In `myauth/urls.py`**, mount the OIDC URL conf under `/o/`:
 
    ```python
    from .settings.local import INSTALLED_APPS
@@ -83,9 +134,12 @@ sequenceDiagram
        )
    ```
 
-4. Configure DOT and the policy validator (see [Configuration](#configuration)).
+5. From the project root (`myauth/`), run the migrations and restart Auth:
 
-5. Run migrations and restart Auth.
+   ```sh
+   python manage.py migrate
+   supervisorctl restart myauth:    # or your process supervisor's equivalent
+   ```
 
 > [!NOTE]
 > If you customise the public login template
@@ -99,10 +153,16 @@ sequenceDiagram
 
 ## Configuration
 
-Two pieces: DOT's `OAUTH2_PROVIDER` dict (required for the protocol to work) and our optional
-`ALLIANCEAUTH_OIDC_*` knobs (for logging / claim shape / portrait template).
+The previous section already shows the paste-ready settings block. This section is the per-key
+reference for tuning. Two surfaces:
 
-### `OAUTH2_PROVIDER` keys
+- DOT's `OAUTH2_PROVIDER` dict — required for the protocol to work.
+- Our optional `ALLIANCEAUTH_OIDC_*` Django settings — for logging / claim shape / portrait
+  template. All of them have sensible defaults.
+
+Both go into `myauth/settings/local.py` next to the install snippet.
+
+### OAUTH2_PROVIDER keys
 
 | Setting | Recommended value | Why |
 |---|---|---|
@@ -115,34 +175,10 @@ Two pieces: DOT's `OAUTH2_PROVIDER` dict (required for the protocol to work) and
 | `PKCE_REQUIRED` | `True` | Recommended per RFC 9700. Disable only if you control all clients and they support PKCE. |
 | `ROTATE_REFRESH_TOKEN` | `True` | Recommended. Mints a fresh refresh token on every use; old one is invalidated. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
-| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: shorter = `validate_code` runs more often (good for revocation latency); longer = fewer refresh round-trips. |
+| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
 
-Paste-ready snippet:
-
-```python
-from pathlib import Path
-
-OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"
-OAUTH2_PROVIDER = {
-    "OIDC_ENABLED": True,
-    "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key").read_text(),
-    "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
-    "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
-    "SCOPES": {
-        "openid": "User Profile",
-        "email": "Registered email",
-        "profile": "Main Character affiliation and Auth groups",
-    },
-    "PKCE_REQUIRED": True,
-    "ROTATE_REFRESH_TOKEN": True,
-    "REFRESH_TOKEN_REUSE_PROTECTION": True,
-    "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
-    "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
-}
-```
-
-### `ALLIANCEAUTH_OIDC_*` knobs
+### Custom settings (ALLIANCEAUTH_OIDC_*)
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -156,8 +192,8 @@ OAUTH2_PROVIDER = {
 
 ### Periodic cleanup of expired tokens (Celery Beat)
 
-The `clear_expired_tokens` task is shipped but **not** scheduled by default — operators add it to
-`CELERYBEAT_SCHEDULE`:
+The `clear_expired_tokens` task is shipped but **not** scheduled by default — operators add it
+to `CELERYBEAT_SCHEDULE` in `myauth/settings/local.py`:
 
 ```python
 from celery.schedules import crontab
@@ -208,6 +244,31 @@ already request `openid profile` get them without extra setup.
 The `eve_*` prefix is configurable. Empty values are **omitted** from the payload, not emitted as
 `null`, so RPs that key off `claim in payload` behave consistently.
 
+The `groups` claim is capped at **256 entries** to keep id_tokens under the typical 8 KB
+header / cookie limit. The state name is appended **after** truncation so consumers that rely on
+the state being present don't lose it silently. Override the cap by subclassing
+`AllianceAuthOAuth2Validator` and overriding the `MAX_GROUPS_IN_CLAIM` class attribute.
+
+### Audit signal
+
+Every successful token-issuance fires the `oidc_token_issued` Django signal
+(`allianceauth_oidc.signals`). The default receiver writes a redacted audit log entry; connect
+your own receiver to forward to a SIEM, write to a separate audit table, or push into an alerting
+pipeline:
+
+```python
+from django.dispatch import receiver
+from allianceauth_oidc.signals import oidc_token_issued
+
+@receiver(oidc_token_issued)
+def forward_to_siem(sender, *, app, user, request, body, **kwargs):
+    # `body` is already redacted (build_oidc_debug_meta); never re-add raw secrets.
+    ...
+```
+
+Don't extend `TokenView` to do this — the signal is the documented integration point and survives
+DOT version bumps that change view internals.
+
 ## Operations
 
 ### Operator commands
@@ -217,7 +278,7 @@ accept `--format=table|json|csv`; destructive commands honour `--dry-run`.
 
 | Command | Purpose | Destructive? | Key flags |
 |---|---|---|---|
-| `oidc_create_app` | Bootstrap a new OIDC application (CI / Ansible-friendly). Prints the raw `client_secret` once. | yes | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--debug-mode` |
+| `oidc_create_app` | Bootstrap a new OIDC application (CI / Ansible-friendly). Prints the raw `client_secret` once. | yes | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--client-type`, `--grant-type`, `--debug-mode` |
 | `oidc_rotate_secret` | Rotate `client_secret` on an existing app. Existing tokens stay valid until expiry. | yes | `--client-id`, `--dry-run` |
 | `oidc_revoke_user_tokens` | Revoke every active access + refresh token for a user (off-boarding, compromise response). Idempotent. | yes | `--username`, `--dry-run` |
 | `oidc_audit_tokens` | Read-only listing of active tokens. | no | `--username`, `--client-id`, `--include-expired` |
@@ -240,8 +301,8 @@ history without code changes; the destructive commands log at `INFO` / `WARNING`
 
 Per-application `Debug Mode` (toggled in the admin) escalates token-flow logs from `DEBUG` to
 `INFO`. Raw token values and secrets are **never** logged; the `_LOG_MASKED_SECRETS` knob (see
-[ALLIANCEAUTH_OIDC_*](#allianceauth_oidc_-knobs)) controls whether they appear as `<redacted>` or
-masked fragments.
+[Custom settings](#custom-settings-allianceauth_oidc_)) controls whether they appear as
+`<redacted>` or masked fragments.
 
 When debugging an app, look for lines like:
 

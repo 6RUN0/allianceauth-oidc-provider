@@ -17,8 +17,8 @@
 ### Добавлено
 
 - Русский перевод (`locale/ru/LC_MESSAGES/django.po`) — шаблоны согласия и выхода, verbose-имена и
-  help_text моделей, имя AppConfig, help-строки операторских команд. Скомпилированный `.mo` едет
-  прямо в wheel — операторам не нужно отдельно прогонять `compilemessages`.
+  help_text моделей, имя AppConfig, help-строки сервисных команд. Скомпилированный `.mo` едет
+  прямо в wheel — оператору не нужно отдельно прогонять `compilemessages`.
 - HTTP-уровень интеграционных тестов (`tests/test_integration_mock_rp.py`) на базе
   `LiveServerTestCase`, реальных `requests` и `jwcrypto`. Ловят то, что Django test client
   маскирует: ошибки в абсолютных URL, Bearer-заголовках, cookie. Уже нашли реальный баг —
