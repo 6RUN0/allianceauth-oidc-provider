@@ -5,28 +5,30 @@
 > maintained at
 > [6RUN0/allianceauth-oidc-provider](https://github.com/6RUN0/allianceauth-oidc-provider) — adds
 > wire-level integration tests, an OIDC Conformance Suite harness, operator CLI commands,
-> EVE-specific claims, runtime localisation (en/ru/uk), and a Russian-language
+> EVE-specific claims, runtime localisation (en / ru / uk), and a Russian-language
 > [README.ru.md](README.ru.md).
 
-## Allianceauth OIDC Provider
+A thin policy / auditing layer on top of
+[`django-oauth-toolkit`](https://django-oauth-toolkit.readthedocs.io/) that turns an
+[Alliance Auth](https://gitlab.com/allianceauth/allianceauth) installation into an OpenID Connect /
+OAuth2 provider.
 
-## Features
+- [Overview](#overview)
+- [Install](#install)
+- [Configuration](#configuration)
+- [Reference](#reference)
+- [Operations](#operations)
+- [Integrations](#integrations)
+- [Development](#development)
 
-- OIDC / OAuth2
-  - Scopes Available
-    - openid
-    - email
-    - profile
-      - Includes `groups` claim with all a members groups and state as a list of strings
-- Application level permissions
-  - global access
-  - State access
-  - group access
+## Overview
 
-## Code flow + three-layer access policy
+DOT does the OAuth / OIDC protocol work; this app adds Alliance-Auth-specific access control,
+claim mapping, safe logging, and a custom `Application` model with `state` / `group` whitelists.
 
-Every authorization-code exchange traverses three independent gates. Removing any one of them opens a
-hole, which is why the regression tests exercise each layer separately.
+Every authorization-code exchange runs through three independent gates. Each layer is intentional;
+removing any of them opens a hole, which is why the regression tests exercise each layer
+separately.
 
 ```mermaid
 sequenceDiagram
@@ -49,77 +51,28 @@ sequenceDiagram
     Validator-->>RP: 200 access_token + id_token
 ```
 
-## Example
+## Install
 
-![Imgur](https://i.imgur.com/gcrFcRL.png)
-
-## Setup/Install
-
-1. Install the fork from git (the package name `allianceauth-oidc-provider` collides with the
-   upstream PyPI release, so install by VCS URL rather than `pip install allianceauth-oidc-provider`):
+1. Install the fork from git. The package name `allianceauth-oidc-provider` collides with the
+   upstream PyPI release, so install by VCS URL:
 
    ```sh
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"
    ```
 
-1. add to `INSTALLED_APPS` in your `local.py`
+2. Add to `INSTALLED_APPS` in your `local.py`:
 
    ```python
    INSTALLED_APPS += [
-       # your other apps #
-       'allianceauth_oidc',
-       'oauth2_provider',
-       # your other apps #
+       "allianceauth_oidc",
+       "oauth2_provider",
    ]
    ```
 
-1. Extra Settings Required
-
-   ```python
-
-   # at the top of the file
-   from pathlib import Path
-
-   # Add these to the file further down
-   if 'allianceauth_oidc' in INSTALLED_APPS and 'oauth2_provider' in INSTALLED_APPS:
-       OAUTH2_PROVIDER_APPLICATION_MODEL='allianceauth_oidc.AllianceAuthApplication'
-       OAUTH2_PROVIDER = {
-           # https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key
-           "OIDC_ENABLED": True,
-           # Load your private key
-           "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key/file").read_text(),
-           "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
-           "SCOPES": {
-               "openid": "User Profile",
-               "email": "Registered email",
-               "profile": "Main Character affiliation and Auth groups"
-           },
-           # PKCE is mandatory for public clients per RFC 9700 (OAuth 2.0
-           # Security BCP) and recommended for confidential ones; only
-           # disable it if you know all your registered clients support
-           # PKCE and you have a documented reason.
-           "PKCE_REQUIRED": True,
-           "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
-           'ACCESS_TOKEN_EXPIRE_SECONDS': 60,
-           'REFRESH_TOKEN_EXPIRE_SECONDS': 24*60*60,
-           # Rotate refresh tokens on every use AND detect reuse — if a
-           # refresh token is presented twice, DOT revokes the entire
-           # token family (RFC 6819 §5.2.2.3 replay defence).
-           'ROTATE_REFRESH_TOKEN': True,
-           'REFRESH_TOKEN_REUSE_PROTECTION': True,
-       }
-   ```
-
-   Please see [this](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key)
-   for more info on creating and managing a private key
-1. Add the endpoints to your `urls.py`
+3. Mount the OIDC URL conf under `/o/` in your project's `urls.py`:
 
    ```python
    from .settings.local import INSTALLED_APPS
-
-   # ...
-   # Here your other imports and urlpatterns
-   # ...
 
    if "allianceauth_oidc" in INSTALLED_APPS and "oauth2_provider" in INSTALLED_APPS:
        urlpatterns.append(
@@ -130,79 +83,81 @@ sequenceDiagram
        )
    ```
 
-1. run migrations
-1. restart auth
+4. Configure DOT and the policy validator (see [Configuration](#configuration)).
 
-## Optional settings (recommended)
+5. Run migrations and restart Auth.
 
-### Masking secrets in debug logs
+> [!NOTE]
+> If you customise the public login template
+> (`authentication/templates/public/login.html`), keep the SSO link's `next` parameter
+> URL-encoded — without it the OAuth flow drops query parameters after redirect (e.g.
+> `client_id` is lost):
+>
+> ```html
+> <a href="{% url 'auth_sso_login' %}{% if request.GET.next %}?next={{ request.GET.next | urlencode }}{% endif %}"></a>
+> ```
 
-By default, the provider never logs raw token values or secrets. When an application has _Debug Mode_ enabled,
-it can log additional debug metadata, but secrets remain redacted unless you explicitly allow masked output.
+## Configuration
 
-Add to your settings (optional):
+Two pieces: DOT's `OAUTH2_PROVIDER` dict (required for the protocol to work) and our optional
+`ALLIANCEAUTH_OIDC_*` knobs (for logging / claim shape / portrait template).
 
-```python
-# When False (default): secrets are logged as "<redacted>"
-# When True: secrets are logged as masked fragments (head…tail)
-ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS = False
+### `OAUTH2_PROVIDER` keys
 
-# How many characters of a secret to show in logs when masking is enabled
-ALLIANCEAUTH_OIDC_LOG_MASK_HEAD = 2
-ALLIANCEAUTH_OIDC_LOG_MASK_TAIL = 2
-```
-
-Security note: enable masked logging only if your log storage is properly restricted.
-
-### EVE-specific claims (`eve_*`)
-
-The provider emits Alliance-Auth-domain claims alongside the standard OIDC
-ones — character/corporation/alliance metadata read from the user's main
-character. Default prefix: `eve_`. Default scope: `profile` (already requested
-by most RPs as part of `openid profile`).
-
-| Claim | Source | Notes |
+| Setting | Recommended value | Why |
 |---|---|---|
-| `eve_character_id` | `main_character.character_id` | Integer EVE ID |
-| `eve_corporation_id` / `_name` / `_ticker` | `main_character.corporation_*` | Denormalised on the character row |
-| `eve_alliance_id` / `_name` / `_ticker` | `main_character.alliance_*` | Omitted for NPC corps without an alliance |
+| `OAUTH2_PROVIDER_APPLICATION_MODEL` | `"allianceauth_oidc.AllianceAuthApplication"` | **Required.** Without this the state / group access policy is silently bypassed. Set as a top-level Django setting, not inside `OAUTH2_PROVIDER`. |
+| `OIDC_ENABLED` | `True` | **Required.** Turns on DOT's OIDC layer (discovery, JWKS, id_token signing). |
+| `OIDC_RSA_PRIVATE_KEY` | `Path("/path/to/key").read_text()` | **Required.** RSA key DOT uses to sign id_tokens. See [DOT docs](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key) for generation. |
+| `OAUTH2_VALIDATOR_CLASS` | `"allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"` | **Required.** Implements the three-layer policy and AA-specific claims. |
+| `APPLICATION_ADMIN_CLASS` | `"allianceauth_oidc.admin.ApplicationAdmin"` | **Required.** AA-aware admin for the custom `Application` model. |
+| `SCOPES` | `{"openid": "...", "email": "...", "profile": "..."}` | **Required.** Scopes shown on the consent screen. Strings are user-facing labels. |
+| `PKCE_REQUIRED` | `True` | Recommended per RFC 9700. Disable only if you control all clients and they support PKCE. |
+| `ROTATE_REFRESH_TOKEN` | `True` | Recommended. Mints a fresh refresh token on every use; old one is invalidated. |
+| `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
+| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: shorter = `validate_code` runs more often (good for revocation latency); longer = fewer refresh round-trips. |
+| `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
 
-Override the prefix or scope:
-
-```python
-# Default `eve_` — set to `""` for un-prefixed claims (collision-prone), or
-# any other prefix to namespace claims for federation with other providers.
-ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX = "eve_"
-
-# Default `profile`. Set to `eve` (or any custom value) to require an
-# explicit RP scope opt-in. NB: scope binding is class-level — changing this
-# setting requires an Auth process restart to take effect.
-ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE = "profile"
-```
-
-Empty fields are **omitted** rather than emitted as `null` so RPs that key off
-`claim in payload` behave consistently.
-
-### Portrait (`picture` claim) URL
-
-The `picture` claim defaults to the official EVE image server. If you front it through
-a CDN mirror or want a different size, override these settings:
+Paste-ready snippet:
 
 ```python
-# Default: "https://images.evetech.net/characters/{character_id}/portrait?size={size}"
-ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE = "https://cdn.example/portraits/{character_id}-{size}.png"
+from pathlib import Path
 
-# EVE's image server supports 32/64/128/256/512/1024. Default: 128.
-ALLIANCEAUTH_OIDC_PORTRAIT_SIZE = 256
+OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"
+OAUTH2_PROVIDER = {
+    "OIDC_ENABLED": True,
+    "OIDC_RSA_PRIVATE_KEY": Path("/path/to/key").read_text(),
+    "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
+    "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
+    "SCOPES": {
+        "openid": "User Profile",
+        "email": "Registered email",
+        "profile": "Main Character affiliation and Auth groups",
+    },
+    "PKCE_REQUIRED": True,
+    "ROTATE_REFRESH_TOKEN": True,
+    "REFRESH_TOKEN_REUSE_PROTECTION": True,
+    "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
+    "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
+}
 ```
 
-The template must contain `{character_id}` and `{size}` placeholders; a
-malformed template skips the `picture` claim with a warning instead of
-crashing the token endpoint.
+### `ALLIANCEAUTH_OIDC_*` knobs
+
+| Setting | Default | Effect |
+|---|---|---|
+| `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS` | `False` | Replace `<redacted>` with masked fragments (`he…il`) in app debug logs. Enable only if log storage is restricted. |
+| `ALLIANCEAUTH_OIDC_LOG_MASK_HEAD` | `2` | Visible characters at the start of a masked secret. |
+| `ALLIANCEAUTH_OIDC_LOG_MASK_TAIL` | `2` | Visible characters at the end. |
+| `ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX` | `"eve_"` | Prefix for the EVE-specific claims. `""` removes the prefix (collision risk); any other value namespaces them. |
+| `ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE` | `"profile"` | OIDC scope that gates the EVE claims. **Class-level binding** — changing it requires an Auth restart. |
+| `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE` | `"https://images.evetech.net/characters/{character_id}/portrait?size={size}"` | URL template for the `picture` claim. Both `{character_id}` and `{size}` placeholders are required; a malformed template skips the claim with a warning. |
+| `ALLIANCEAUTH_OIDC_PORTRAIT_SIZE` | `128` | Pixel size requested from the portrait service. EVE supports 32 / 64 / 128 / 256 / 512 / 1024. |
 
 ### Periodic cleanup of expired tokens (Celery Beat)
 
-To prevent the database from growing indefinitely, schedule the cleanup task:
+The `clear_expired_tokens` task is shipped but **not** scheduled by default — operators add it to
+`CELERYBEAT_SCHEDULE`:
 
 ```python
 from celery.schedules import crontab
@@ -210,128 +165,146 @@ from celery.schedules import crontab
 CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
     "task": "allianceauth_oidc.clear_expired_tokens",
     "schedule": crontab(minute=0, hour="*/2"),  # every 2 hours
-    "apply_offset": True,
 }
 ```
 
-### Operator commands
+The task is idempotent (deletes only already-expired rows); broker authentication is the defence
+against unauthorised re-runs.
 
-Four `manage.py` commands cover the common operational tasks without
-opening the admin UI. All four accept `--format=table|json|csv`;
-destructive commands honour `--dry-run`.
+## Reference
 
-```sh
-# Create a new OIDC application non-interactively (CI / Ansible-friendly).
-python manage.py oidc_create_app \
-    --name="Grafana" \
-    --user-id=1 \
-    --redirect-uri="https://grafana.example/login/generic_oauth" \
-    --state=Member \
-    --group=Operators \
-    --format=json
+### Endpoints
 
-# Rotate the client_secret of a registered app. Existing tokens stay
-# valid until expiry; combine with `oidc_revoke_user_tokens` for an
-# immediate cut-off.
-python manage.py oidc_rotate_secret --client-id=abc123 --format=json
-python manage.py oidc_rotate_secret --client-id=abc123 --dry-run
-
-# Revoke every active access + refresh token for a user (off-boarding,
-# compromise response). Idempotent; safe to re-run.
-python manage.py oidc_revoke_user_tokens --username=alice
-python manage.py oidc_revoke_user_tokens --username=alice --dry-run
-
-# Read-only audit: who is currently authenticated against which app.
-python manage.py oidc_audit_tokens
-python manage.py oidc_audit_tokens --username=alice --include-expired
-python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
-```
-
-Destructive operations (`create_app`, `rotate_secret`,
-`revoke_user_tokens`) log at INFO/WARNING and `create_app` also writes
-a Django admin LogEntry so the action shows up in `/admin/`'s history
-view without code changes.
-
-### Operational hardening (operator responsibility)
-
-This app implements OAuth2/OIDC protocol semantics, but the runtime
-hardening below is intentionally left to the deployment so it integrates
-with whatever edge / infra you already operate:
-
-- **Rate limiting on `/o/token/` and `/o/authorize/`.** Neither endpoint
-  is rate-limited by this app; brute-force defence belongs at the edge
-  (nginx `limit_req`, Cloudflare, a WAF) or via `django-ratelimit` in your
-  Auth deployment. Without it, a network-level attacker can probe
-  `client_secret` / `code` / `refresh_token` values at line speed.
-- **Celery broker authentication.** `clear_expired_tokens` is published to
-  whichever Celery broker your AA install uses; if that broker is reachable
-  by untrusted parties, a malicious task submission can repeatedly invoke
-  cleanup. The task itself is idempotent (it only deletes already-expired
-  rows), but broker auth + network ACLs are the defensive layer that
-  matters here.
-- **Security headers.** This app does not set CSP / HSTS / X-Frame-Options
-  / X-Content-Type-Options on its responses; rely on Alliance Auth's
-  middleware stack and Django's `SECURE_*` settings to add them globally.
-
-## Application setup
-
-### The Big 4
-
-- Authorization: `https://your.url/o/authorize/`
-- Token: `https://your.url/o/token/`
-- Profile: `https://your.url/o/userinfo/`
-- Issuer `https://your.url/o/`
+| Endpoint | Path | Notes |
+|---|---|---|
+| Authorization | `/o/authorize/` | Policy-aware (three-layer gate). Overridden in this app. |
+| Token | `/o/token/` | Audit signal + safe debug logging. Overridden in this app. |
+| UserInfo | `/o/userinfo/` | DOT default. |
+| Discovery | `/o/.well-known/openid-configuration/` | DOT default. |
+| JWKS | `/o/.well-known/jwks.json` | DOT default. |
+| Token revocation | `/o/revoke_token/` | RFC 7009. DOT default. |
+| Token introspection | `/o/introspect/` | RFC 7662. DOT default. |
+| RP-initiated logout | `/o/logout/` | DOT default. |
+| Issuer (`iss` claim) | `https://your.host/o/` | Whatever your discovery URL resolves to. |
 
 ### Claims
 
-- `openid profile email`
+Every standard OIDC claim is emitted under the scope conventionally associated with it; the
+`groups` and `eve_*` claims are AA-specific and ride the `profile` scope by default so RPs that
+already request `openid profile` get them without extra setup.
 
-### Claim key mapping
+| Claim | Source | Scope |
+|---|---|---|
+| `sub` | `User.pk` (DOT default) | `openid` |
+| `email` | `user.email` | `email` |
+| `name` | `user.profile.main_character.character_name` | `profile` |
+| `picture` | Portrait URL for the main character (see `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE`) | `profile` |
+| `groups` | `user.groups[*].name`, with `user.profile.state.name` appended | `profile` |
+| `locale` | `user.profile.language` | `profile` |
+| `eve_character_id` | `main_character.character_id` | `profile` (set by `ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE`) |
+| `eve_corporation_id` / `_name` / `_ticker` | `main_character.corporation_*` | same |
+| `eve_alliance_id` / `_name` / `_ticker` | `main_character.alliance_*` (omitted for NPC corps without an alliance) | same |
 
-- `name` Eve Main Character Name ( Profile Grant )
-- `email` Registered email on auth ( Email Grant )
-- `groups` List of all groups with the members state thrown in too ( Profile Grant )
-- `sub` PK of user model
-- `picture` URL to the main character avatar ( Profile Grant )
-- `locale` User preferred language ( Profile Grant )
+The `eve_*` prefix is configurable. Empty values are **omitted** from the payload, not emitted as
+`null`, so RPs that key off `claim in payload` behave consistently.
 
-### Create an application
+## Operations
 
-Before configuring the external application you want to go on your auth admin pannel at
-`/admin/allianceauth_oidc` and create a new alliance auth application.
+### Operator commands
 
-- `User` can be set to 1, this is a parameter for the upstream library not used in this application
-- `client type` should be confidential
-- `authorization grant type` should be `Authorization code`
-- `Client secret` needs to be saved somewhere **before** hitting save if you leave the hashing on
-  (it won't be displayed again)
-- `Algorithm`: `RSA with SHA-2 256`
+Four `manage.py` commands cover the day-2 operational tasks without opening the admin UI. All
+accept `--format=table|json|csv`; destructive commands honour `--dry-run`.
 
-Then you can set which states or group can access this application. \
-_Note that they will also need the `allianceauth_oidc.access_oidc` role to access any application._
+| Command | Purpose | Destructive? | Key flags |
+|---|---|---|---|
+| `oidc_create_app` | Bootstrap a new OIDC application (CI / Ansible-friendly). Prints the raw `client_secret` once. | yes | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--debug-mode` |
+| `oidc_rotate_secret` | Rotate `client_secret` on an existing app. Existing tokens stay valid until expiry. | yes | `--client-id`, `--dry-run` |
+| `oidc_revoke_user_tokens` | Revoke every active access + refresh token for a user (off-boarding, compromise response). Idempotent. | yes | `--username`, `--dry-run` |
+| `oidc_audit_tokens` | Read-only listing of active tokens. | no | `--username`, `--client-id`, `--include-expired` |
 
-### WikiJS
+```sh
+python manage.py oidc_create_app \
+    --name="Grafana" --user-id=1 \
+    --redirect-uri="https://grafana.example/login/generic_oauth" \
+    --state=Member --group=Operators --format=json
 
-Manually create and groups you care for your users to have in the wiki and the service will map them
-for you. This greatly cuts down on group spam.
-in auth create `Administrators` to give access to the full wiki admin site.
+python manage.py oidc_rotate_secret --client-id=abc123 --dry-run
+python manage.py oidc_revoke_user_tokens --username=alice
+python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
+```
 
-#### Administration > Authentication > Generic OpenID Connect / OAuth2
+`create_app` writes a Django admin `LogEntry` on success so the action is visible in `/admin/`'s
+history without code changes; the destructive commands log at `INFO` / `WARNING`.
 
-- Skip User Profile `off`
-- Email claim `email`
-- Display Name Claim `name`
-- Map Groups `on`
-- Groups Claim `groups`
-- Allow Self Registration `on`
+### Debug logging
+
+Per-application `Debug Mode` (toggled in the admin) escalates token-flow logs from `DEBUG` to
+`INFO`. Raw token values and secrets are **never** logged; the `_LOG_MASKED_SECRETS` knob (see
+[ALLIANCEAUTH_OIDC_*](#allianceauth_oidc_-knobs)) controls whether they appear as `<redacted>` or
+masked fragments.
+
+When debugging an app, look for lines like:
+
+```text
+[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued
+app_id=1 client_id=abc123 user_id=42
+meta={'grant_type': 'authorization_code', ..., 'access_token': '<redacted>', 'id_token': '<redacted>'}
+```
+
+Paste the (separately captured) `id_token` into <https://jwt.io/> to inspect claims. The two
+non-obvious fields:
+
+- `iss` — issuer; must match the value the RP has configured exactly.
+- `sub` — the user PK; useful for "why did this user end up here?" triage.
+
+If you need the public key to verify the signature on jwt.io and have only the private key on
+disk:
+
+```sh
+ssh-keygen -y -e -m pem -f /path/to/key
+```
+
+### Operational hardening (operator responsibility)
+
+The provider implements the OAuth2 / OIDC protocol semantics; runtime hardening below is
+intentionally left to the deployment so it integrates with whatever edge / infra you already
+operate.
+
+- **Rate-limit `/o/token/` and `/o/authorize/`.** Neither endpoint is rate-limited by this app;
+  brute-force defence belongs at the edge (nginx `limit_req`, Cloudflare, a WAF) or via
+  `django-ratelimit` in your Auth deployment. Without it, a network-level attacker can probe
+  `client_secret` / `code` / `refresh_token` values at line speed.
+- **Authenticate the Celery broker.** `clear_expired_tokens` is published to whichever broker
+  your AA install uses; if that broker is reachable by untrusted parties, a malicious task
+  submission can repeatedly invoke cleanup. The task is idempotent, but broker auth + network
+  ACLs are the defensive layer.
+- **Security headers.** This app does not set CSP / HSTS / `X-Frame-Options` /
+  `X-Content-Type-Options`; rely on Alliance Auth's middleware stack and Django's `SECURE_*`
+  settings to add them globally.
+
+## Integrations
+
+### Register an application
+
+In `/admin/allianceauth_oidc/`, create an `Alliance Auth application`:
+
+| Field | Value | Notes |
+|---|---|---|
+| `User` | any (e.g. `1`) | Owner — passed through to DOT but not used in this app's policy. |
+| `Client type` | `confidential` | Public clients are out of scope; we don't ship a public-client recipe. |
+| `Authorization grant type` | `Authorization code` | The only flow this app's policy is hardened against. |
+| `Client secret` | auto-generated | Save it before clicking save when `HASH_CLIENT_SECRET` is on (default). |
+| `Algorithm` | `RSA with SHA-2 256` | Matches `OIDC_RSA_PRIVATE_KEY`. |
+| `States` / `Groups` | whitelist | Empty ⇒ open; non-empty ⇒ user must be in a listed state OR group. |
+
+Every user who logs into any registered application also needs the global
+`allianceauth_oidc.access_oidc` permission. Without it the dispatch-layer gate (Layer 1) returns
+`PermissionDenied` regardless of state / group whitelist.
 
 ### Grafana
 
-Tested only with access no group mapping as yet
-
-Group>Team mapping requires Grafana cloud or Enterprise and is outside of the scope of this doc.
-
-#### /etc/grafana/grafana.ini
+Tested without group-to-team mapping (group → team mapping requires Grafana Cloud / Enterprise
+and is out of scope here).
 
 ```ini
 [server]
@@ -341,8 +314,8 @@ root_url = <URL of your grafana server>
 enabled = true
 name = <Your Auth Name>
 allow_sign_up = true
-client_id = <client id from the application>
-client_secret = <client secret from the application (unhashed)>
+client_id = <client_id>
+client_secret = <unhashed client_secret>
 scopes = openid,email,profile
 empty_scopes = false
 email_attribute_path = email
@@ -352,76 +325,56 @@ token_url = https://<your.auth.url>/o/token/
 api_url = https://<your.auth.url>/o/userinfo/
 ```
 
-### Debugging an application
+### WikiJS
 
-1. Enable _Debug Mode_ for the specific application in the auth admin site.
-1. then in your `gunicorn.log` look for long lines similar to this after you attempt to log in,
+Pre-create the groups you want WikiJS users to land in on the AA side; WikiJS will map them at
+login. (Create an `Administrators` group to grant the wiki admin pages.)
 
-```text
-[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued app_id=1 client_id=abc123 user_id=42 meta={'grant_type': 'authorization_code', 'scope': 'openid email profile', 'client_id': 'abc123', 'redirect_uri': 'https://app.example/cb', 'code': '<redacted>', 'refresh_token_req': None, 'client_secret': None, 'assertion': None, 'token_type': 'Bearer', 'expires_in': 111, 'scope_resp': 'openid email profile', 'access_token': '<redacted>', 'refresh_token': '<redacted>', 'id_token': '<redacted>'}
-```
-
-1. take the `id_token` field and paste it into <https://jwt.io/> to debug the data being sent to the
-   application. it should be fairly self explanitory expect for these 2 fields.
-
-- `iss` is the issuer that must match exactly in the applications own settings.
-- `sub` is your user id if you need to debug why user is being sent.
-
-If you want to check the token signature on jwt.io and lost your public key your can use:
-
-```sh
-ssh-keygen -y -e -m pem -f /path/to/key/file
-```
-
-This will output the public key in the PEM format for jwt.io to check the signature.
-
-> [!NOTE]
-> If you are using a custom theme (or have overridden the public login template),
-> please double-check your login page template at:
-> `authentication/templates/public/login.html`
-> Make sure the SSO login link URL-encodes the next parameter.
-> Otherwise, query parameters can be truncated and OAuth/OIDC
-> flows may fail (e.g. missing client_id after redirect).
->
-> ```html
-> <a
->   href="{% url 'auth_sso_login' %}{% if request.GET.next %}?next={{ request.GET.next | urlencode }}{% endif %}"
-> ></a>
-> ```
+| WikiJS field | Value |
+|---|---|
+| Skip User Profile | off |
+| Email claim | `email` |
+| Display Name Claim | `name` |
+| Map Groups | on |
+| Groups Claim | `groups` |
+| Allow Self Registration | on |
 
 ## Development
 
-### Integration tests (mock-RP over real HTTP)
+### Nox sessions
 
-`nox -s integration` runs the wire-level integration tests in
-`tests/test_integration_mock_rp.py`. They boot a `LiveServerTestCase`
-and walk the OIDC code flow with `requests` + `jwcrypto`, validating
-the id_token signature against a JWKS retrieved over the wire. This
-catches regressions the standard `nox -s tests` set cannot — Django's
-test client short-circuits the WSGI layer, so absolute-URL bugs in
-`iss` / `jwks_uri` and Bearer-header / cookie issues only surface here.
+| Session | Purpose | In default `nox` run? |
+|---|---|---|
+| `lint` | pre-commit (ruff, mypy, basedpyright, …) | yes |
+| `tests` | Django test suite (parallel) | yes |
+| `coverage` | tests + term / HTML / XML coverage reports | no |
+| `typecheck` | mypy + basedpyright (subset of `lint`, run separately for fast feedback) | no |
+| `audit` | pip-audit | no |
+| `markdown_lint` | rumdl + lychee + vale (each tool optional) | no |
+| `makemessages` / `compilemessages` | i18n catalogue refresh + compile | no |
+| `makemigrations` | generate Django migrations under test settings | no |
+| `integration` | wire-level mock-RP via `LiveServerTestCase` | no |
+| `conformance` | OIDC Conformance Suite via docker-compose | no |
 
-```sh
-uv run nox -s integration                   # run the full mock-RP suite
-uv run nox -s integration -- --keepdb       # forward args to django test
-```
+### Integration tests (`nox -s integration`)
 
-The session is excluded from the default `nox` run because real-HTTP
-tests are an order of magnitude slower than the test-client suite and
-force `--parallel=1` (LiveServerTestCase is incompatible with the test
-runner's `fork()`).
+`tests/test_integration_mock_rp.py` boots a `LiveServerTestCase` and walks the OIDC code flow
+with `requests` + `jwcrypto`, validating the id_token signature against a JWKS retrieved over the
+wire. This catches regressions the standard `nox -s tests` set cannot — Django's test client
+short-circuits the WSGI layer, so absolute-URL bugs in `iss` / `jwks_uri` and Bearer-header /
+cookie issues only surface here.
+
+The session forces `--parallel=1`: `LiveServerTestCase` shares its DB connection with the WSGI
+thread, which does not survive the test runner's `fork()`.
 
 ### Conformance Suite (`nox -s conformance`)
 
-`nox -s conformance` runs the [OpenID Foundation Conformance Suite][suite]
-against the provider via Docker Compose: MongoDB + the suite + a
-provider container. The default plan is driven through the suite's
-REST API by `tests/conformance/run_plan.py`.
+Runs the [OpenID Foundation Conformance Suite](https://gitlab.com/openid/conformance-suite)
+against the provider via Docker Compose: MongoDB + the suite + a provider container. The default
+plan is driven through the suite's REST API by `tests/conformance/run_plan.py`.
 
-This is the level above our own integration tests — it catches spec
-edge cases that our regression tests wouldn't think to check. Run
-before tagging a release. See [tests/conformance/README.md](tests/conformance/README.md)
-for prerequisites, the manual / iterative workflow, configuration
-overrides, and the list of known conformance findings to triage.
-
-[suite]: https://gitlab.com/openid/conformance-suite
+This is the level above our own integration tests — it catches spec edge cases that our
+regression tests wouldn't think to check. Run before tagging a release. See
+[tests/conformance/README.md](tests/conformance/README.md) for prerequisites, the manual /
+iterative workflow, configuration overrides, and the list of known conformance findings to
+triage.
