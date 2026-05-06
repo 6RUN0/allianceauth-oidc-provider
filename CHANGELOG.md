@@ -14,6 +14,8 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.1.0b1] - 2026-05-06
+
 ### Added
 
 - Russian translation (`locale/ru/LC_MESSAGES/django.po`) covering the consent / logout templates,
@@ -58,9 +60,17 @@ is preserved in `git log`; this file documents fork-specific changes only.
   [6RUN0 fork](https://github.com/6RUN0/allianceauth-oidc-provider); `urls.Upstream` retains the
   original [Solar-Helix](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider)
   reference.
-- README.md gained a fork-banner block at the top, install-from-git instructions (the package name
-  collides with upstream on PyPI), and a Russian sibling
-  [README.ru.md](README.ru.md).
+- README.md gained a fork-banner block at the top, an install-from-PyPI step under the fork's
+  distribution name (see below), and a Russian sibling [README.ru.md](README.ru.md).
+- The fork is now publishable to PyPI under a fork-specific distribution name,
+  `allianceauth-oidc-provider-eveo7`. The natural name `allianceauth-oidc-provider` collides with the
+  upstream PyPI release, so the fork's `pyproject.toml` `[project] name` was renamed to surface on
+  PyPI without conflict. The import path (`allianceauth_oidc`) is unchanged — settings and imports
+  stay drop-in compatible. Upload remains manual for now (`uv build && twine upload dist/*`); a
+  GitHub Actions release workflow is not part of this change.
+- `pyproject.toml` gained a `maintainers` entry for the fork (Boris Talovikov,
+  `boris.t.66@gmail.com`); the upstream `authors` entry is preserved so the original author stays
+  visible in PyPI metadata.
 
 ## Upstream history
 

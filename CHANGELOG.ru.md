@@ -14,6 +14,8 @@
 
 ## [Unreleased]
 
+## [0.1.0b1] - 2026-05-06
+
 ### Добавлено
 
 - Русский перевод (`locale/ru/LC_MESSAGES/django.po`) — шаблоны согласия и выхода, verbose-имена и
@@ -63,14 +65,24 @@
 ### CI / проект
 
 - GitHub Actions переписаны под современный uv-pipeline: отдельные джобы `test`, `lint`,
-  `typecheck`, `package`, `concurrency` по ref'у, обновлённые actions. Workflow для публикации на
-  PyPI удалён — форк туда не публикуется.
+  `typecheck`, `package`, `concurrency` по ref'у, обновлённые actions. Авто-workflow публикации на
+  PyPI пока не возвращали — публикация форка остаётся ручной (`uv build && twine upload dist/*`),
+  см. ниже про новое имя дистрибутива.
 - URL'ы в `pyproject.toml` указывают на
   [6RUN0 форк](https://github.com/6RUN0/allianceauth-oidc-provider); ссылка на оригинал
   [Solar-Helix](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider)
   сохранена в поле `urls.Upstream`.
-- В README.md появилась шапка форка, инструкция по установке прямо из git (имя пакета на PyPI
-  занято апстримом) и русский сосед — [README.ru.md](README.ru.md).
+- В README.md появилась шапка форка, инструкция установки из PyPI под именем форка (см. ниже) и
+  русский сосед — [README.ru.md](README.ru.md).
+- Форк публикуется на PyPI под отдельным именем — `allianceauth-oidc-provider-eveo7`. Естественное
+  имя `allianceauth-oidc-provider` занято апстримным релизом, поэтому в `pyproject.toml`
+  переименовано поле `[project] name` — это «развязывает» PyPI-имя и оставляет неизменным
+  import-path (`allianceauth_oidc`). Настройки и импорты совместимы drop-in. Заливка пока ручная
+  (`uv build && twine upload dist/*`); авто-workflow GitHub Actions для релиза не часть этого
+  изменения.
+- В `pyproject.toml` добавлен `maintainers` форка (Boris Talovikov, `boris.t.66@gmail.com`); поле
+  `authors` с упоминанием автора апстрима сохранено — оригинальный автор остаётся виден в
+  PyPI-метаданных.
 
 ## История апстрима
 

@@ -1,3 +1,3 @@
 """Alliance Auth OIDC Provider."""
 
-__version__ = "0.0.1b9"
+__version__ = "0.1.0b1"
