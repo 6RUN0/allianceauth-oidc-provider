@@ -11,6 +11,8 @@ matrix:
 - value is a callable (``operator-supplied resolver``) → fall back to
   ``True`` and emit a stderr warning
 - rollback (``0010 → 0009 → 0010``) preserves row count
+- clean install (no pre-existing rows) → data step is a no-op and a
+  post-migrate row honours the field default (``True``)
 
 ``TransactionTestCase`` because schema mutations require committed
 transactions; subclasses tear-down by re-running ``migrate`` to the
@@ -165,3 +167,47 @@ class TestPkceRequiredRollbackPreservesRowCount(_PkceMigrationBase):
         # Re-apply 0010 and reverify.
         _migrate_to([(APP_LABEL, MIGRATION_TARGET)])
         self.assertEqual(3, _live_apps_count())
+
+
+class TestPkceRequiredCleanInstall(_PkceMigrationBase):
+    """
+    Greenfield: migrate runs on a database with no pre-existing
+    AllianceAuthApplication rows.
+
+    The data step's ``update()`` matches no rows — a documented
+    no-op. The recommended-greenfield case (a boolean global) must
+    not emit the stderr warning; that warning is reserved for the
+    callable-detected branch. Apps created post-migrate via the live
+    model use ``BooleanField(default=True)`` (RFC 9700 secure-by-
+    default) regardless of the global setting, which only governs
+    the backfill — not the field default.
+    """
+
+    @override_settings(OAUTH2_PROVIDER={"PKCE_REQUIRED": False})
+    def test_no_rows_no_warning_no_error(self):
+        captured = io.StringIO()
+        _migrate_to([(APP_LABEL, MIGRATION_PREVIOUS)])
+        with contextlib.redirect_stderr(captured):
+            _migrate_to([(APP_LABEL, MIGRATION_TARGET)])
+        self.assertEqual(0, _live_apps_count())
+        self.assertNotIn("is callable", captured.getvalue())
+
+    @override_settings(OAUTH2_PROVIDER={"PKCE_REQUIRED": False})
+    def test_post_migrate_row_uses_field_default_true(self):
+        from allianceauth_oidc.models import AllianceAuthApplication
+
+        _migrate_to([(APP_LABEL, MIGRATION_PREVIOUS)])
+        _migrate_to([(APP_LABEL, MIGRATION_TARGET)])
+        # Row created via the LIVE model after the schema migration.
+        # The global ``False`` only affected the (empty) backfill;
+        # the field default is the binding contract here.
+        app = AllianceAuthApplication.objects.create(
+            name="greenfield",
+            client_id="cid-greenfield",
+            client_secret="secret",  # nosec B106 - test fixture
+            client_type="confidential",
+            authorization_grant_type="authorization-code",
+            redirect_uris="http://localhost/redir/",
+            skip_authorization=False,
+        )
+        self.assertTrue(app.pkce_required)
