@@ -1,14 +1,20 @@
 """Utility helpers: per-app logging and secret-safe debug-meta builders."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, NewType, TypedDict
 
-from . import app_settings
+from typing_extensions import Self
+
+from .app_settings import OIDCSettings
 
 __all__ = [
     "OIDCDebugMeta",
     "RedactedSecret",
+    "SecretRedactor",
     "app_log",
     "build_oidc_debug_meta",
     "mask_secret",
@@ -121,14 +127,58 @@ def mask_secret(
     return RedactedSecret(f"{s[:head]}…{s[-tail:]}")
 
 
+@dataclass(frozen=True, slots=True)
+class SecretRedactor:
+    """
+    Stateful redactor that turns secret-shaped values into
+    ``RedactedSecret``.
+
+    Same semantics as the free ``redact_secret`` function, but with
+    its three settings (``enabled``, ``head``, ``tail``) captured in
+    the instance instead of read from ``django.conf.settings`` on
+    every call. Tests can construct one inline
+    (``SecretRedactor(enabled=True, head=4, tail=4)``) without
+    ``@override_settings`` boilerplate, and request-scoped code can
+    reuse the same instance across many fields without re-reading
+    settings each time.
+    """
+
+    enabled: bool = False
+    head: int = 2
+    tail: int = 2
+
+    def __call__(self, value: object) -> RedactedSecret | None:
+        """Redact ``value`` according to the captured settings."""
+        if value is None:
+            return None
+        if not self.enabled:
+            return RedactedSecret("<redacted>")
+        return mask_secret(value, head=self.head, tail=self.tail)
+
+    @classmethod
+    def from_settings(cls, settings: OIDCSettings) -> Self:
+        """Build a redactor from a resolved ``OIDCSettings`` snapshot."""
+        return cls(
+            enabled=settings.log_masked_secrets,
+            head=settings.log_mask_head,
+            tail=settings.log_mask_tail,
+        )
+
+    @classmethod
+    def from_django(cls) -> Self:
+        """Convenience for the legacy ``app_settings`` accessors."""
+        return cls.from_settings(OIDCSettings.from_django())
+
+
 def redact_secret(value: object) -> RedactedSecret | None:
     """
     Return a redacted version of the secret value for logging.
 
-    Why "<redacted>" by default:
-    - it is the safest mode: it reveals neither length nor prefixes/suffixes.
-    - if an admin explicitly enables masking, they accept the metadata
-      leak risk (e.g., length or partial prefixes/suffixes).
+    Backward-compat wrapper that constructs a fresh ``SecretRedactor``
+    from current Django settings on every call. Production code paths
+    that issue many redactions in a single request should build a
+    ``SecretRedactor`` instance once and reuse it instead — that's what
+    ``build_oidc_debug_meta`` does now.
 
     Args:
         value: The secret value to redact.
@@ -136,20 +186,14 @@ def redact_secret(value: object) -> RedactedSecret | None:
     Returns:
         Redacted secret string, or None if the input was None.
     """
-    if value is None:
-        return None
-    if not app_settings.log_masked_secrets():
-        return RedactedSecret("<redacted>")
-    return mask_secret(
-        value,
-        head=app_settings.log_mask_head(),
-        tail=app_settings.log_mask_tail(),
-    )
+    return SecretRedactor.from_django()(value)
 
 
 def build_oidc_debug_meta(
     request: object,
     payload: Mapping[str, Any] | None,
+    *,
+    redactor: SecretRedactor | None = None,
 ) -> OIDCDebugMeta:
     """
     Build a dict safe for logging in debug_mode.
@@ -165,7 +209,7 @@ def build_oidc_debug_meta(
       sanitized data.
 
     .. warning::
-       This builds the dict **eagerly** and runs ``redact_secret`` on every
+       This builds the dict **eagerly** and runs the redactor on every
        secret-shaped field. Always guard the call with
        ``if logger.isEnabledFor(level)`` AND the per-app
        ``debug_mode`` flag, or you will pay the construction cost on every
@@ -176,10 +220,15 @@ def build_oidc_debug_meta(
     Args:
         request: The HTTP request object.
         payload: The response payload mapping.
+        redactor: Optional ``SecretRedactor`` — pass one to reuse a
+            single instance across many calls (avoids re-reading
+            settings) or to inject test-controlled masking. Defaults
+            to ``SecretRedactor.from_django()``.
 
     Returns:
         Safe dict for logging.
     """
+    redact = redactor or SecretRedactor.from_django()
     post = getattr(request, "POST", None)
 
     def post_get(key: str) -> Any:
@@ -198,15 +247,15 @@ def build_oidc_debug_meta(
         "scope": post_get("scope"),
         "client_id": post_get("client_id"),
         "redirect_uri": post_get("redirect_uri"),
-        "code": redact_secret(post_get("code")),
-        "refresh_token_req": redact_secret(post_get("refresh_token")),
-        "client_secret": redact_secret(post_get("client_secret")),
-        "assertion": redact_secret(post_get("assertion")),
+        "code": redact(post_get("code")),
+        "refresh_token_req": redact(post_get("refresh_token")),
+        "client_secret": redact(post_get("client_secret")),
+        "assertion": redact(post_get("assertion")),
         # response-side (NEVER raw)
         "token_type": payload_dict.get("token_type"),
         "expires_in": payload_dict.get("expires_in"),
         "scope_resp": payload_dict.get("scope"),
-        "access_token": redact_secret(payload_dict.get("access_token")),
-        "refresh_token": redact_secret(payload_dict.get("refresh_token")),
-        "id_token": redact_secret(payload_dict.get("id_token")),
+        "access_token": redact(payload_dict.get("access_token")),
+        "refresh_token": redact(payload_dict.get("refresh_token")),
+        "id_token": redact(payload_dict.get("id_token")),
     }
