@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Final, NamedTuple
+from typing import Any, Final, NamedTuple, Protocol, runtime_checkable
 
 from django.core.exceptions import PermissionDenied
 
@@ -17,6 +17,56 @@ from .constants import PERM_ACCESS_OIDC
 # - failures should become PermissionDenied, not AttributeError.
 
 logger = logging.getLogger(f"extensions.{__name__}")
+
+
+@runtime_checkable
+class UserLike(Protocol):
+    """
+    Smallest shape ``AccessPolicy`` requires for a ``user`` argument.
+
+    Django's ``User`` model satisfies this directly; ``AnonymousUser``
+    satisfies it via its stub ``has_perm`` / ``is_authenticated`` /
+    ``is_superuser``; test ``SimpleNamespace`` doubles satisfy it as
+    long as they expose the three attrs listed below.
+
+    ``profile`` and ``groups`` are NOT on this Protocol —
+    ``AnonymousUser`` doesn't carry them, and ``_check_app`` reads
+    them via ``getattr`` so a partial mock can still pass through
+    the gate.
+
+    ``runtime_checkable`` so ``isinstance(..., UserLike)`` works in
+    ad-hoc debugging; it costs one extra structural check at the
+    interpreter level but keeps the contract introspectable.
+    """
+
+    is_authenticated: bool
+    is_superuser: bool
+
+    def has_perm(self, perm: str) -> bool:
+        """Standard Django permission gate — see ``User.has_perm``."""
+        ...
+
+
+@runtime_checkable
+class AppLike(Protocol):
+    """
+    Shape of the ``app`` (client / application) argument to
+    ``AccessPolicy._check_app``.
+
+    All three fields are typed ``Any`` because django-stubs renders
+    Django model fields as opaque descriptors
+    (``BooleanField[Unknown, Unknown]``, ``ManyRelatedManager[...]``)
+    that fail Protocol invariance against plain ``bool`` / ``Manager``
+    annotations. ``Any`` keeps the Protocol value as documentation
+    + ``isinstance`` runtime check while letting the static checker
+    accept a concrete ``AllianceAuthApplication`` argument without a
+    cast at every call site. The runtime semantics are unchanged:
+    the policy only reads ``.debug_mode``, ``.states``, ``.groups``.
+    """
+
+    debug_mode: Any
+    states: Any
+    groups: Any
 
 
 class DenyReason(str, Enum):
@@ -46,7 +96,7 @@ class AccessDecision(NamedTuple):
 
     allowed: bool
     deny_reason: DenyReason | None
-    app: object | None
+    app: AppLike | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,14 +127,23 @@ class AccessPolicy:
     # ---- helpers --------------------------------------------------
 
     @staticmethod
-    def is_superuser(user: object) -> bool:
+    def is_superuser(user: UserLike | None) -> bool:
         """Return whether ``user`` is a superuser (defensive against mocks)."""
         return getattr(user, "is_superuser", False)
 
     # ---- public API ------------------------------------------------
 
-    def decide(self, user: object, app: object | None) -> AccessDecision:
-        """Evaluate the policy and return a structured decision."""
+    def decide(
+        self, user: UserLike | None, app: AppLike | None
+    ) -> AccessDecision:
+        """
+        Evaluate the policy and return a structured decision.
+
+        ``user=None`` is accepted (and treated as a global-deny via
+        the ``has_perm`` callable check inside ``_check_global``):
+        DOT validators occasionally hand us a stub request before
+        auth middleware populates ``request.user``.
+        """
         try:
             self._check_global(user)
         except PermissionDenied:
@@ -101,11 +160,11 @@ class AccessPolicy:
             )
         return AccessDecision(allowed=True, deny_reason=None, app=app)
 
-    def is_allowed(self, user: object, app: object | None) -> bool:
+    def is_allowed(self, user: UserLike | None, app: AppLike | None) -> bool:
         """Convenience: ``decide(...).allowed``."""
         return self.decide(user, app).allowed
 
-    def enforce(self, user: object, app: object | None) -> None:
+    def enforce(self, user: UserLike | None, app: AppLike | None) -> None:
         """
         Raise ``PermissionDenied`` if the decision is not allowed.
 
@@ -121,7 +180,7 @@ class AccessPolicy:
 
     # ---- internal building blocks (raise-form) --------------------
 
-    def _check_global(self, user: object) -> None:
+    def _check_global(self, user: UserLike | None) -> None:
         """
         Enforce the global ``access_oidc`` permission gate.
 
@@ -140,7 +199,7 @@ class AccessPolicy:
         if not has_perm(PERM_ACCESS_OIDC):
             raise PermissionDenied(f"Missing {PERM_ACCESS_OIDC} permission")
 
-    def _check_app(self, user: object, app: object) -> None:
+    def _check_app(self, user: UserLike | None, app: AppLike) -> None:
         """
         Enforce per-application state/group access for ``user``.
 

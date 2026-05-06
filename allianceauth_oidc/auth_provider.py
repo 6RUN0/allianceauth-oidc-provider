@@ -12,7 +12,7 @@ from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
 from .app_settings import OIDCSettings
-from .security import DEFAULT_POLICY
+from .security import DEFAULT_POLICY, AppLike, UserLike
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
@@ -234,8 +234,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
     @staticmethod
     def _resolve_user_and_client(
-        request, client_arg: object | None = None
-    ) -> tuple[object | None, object | None]:
+        request, client_arg: AppLike | None = None
+    ) -> tuple[UserLike | None, AppLike | None]:
         """
         Pull (user, client) out of the validator's request shape.
 

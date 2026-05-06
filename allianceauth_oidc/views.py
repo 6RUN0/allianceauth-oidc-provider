@@ -16,14 +16,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic import View
 from oauth2_provider.models import (
-    AbstractApplication,
     get_access_token_model,
     get_application_model,
 )
 from oauth2_provider.views.base import AuthorizationView
 from oauth2_provider.views.mixins import OAuthLibMixin
 
-from .security import DEFAULT_POLICY, DenyReason
+from .models import AllianceAuthApplication
+from .security import DEFAULT_POLICY, DenyReason, UserLike
 from .signals import OIDCAuditBody, oidc_token_issued
 from .utils import app_log, build_oidc_debug_meta
 
@@ -221,7 +221,7 @@ class AuthAuthorizationView(AuthorizationView):
 
     template_name = "allianceauth_oidc/authorize.html"
 
-    def _get_app(self, request: HttpRequest) -> AbstractApplication | None:
+    def _get_app(self, request: HttpRequest) -> AllianceAuthApplication | None:
         """
         Retrieve the active OAuth2 Application by ``client_id``.
 
@@ -232,22 +232,25 @@ class AuthAuthorizationView(AuthorizationView):
         consistent regardless of whether the app exists, is disabled, or
         the user simply lacks access.
 
+        Returns the concrete ``AllianceAuthApplication`` rather than DOT's
+        ``AbstractApplication`` so the caller's static checks see
+        ``debug_mode`` / ``states`` / ``groups`` (and so the app
+        satisfies the ``AppLike`` Protocol used by the policy).
+
         Args:
             request (HttpRequest): The user's HTTP request.
 
         Returns:
-            AbstractApplication | None: Active application, or None.
+            AllianceAuthApplication | None: Active application, or None.
         """
         client_id = request.GET.get("client_id") or request.POST.get(
             "client_id"
         )
         if not client_id:
             return None
-        # prefetch states/groups: check_user_state_and_groups() does
-        # `app_states.exists()` + `app_states.filter(...).exists()` (and
-        # the same for groups), which is 3-4 queries per authorize without
-        # prefetching. With prefetch the related sets are loaded once and
-        # the per-request DB cost drops to a single multi-join query.
+        # prefetch states/groups: AccessPolicy._check_app materialises both
+        # via ``list(...)``, which hits the prefetch cache (zero queries)
+        # instead of two ``exists()`` round-trips per manager.
         return (
             get_application_model()
             .objects.filter(client_id=client_id, active=True)
@@ -297,7 +300,7 @@ class AuthAuthorizationView(AuthorizationView):
         # - Django OAuth Toolkit AuthorizationView may handle GET/POST
         #   differently.
         # - if checks are only in get()/post(), it's easy to miss a code path.
-        user = getattr(request, "user", None)
+        user: UserLike | None = getattr(request, "user", None)
         app = self._get_app(request)
         decision = DEFAULT_POLICY.decide(user, app)
 
