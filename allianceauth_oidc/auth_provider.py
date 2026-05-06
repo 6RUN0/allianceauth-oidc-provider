@@ -254,7 +254,19 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             or client is None
         ):
             return True
-        return self.policy.is_allowed(user, client)
+        allowed = self.policy.is_allowed(user, client)
+        if not allowed:
+            # Validator path doesn't render a denied page (the OAuth
+            # response is the bool → invalid_grant translation), so log
+            # here for operator visibility — the policy gate itself is
+            # decision-only after the M1 consolidation.
+            logger.warning(
+                "OIDC DENIED: validator user=%s client=%s client_id=%s",
+                user,
+                client,
+                getattr(client, "client_id", None),
+            )
+        return allowed
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """
@@ -296,6 +308,12 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             try:
                 self.policy.enforce(user, client)
             except PermissionDenied:
+                logger.warning(
+                    "OIDC DENIED: save_bearer_token user=%s client=%s client_id=%s",  # noqa: E501
+                    user,
+                    client,
+                    getattr(client, "client_id", None),
+                )
                 # Convert to OAuth error response (no 500). ``from None``
                 # suppresses the PermissionDenied chain so the OAuth
                 # client only sees the protocol-level error, not Django

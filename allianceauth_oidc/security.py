@@ -10,7 +10,6 @@ from typing import Final, NamedTuple
 from django.core.exceptions import PermissionDenied
 
 from .constants import PERM_ACCESS_OIDC
-from .utils import app_log
 
 # This module intentionally uses getattr/callable checks:
 # - these functions are called from multiple places (views/validators) and must
@@ -121,9 +120,15 @@ class AccessPolicy:
     # ---- internal building blocks (raise-form) --------------------
 
     def _check_global(self, user: object) -> None:
-        """Enforce the global ``access_oidc`` permission gate."""
+        """
+        Enforce the global ``access_oidc`` permission gate.
+
+        Decision-level logging lives at the *callers* (``views.dispatch``
+        for HTTP, ``auth_provider`` for validators); this method is a
+        pure gate that raises ``PermissionDenied`` on failure. No log
+        here would otherwise duplicate the caller's structured warning.
+        """
         if is_superuser(user):
-            self.log.debug("OIDC ALLOWED: superuser user=%s", user)
             return
         has_perm = getattr(user, "has_perm", None)
         # has_perm is the standard Django contract. If it's missing,
@@ -131,9 +136,6 @@ class AccessPolicy:
         if not callable(has_perm):
             raise PermissionDenied("Invalid user object (no has_perm)")
         if not has_perm(PERM_ACCESS_OIDC):
-            self.log.warning(
-                "OIDC DENIED: missing global permission user=%s", user
-            )
             raise PermissionDenied(f"Missing {PERM_ACCESS_OIDC} permission")
 
     def _check_app(self, user: object, app: object) -> None:
@@ -160,14 +162,8 @@ class AccessPolicy:
         has_state_restrictions = app_states.exists()
         has_group_restrictions = app_groups.exists()
 
+        # No app-level restrictions ⇒ allow without further checks.
         if not has_state_restrictions and not has_group_restrictions:
-            app_log(
-                self.log,
-                app,
-                "OIDC ALLOWED: no app restrictions user=%s app=%s",
-                user,
-                app,
-            )
             return
 
         state_access = False
@@ -185,8 +181,10 @@ class AccessPolicy:
                 bool(user_state_pk)
                 and app_states.filter(pk=user_state_pk).exists()
             )
-            # list(queryset) is expensive — only materialise when
-            # debug_mode AND the level is enabled.
+            # ``list(queryset)`` is expensive — only materialise when
+            # debug_mode AND the INFO level is enabled. The STATE /
+            # GROUP debug logs expose what matched (not the decision
+            # itself), so they survive the M1 logging consolidation.
             if debug_mode and self.log.isEnabledFor(logging.INFO):
                 self.log.info(
                     "OIDC STATE: user_state=%s app_states=%s",
@@ -209,28 +207,8 @@ class AccessPolicy:
                 ).exists()
 
         if group_access or state_access:
-            reason = []
-            if group_access:
-                reason.append("group")
-            if state_access:
-                reason.append("state")
-            app_log(
-                self.log,
-                app,
-                "OIDC ALLOWED: (%s access): user=%s app=%s",
-                ", ".join(reason),
-                user,
-                app,
-            )
             return
 
-        self.log.warning(
-            "OIDC DENIED: app restrictions user=%s app=%s group_access=%s state_access=%s",  # noqa: E501
-            user,
-            app,
-            group_access,
-            state_access,
-        )
         raise PermissionDenied("User not allowed for this application")
 
 
