@@ -16,7 +16,7 @@ help:
 	@echo "  makemigrations   generate Django migrations (nox -s makemigrations)"
 	@echo "  clean            remove build artifacts"
 	@echo "  package          build distributions (flit)"
-	@echo "  deploy           upload distributions to PyPI (twine)"
+	@echo "  deploy           upload distributions to PyPI (uv publish)"
 
 dev:
 	uv sync --all-groups
@@ -62,4 +62,4 @@ package:
 	uv run --with flit flit build
 
 deploy:
-	uv run --with twine twine upload dist/*
+	uv publish dist/*
