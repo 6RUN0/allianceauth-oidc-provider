@@ -337,6 +337,51 @@ def actions_lint(session: nox.Session) -> None:
 
 
 @nox.session
+def diagrams(session: nox.Session) -> None:
+    """
+    Render diagram-as-code sources under ``assets/diagrams/`` to SVG
+    via ``d2``, if installed.
+
+    ``d2`` is a single Go binary; install via the official script
+    (https://d2lang.com/install.sh) or the upstream releases page
+    (https://github.com/terrastruct/d2). The session is a noop with
+    a warning when the binary is missing — same opt-in pattern as
+    ``markdown_lint`` and ``actions_lint``.
+
+    Both the source (``.d2``) and the rendered output (``.svg``) are
+    committed: source so the diagram is editable, output so the
+    README renders without forcing every reader to install ``d2``.
+    The ``diagrams-fresh`` CI step asserts the two stay in sync.
+    """
+    diagram_dir = pathlib.Path("assets/diagrams")
+    sources = sorted(diagram_dir.glob("*.d2"))
+    if not sources:
+        session.skip("no .d2 sources under assets/diagrams/")
+    if not shutil.which("d2"):
+        session.warn(
+            "d2 not installed; skipping. "
+            "Install via the official script "
+            "(curl -fsSL https://d2lang.com/install.sh | sh -s --) "
+            "or https://github.com/terrastruct/d2"
+        )
+        return
+    for src in sources:
+        out = src.with_suffix(".svg")
+        # ``--theme=0`` is the Neutral Default — readable on white
+        # (PyPI) and on dark-mode GitHub via inverted text. ``--pad=20``
+        # leaves breathing room around the diagram so README image
+        # frames don't clip the labels.
+        session.run(
+            "d2",
+            "--theme=0",
+            "--pad=20",
+            str(src),
+            str(out),
+            external=True,
+        )
+
+
+@nox.session
 def makemigrations(session: nox.Session) -> None:
     """
     Generate Django migrations for the ``allianceauth_oidc`` app.

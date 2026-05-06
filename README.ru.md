@@ -28,48 +28,9 @@
 Каждый обмен `authorization_code` проходит через три независимые проверки. Любое упрощение —
 дыра в безопасности; именно поэтому в регрессии есть тесты под каждый слой по отдельности.
 
-```text
-   Relying Party                    Django + django-oauth-toolkit
-   -------------                    -----------------------------
-        |
-        |  GET/POST /o/authorize/?response_type=code
-        |------------------------------>  AuthAuthorizationView.dispatch()
-        |                                   Слой 1: views.py
-        |                                   - глобальное право access_oidc
-        |                                   - whitelist по state/группам
-        |                                     (на уровне приложения)
-        |                                   - срабатывает на GET *и* POST
-        |                                            |
-        |                                            v
-        |                                   django-oauth-toolkit
-        |                                   выдаёт authorization code
-        |  <-----------------------------  302 redirect с auth code
-        |
-        |  POST /o/token/  code + client_secret
-        |------------------------------>  TokenView
-        |                                            |
-        |                                            v
-        |                                   AllianceAuthOAuth2Validator
-        |                                   Слой 2: auth_provider.py
-        |                                   - validate_code() повторно
-        |                                     проверяет state/группы
-        |                                   - возвращает invalid_grant,
-        |                                     если пользователь потерял
-        |                                     доступ между шагами
-        |                                            |
-        |                                   [политика прошла]
-        |                                            v
-        |                                   Слой 3: auth_provider.py
-        |                                   - save_bearer_token()
-        |                                   - PermissionDenied здесь
-        |                                     превращается в
-        |                                     InvalidGrantError (никогда
-        |                                     не 500, никогда не утечка
-        |                                     уже сохранённого токена)
-        |                                            |
-        |                                            v
-        |  <-----------------------------  200 access_token + id_token
-```
+![Трёхслойная проверка политики: dispatch затем validate_code затем save_bearer_token](https://raw.githubusercontent.com/6RUN0/allianceauth-oidc-provider/current/assets/diagrams/policy-flow.svg)
+
+Source диаграммы — `assets/diagrams/policy-flow.d2`; перерисовать через `make diagrams` после правок.
 
 ## Установка
 

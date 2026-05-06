@@ -1,0 +1,45 @@
+# Three-layer policy enforcement for the authorization-code flow.
+#
+# Render
+# ------
+# ``d2 --theme=0 --pad=20 assets/diagrams/policy-flow.d2 \
+#       assets/diagrams/policy-flow.svg``
+#
+# or via the nox session::
+#
+#     uv run nox -s diagrams
+#
+# The session is opt-in — same skip-with-warning pattern as
+# ``markdown_lint`` / ``actions_lint``. ``d2`` is a single Go binary;
+# install via the official script (https://d2lang.com/install.sh) or
+# https://github.com/terrastruct/d2 releases. Re-render after any
+# edit and commit both source (.d2) and output (.svg) — the CI's
+# ``diagrams-fresh`` step asserts the SVG is in sync with the source.
+
+shape: sequence_diagram
+
+RP: Relying Party
+Auth: AuthAuthorizationView (views.py)
+DOT: django-oauth-toolkit
+Token: TokenView (views.py)
+V: AllianceAuthOAuth2Validator (auth_provider.py)
+
+"Layer 1 — views.py:dispatch() runs on GET *and* POST": {
+  RP -> Auth: GET/POST /o/authorize/\nresponse_type=code
+  Auth -> Auth: check global access_oidc\n+ state/group whitelist
+  Auth -> DOT: forward (policy passes)
+  DOT -> RP: 302 redirect with auth code
+}
+
+"Layer 2 — auth_provider.py:validate_code() / validate_refresh_token()": {
+  RP -> Token: POST /o/token/\ncode + client_secret
+  Token -> V: validate_code(code, request)
+  V -> V: re-check state/group\non exchange
+  V -> Token: ok / invalid_grant
+}
+
+"Layer 3 — auth_provider.py:save_bearer_token() — last guard": {
+  Token -> V: save_bearer_token(...)
+  V -> V: PermissionDenied\n→ InvalidGrantError
+  V -> RP: 200 access_token + id_token
+}

@@ -1,4 +1,4 @@
-.PHONY: help clean dev test test-all lint lint-md lint-actions typecheck coverage audit messages compilemessages makemigrations package deploy
+.PHONY: help clean dev test test-all lint lint-md lint-actions typecheck coverage audit messages compilemessages makemigrations diagrams package deploy
 
 help:
 	@echo "Available targets (all run via uv):"
@@ -14,6 +14,7 @@ help:
 	@echo "  messages         extract translatable strings (nox -s makemessages)"
 	@echo "  compilemessages  compile .po -> .mo (nox -s compilemessages)"
 	@echo "  makemigrations   generate Django migrations (nox -s makemigrations)"
+	@echo "  diagrams         render assets/diagrams/*.d2 to SVG via d2 (nox -s diagrams)"
 	@echo "  clean            remove build artifacts"
 	@echo "  package          build distributions (flit)"
 	@echo "  deploy           upload distributions to PyPI (uv publish)"
@@ -54,6 +55,9 @@ compilemessages:
 
 makemigrations:
 	uv run nox -s makemigrations
+
+diagrams:
+	uv run nox -s diagrams
 
 clean:
 	rm -rf dist/*

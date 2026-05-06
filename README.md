@@ -30,44 +30,9 @@ Every authorization-code exchange runs through three independent gates. Each lay
 removing any of them opens a hole, which is why the regression tests exercise each layer
 separately.
 
-```text
-   Relying Party                    Django + django-oauth-toolkit
-   -------------                    -----------------------------
-        |
-        |  GET/POST /o/authorize/?response_type=code
-        |------------------------------>  AuthAuthorizationView.dispatch()
-        |                                   Layer 1: views.py
-        |                                   - global access_oidc permission
-        |                                   - per-app state/group whitelist
-        |                                   - runs on GET *and* POST
-        |                                            |
-        |                                            v
-        |                                   django-oauth-toolkit issues code
-        |  <-----------------------------  302 redirect with auth code
-        |
-        |  POST /o/token/  code + client_secret
-        |------------------------------>  TokenView
-        |                                            |
-        |                                            v
-        |                                   AllianceAuthOAuth2Validator
-        |                                   Layer 2: auth_provider.py
-        |                                   - validate_code() re-checks
-        |                                     state/group whitelist
-        |                                   - returns invalid_grant if
-        |                                     user lost access
-        |                                            |
-        |                                   [policy passes]
-        |                                            v
-        |                                   Layer 3: auth_provider.py
-        |                                   - save_bearer_token()
-        |                                   - PermissionDenied here is
-        |                                     converted to InvalidGrantError
-        |                                     (never a 500, never a leaked
-        |                                     persisted-but-rejected token)
-        |                                            |
-        |                                            v
-        |  <-----------------------------  200 access_token + id_token
-```
+![Three-layer policy enforcement: dispatch then validate_code then save_bearer_token](https://raw.githubusercontent.com/6RUN0/allianceauth-oidc-provider/current/assets/diagrams/policy-flow.svg)
+
+The diagram source is `assets/diagrams/policy-flow.d2`; re-render with `make diagrams` after edits.
 
 ## Install
 
