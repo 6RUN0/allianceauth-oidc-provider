@@ -7,6 +7,8 @@ no ``OIDCTestCase`` fixture. Validation is the main concern here:
 rejected value gets an explicit case.
 """
 
+import dataclasses
+
 from django.test import SimpleTestCase, override_settings
 
 from allianceauth_oidc.app_settings import (
@@ -66,7 +68,7 @@ class TestOIDCSettingsValidation(SimpleTestCase):
         # ``frozen=True`` is part of the contract — request-path code
         # should not be able to flip ``log_masked_secrets`` mid-flight.
         settings = OIDCSettings(**_good_kwargs())
-        with self.assertRaises(Exception):  # FrozenInstanceError
+        with self.assertRaises(dataclasses.FrozenInstanceError):
             settings.log_masked_secrets = True  # type: ignore[misc]
 
 
