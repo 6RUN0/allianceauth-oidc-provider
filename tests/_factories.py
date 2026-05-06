@@ -60,6 +60,13 @@ _char_id = itertools.count(3000)
 _owner_hash = itertools.count(4000)
 
 
+# Default redirect URI for fixture apps. The same string lives at
+# ``_oidc_testcase.REDIRECT_URI``; importing from there would create a
+# circular import (``_oidc_testcase`` imports this module). Defined as
+# the source-of-truth here and re-exported by ``_oidc_testcase``.
+DEFAULT_REDIRECT_URI: str = "http://localhost/redir/"
+
+
 def make_alliance(
     ticker: str = "TST",
     *,
@@ -196,7 +203,7 @@ def make_app(
     groups: list[str] | None = None,
     active: bool = True,
     debug_mode: bool = False,
-    redirect_uri: str = "http://localhost/redir/",
+    redirect_uri: str = DEFAULT_REDIRECT_URI,
     skip_authorization: bool = False,
     algorithm: str = "RS256",
     client_type: str = AbstractApplication.CLIENT_CONFIDENTIAL,

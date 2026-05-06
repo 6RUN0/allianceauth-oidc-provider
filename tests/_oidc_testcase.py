@@ -10,10 +10,12 @@ from allianceauth.authentication.models import (
 )
 from django.contrib.auth.models import Group, Permission, User
 from django.test import RequestFactory, TestCase
+from oauth2_provider.settings import oauth2_settings
 
 from allianceauth_oidc.constants import PERM_ACCESS_OIDC_CODENAME
 
 from ._factories import (
+    DEFAULT_REDIRECT_URI,
     make_alliance,
     make_app,
     make_character,
@@ -22,11 +24,17 @@ from ._factories import (
 )
 
 # Default test fixtures — keep aligned with make_app() / make_user().
-REDIRECT_URI = "http://localhost/redir/"
+# ``REDIRECT_URI`` re-exports the factory's source-of-truth so
+# legacy ``from ._oidc_testcase import REDIRECT_URI`` imports keep
+# working without a circular import on the factory side.
+REDIRECT_URI = DEFAULT_REDIRECT_URI
 SCOPE_OPENID = "openid"
 SCOPE_PROFILE = "openid profile"
 SCOPE_FULL = "openid profile email"
-DEFAULT_EXPIRES_IN = 60
+# Read from DOT's resolved settings so a future change to
+# ``OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"]`` in
+# ``test_settingsAA4.py`` propagates here without a manual edit.
+DEFAULT_EXPIRES_IN = oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS
 
 # All HTTP redirect statuses: 301 Moved Permanently, 302 Found,
 # 303 See Other, 307 Temporary Redirect, 308 Permanent Redirect.

@@ -25,7 +25,7 @@ import os
 
 from jwcrypto import jwk, jwt
 
-from ._oidc_testcase import SCOPE_OPENID, OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, SCOPE_OPENID, OIDCTestCase
 
 REQUIRED_DISCOVERY_KEYS = frozenset(
     {
@@ -274,7 +274,7 @@ class TestPKCEFlow(OIDCTestCase):
             "grant_type": "authorization_code",
             "client_id": self.oauth_id,
             "client_secret": self.oauth_secret,
-            "redirect_uri": "http://localhost/redir/",
+            "redirect_uri": REDIRECT_URI,
             "code": code,
         }
         if verifier is not None:

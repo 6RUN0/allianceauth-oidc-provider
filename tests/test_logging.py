@@ -8,7 +8,7 @@ import logging
 
 from oauth2_provider.models import get_access_token_model
 
-from ._oidc_testcase import SCOPE_OPENID, OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, SCOPE_OPENID, OIDCTestCase
 
 VIEWS_LOGGER = "extensions.allianceauth_oidc.views"
 
@@ -31,7 +31,7 @@ class TestDebugLogging(OIDCTestCase):
             logging.getLogger(VIEWS_LOGGER).debug("test-anchor")
             self.exchange_code_for_token(
                 code=code,
-                redirect_uri="http://localhost/redir/",
+                redirect_uri=REDIRECT_URI,
                 expected_status=200,
             )
         return cm.records, "\n".join(cm.output)

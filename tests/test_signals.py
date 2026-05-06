@@ -13,7 +13,7 @@ from oauth2_provider.models import get_access_token_model
 
 from allianceauth_oidc.signals import oidc_token_issued
 
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, OIDCTestCase
 
 
 class TestOidcTokenIssuedSignal(OIDCTestCase):
@@ -82,7 +82,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
 
         resp = self.exchange_code_for_token(
             code=code,
-            redirect_uri="http://localhost/redir/",
+            redirect_uri=REDIRECT_URI,
             expected_status=400,
         )
         self.assertOAuthError(resp, expected_error="invalid_grant")

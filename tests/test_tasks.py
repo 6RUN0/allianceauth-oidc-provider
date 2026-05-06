@@ -19,7 +19,7 @@ from oauth2_provider.models import (
 
 from allianceauth_oidc.tasks import clear_expired_tokens
 
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, OIDCTestCase
 
 
 class TestClearExpiredTokensTask(OIDCTestCase):
@@ -37,7 +37,7 @@ class TestClearExpiredTokensTask(OIDCTestCase):
             application=self.oauth_app,
             code="grant-expired",
             expires=now - timedelta(hours=1),
-            redirect_uri="http://localhost/redir/",
+            redirect_uri=REDIRECT_URI,
             scope="openid",
         )
         live = Grant.objects.create(
@@ -45,7 +45,7 @@ class TestClearExpiredTokensTask(OIDCTestCase):
             application=self.oauth_app,
             code="grant-live",
             expires=now + timedelta(hours=1),
-            redirect_uri="http://localhost/redir/",
+            redirect_uri=REDIRECT_URI,
             scope="openid",
         )
 
