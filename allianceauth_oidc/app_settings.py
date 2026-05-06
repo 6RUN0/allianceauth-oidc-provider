@@ -6,11 +6,20 @@ Accessors are functions, not module-level constants — Django's
 import-time ``getattr(settings, ...)`` snapshots the value before the
 override runs and never sees changes. Reading via a function call keeps
 the runtime tunable from tests and from operator hot-reloads.
+
+For dependency-injection-friendly use, ``OIDCSettings.from_django()``
+wraps the seven scalar accessors in a frozen dataclass; pass it in
+where you would otherwise call ``app_settings.foo()`` so tests can
+hand-craft a config without ``@override_settings``.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Final
 
 from django.conf import settings
+from typing_extensions import Self
 
 # Setting keys: pin each name in one place so the docstring, the
 # ``getattr`` lookup, and any test using ``override_settings`` cannot
@@ -134,3 +143,88 @@ def eve_claim_scope() -> str:
     return str(
         getattr(settings, _KEY_EVE_CLAIM_SCOPE, _DEFAULT_EVE_CLAIM_SCOPE)
     )
+
+
+# EVE Online's image server only serves portraits at fixed sizes;
+# constructing a URL with a different ``size=`` query parameter
+# returns a 400. The set is part of the validator contract for
+# ``OIDCSettings`` so a misconfigured ``ALLIANCEAUTH_OIDC_PORTRAIT_SIZE``
+# fails fast at start-up instead of silently breaking the ``picture``
+# claim at runtime.
+EVE_PORTRAIT_VALID_SIZES: Final[frozenset[int]] = frozenset(
+    {32, 64, 128, 256, 512, 1024}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class OIDCSettings:
+    """
+    Snapshot of every OIDC-provider Django setting in one typed object.
+
+    Constructed via ``OIDCSettings.from_django()`` — that classmethod
+    reads ``django.conf.settings`` lazily at call time, so the snapshot
+    survives ``@override_settings`` correctly. Tests can also build an
+    instance directly: ``OIDCSettings(log_masked_secrets=True, ...)``.
+
+    Frozen + slots: cheap to pass around (no __dict__), and accidental
+    mutation in a request path becomes an ``FrozenInstanceError`` at
+    edit time rather than a silent bug.
+    """
+
+    log_masked_secrets: bool
+    log_mask_head: int
+    log_mask_tail: int
+    portrait_url_template: str
+    portrait_size: int
+    eve_claim_prefix: str
+    eve_claim_scope: str
+
+    def __post_init__(self) -> None:
+        """
+        Validate the snapshot and fail fast on bad operator config.
+
+        ``mask_secret`` would clamp negative head/tail to zero anyway,
+        but raising at construction time pushes the misconfiguration
+        back to whoever set the Django setting instead of letting it
+        surface in a request-path logger. Likewise for portrait_size
+        — emitting a 400-response URL into the ``picture`` claim is
+        worse than failing at boot.
+        """
+        if self.log_mask_head < 0:
+            msg = (
+                "ALLIANCEAUTH_OIDC_LOG_MASK_HEAD must be >=0, "
+                + f"got {self.log_mask_head}"
+            )
+            raise ValueError(msg)
+        if self.log_mask_tail < 0:
+            msg = (
+                "ALLIANCEAUTH_OIDC_LOG_MASK_TAIL must be >=0, "
+                + f"got {self.log_mask_tail}"
+            )
+            raise ValueError(msg)
+        if self.portrait_size not in EVE_PORTRAIT_VALID_SIZES:
+            valid = sorted(EVE_PORTRAIT_VALID_SIZES)
+            msg = (
+                f"ALLIANCEAUTH_OIDC_PORTRAIT_SIZE must be one of {valid}, "
+                + f"got {self.portrait_size}"
+            )
+            raise ValueError(msg)
+
+    @classmethod
+    def from_django(cls) -> Self:
+        """
+        Build a snapshot from the live ``django.conf.settings``.
+
+        Reads each value via the existing module-level accessor so the
+        coercion / default rules stay in one place — this is a typed
+        view over those, not a competing implementation.
+        """
+        return cls(
+            log_masked_secrets=log_masked_secrets(),
+            log_mask_head=log_mask_head(),
+            log_mask_tail=log_mask_tail(),
+            portrait_url_template=portrait_url_template(),
+            portrait_size=portrait_size(),
+            eve_claim_prefix=eve_claim_prefix(),
+            eve_claim_scope=eve_claim_scope(),
+        )
