@@ -37,7 +37,10 @@ def render_rows(
 
     if fmt == "json":
         return json.dumps(
-            [{c: _coerce(row.get(c)) for c in columns} for row in materialised],
+            [
+                {c: _coerce(row.get(c)) for c in columns}
+                for row in materialised
+            ],
             indent=2,
             sort_keys=False,
         )

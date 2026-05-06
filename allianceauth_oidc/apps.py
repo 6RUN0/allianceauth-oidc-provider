@@ -1,6 +1,8 @@
 """Django AppConfig for the OIDC provider."""
 
 from django.apps import AppConfig
+from django.utils.text import format_lazy
+from django.utils.translation import gettext_lazy as _
 
 from . import __version__
 
@@ -11,7 +13,13 @@ class AllianceAuthOIDC(AppConfig):
     name = "allianceauth_oidc"
     label = "allianceauth_oidc"
 
-    verbose_name = f"Alliance Auth OIDC v{__version__}"
+    # ``format_lazy`` keeps the verbose_name translation lazy so the
+    # admin renders it in the active language at request time, not the
+    # language that happened to be active at import.
+    verbose_name = format_lazy(
+        _("Alliance Auth OIDC v{version}"),
+        version=__version__,
+    )
 
     def ready(self):
         """Connect the default audit receiver to ``oidc_token_issued``."""

@@ -1,16 +1,18 @@
-.PHONY: help clean dev test lint typecheck coverage audit package deploy
+.PHONY: help clean dev test lint typecheck coverage audit messages compilemessages package deploy
 
 help:
 	@echo "Available targets (all run via uv):"
-	@echo "  dev        sync dev dependencies (uv sync --all-groups + pre-commit install)"
-	@echo "  test       run Django test suite (nox -s tests)"
-	@echo "  lint       run pre-commit on all files (nox -s lint)"
-	@echo "  typecheck  run mypy + basedpyright (nox -s typecheck)"
-	@echo "  coverage   run tests with coverage report (nox -s coverage)"
-	@echo "  audit      pip-audit dependencies (nox -s audit)"
-	@echo "  clean      remove build artifacts"
-	@echo "  package    build distributions (flit)"
-	@echo "  deploy     upload distributions to PyPI (twine)"
+	@echo "  dev              sync dev dependencies (uv sync --all-groups + pre-commit install)"
+	@echo "  test             run Django test suite (nox -s tests)"
+	@echo "  lint             run pre-commit on all files (nox -s lint)"
+	@echo "  typecheck        run mypy + basedpyright (nox -s typecheck)"
+	@echo "  coverage         run tests with coverage report (nox -s coverage)"
+	@echo "  audit            pip-audit dependencies (nox -s audit)"
+	@echo "  messages         extract translatable strings (nox -s makemessages)"
+	@echo "  compilemessages  compile .po -> .mo (nox -s compilemessages)"
+	@echo "  clean            remove build artifacts"
+	@echo "  package          build distributions (flit)"
+	@echo "  deploy           upload distributions to PyPI (twine)"
 
 dev:
 	uv sync --all-groups
@@ -30,6 +32,12 @@ coverage:
 
 audit:
 	uv run nox -s audit
+
+messages:
+	uv run nox -s makemessages
+
+compilemessages:
+	uv run nox -s compilemessages
 
 clean:
 	rm -rf dist/*

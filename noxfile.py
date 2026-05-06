@@ -14,10 +14,14 @@ Examples::
     uv run nox -s typecheck                        # mypy + basedpyright
     uv run nox -s coverage                         # tests + coverage reports
     uv run nox -s audit                            # pip-audit
+    uv run nox -s makemessages                     # extract -> .po + .pot
+    uv run nox -s compilemessages                  # compile .po -> .mo
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
 from __future__ import annotations
+
+import pathlib
 
 import nox
 
@@ -43,6 +47,14 @@ TEST_ARGS_BASE = [
     "2",
     "--debug-mode",
 ]
+
+# Locales we ship translations for. ``en`` is the source language —
+# we keep the catalogue inside the tree because the Transifex config
+# (``.tx/transifex.yml``) treats it as the source-of-truth file. Add
+# new locales here as translations land; the lists are honoured by
+# both ``makemessages`` (extract) and ``compilemessages`` (compile).
+LOCALES = ["en", "ru", "uk"]
+PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
 
 
 def _resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:
@@ -141,6 +153,46 @@ def typecheck(session: nox.Session) -> None:
 def audit(session: nox.Session) -> None:
     """Audit dependencies for known vulnerabilities."""
     session.run("pip-audit")
+
+
+@nox.session
+def makemessages(session: nox.Session) -> None:
+    """
+    Extract translatable strings into the locale tree.
+
+    Runs Django's ``makemessages`` once per locale, writing
+    ``locale/<locale>/LC_MESSAGES/django.po`` plus a top-level
+    ``django.pot`` template. ``--no-location`` keeps the .po diffs
+    stable (no ``source.py:42`` refs that churn on every refactor);
+    ``--keep-pot`` retains the template alongside the locale
+    catalogues for translation-platform workflows. Invoked from
+    inside ``allianceauth_oidc/`` so the catalogues land next to the
+    package source, not in the host AA project's ``LOCALE_PATHS``.
+    """
+    locale_dir = PACKAGE_DIR / "locale"
+    locale_dir.mkdir(exist_ok=True)
+    with session.chdir(PACKAGE_DIR):
+        for locale in LOCALES:
+            session.run(
+                "django-admin",
+                "makemessages",
+                "--locale",
+                locale,
+                "--no-location",
+                "--keep-pot",
+                env=_test_env(session),
+            )
+
+
+@nox.session
+def compilemessages(session: nox.Session) -> None:
+    """Compile shipped ``.po`` catalogues into ``.mo`` binaries."""
+    with session.chdir(PACKAGE_DIR):
+        session.run(
+            "django-admin",
+            "compilemessages",
+            env=_test_env(session),
+        )
 
 
 @nox.session

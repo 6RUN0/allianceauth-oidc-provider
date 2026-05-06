@@ -7,6 +7,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils.translation import gettext_lazy as _
 from oauth2_provider.generators import generate_client_secret
 from oauth2_provider.models import get_application_model
 
@@ -25,14 +26,17 @@ class Command(BaseCommand):
     in-flight tokens for a specific user.
     """
 
-    help = "Regenerate the client_secret of an OIDC application."
+    # See ``oidc_create_app.Command.help`` for the type-ignore rationale.
+    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
+        "Regenerate the client_secret of an OIDC application."
+    )
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--client-id", required=True)
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Show what would change without writing.",
+            help=_("Show what would change without writing."),
         )
         parser.add_argument(
             "--format",
@@ -58,8 +62,7 @@ class Command(BaseCommand):
                         {
                             "client_id": app.client_id,
                             "name": app.name,
-                            "would_set_secret_prefix": new_secret[:4]
-                            + "…",
+                            "would_set_secret_prefix": new_secret[:4] + "…",
                             "dry_run": True,
                         }
                     ],

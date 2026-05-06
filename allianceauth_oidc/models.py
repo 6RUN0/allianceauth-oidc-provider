@@ -4,6 +4,7 @@ from allianceauth.authentication.models import State
 from django.contrib.auth.models import Group
 from django.core.validators import URLValidator
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 from oauth2_provider.models import AbstractApplication
 from typing_extensions import override
 
@@ -22,14 +23,18 @@ class AllianceAuthApplication(AbstractApplication):
         # `data:`/`javascript:` hand-crafted around browser quirks.
         # Restrict to the two schemes we actually render.
         validators=[URLValidator(schemes=["http", "https"])],
-        help_text="URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL.",  # noqa: E501
+        help_text=_(
+            "URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL."
+        ),  # noqa: E501
     )
     states = models.ManyToManyField(State, blank=True)
     groups = models.ManyToManyField(Group, blank=True)
     active = models.BooleanField(default=True)
     debug_mode = models.BooleanField(
         default=False,
-        help_text="Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings.",  # noqa: E501
+        help_text=_(
+            "Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings."
+        ),  # noqa: E501
     )
 
     @override
@@ -54,11 +59,11 @@ class AllianceAuthApplication(AbstractApplication):
         # shifts as updates rewrite tuples — page 2 today is not page 2
         # tomorrow. `name` matches the admin's primary search field.
         ordering = ("name",)
-        verbose_name = "Alliance Auth OIDC application"
-        verbose_name_plural = "Alliance Auth OIDC applications"
+        verbose_name = _("Alliance Auth OIDC application")
+        verbose_name_plural = _("Alliance Auth OIDC applications")
         permissions = [
             (
                 PERM_ACCESS_OIDC_CODENAME,
-                "Can Authenticate External Apps with OIDC",
+                _("Can Authenticate External Apps with OIDC"),
             )
         ]

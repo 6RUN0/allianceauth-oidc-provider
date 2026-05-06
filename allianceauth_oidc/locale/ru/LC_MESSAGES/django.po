@@ -1,0 +1,145 @@
+# Russian translation for allianceauth-oidc-provider.
+# Copyright (C) 2026 Boris Talovikov
+# This file is distributed under the same license as the
+# allianceauth-oidc-provider package (GPL-3.0-or-later).
+# Boris Talovikov <boris@talovikov.ru>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: allianceauth-oidc-provider 0.0.1b9\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-05-06 06:24+0000\n"
+"PO-Revision-Date: 2026-05-06 11:25+0500\n"
+"Last-Translator: Boris Talovikov <boris@talovikov.ru>\n"
+"Language-Team: Russian <ru@li.org>\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<12 || n%100>14) ? 1 : n%10==0 || (n%10>=5 && n%10<=9) || "
+"(n%100>=11 && n%100<=14)? 2 : 3);\n"
+
+#, python-brace-format
+msgid "Alliance Auth OIDC v{version}"
+msgstr "Alliance Auth OIDC v{version}"
+
+msgid "List active OIDC access tokens with optional filters."
+msgstr "Показать активные OIDC access-токены с опциональными фильтрами."
+
+msgid "Filter by exact username."
+msgstr "Фильтр по точному username."
+
+msgid "Filter by application client_id."
+msgstr "Фильтр по client_id приложения."
+
+msgid "Include tokens past their expiry timestamp."
+msgstr "Включать токены с истекшим сроком действия."
+
+msgid "Create a new AllianceAuthApplication and print its credentials."
+msgstr "Создать новое OIDC-приложение и вывести его credentials."
+
+msgid "ID of the User who owns the app."
+msgstr "ID пользователя-владельца приложения."
+
+msgid "Allowed redirect URI (repeat for multiple)."
+msgstr "Разрешённый redirect URI (повторите флаг для нескольких)."
+
+msgid "Allowed AA state name (repeat for multiple)."
+msgstr "Разрешённое имя AA-state (повторите флаг для нескольких)."
+
+msgid "Allowed Django group name (repeat for multiple)."
+msgstr "Разрешённое имя Django-group (повторите флаг для нескольких)."
+
+msgid "Revoke all OAuth2 tokens for a given user."
+msgstr "Отозвать все OAuth2-токены указанного пользователя."
+
+msgid "username to revoke (exact match)"
+msgstr "username для отзыва (точное совпадение)"
+
+msgid "Count tokens that would be revoked without revoking."
+msgstr "Подсчитать сколько токенов будет отозвано, без фактического отзыва."
+
+msgid "Regenerate the client_secret of an OIDC application."
+msgstr "Перегенерировать client_secret OIDC-приложения."
+
+msgid "Show what would change without writing."
+msgstr "Показать что изменится, без записи."
+
+msgid ""
+"URL to the application's icon (128x128). Can be a local static-file URL or "
+"an absolute http(s) URL."
+msgstr ""
+"URL иконки приложения (128×128). Может быть URL локального static-файла "
+"или абсолютным http(s)-адресом."
+
+msgid ""
+"Enables additional OIDC debug logging (INFO). Secrets/tokens are always "
+"redacted/masked according to settings."
+msgstr ""
+"Включает дополнительные OIDC debug-логи (INFO). Секреты и токены всегда "
+"редактируются/маскируются согласно настройкам."
+
+msgid "Alliance Auth OIDC application"
+msgstr "OIDC-приложение Alliance Auth"
+
+msgid "Alliance Auth OIDC applications"
+msgstr "OIDC-приложения Alliance Auth"
+
+msgid "Can Authenticate External Apps with OIDC"
+msgstr "Может авторизовать внешние приложения через OIDC"
+
+msgid "is requesting access to your Alliance Auth User data"
+msgstr "запрашивает доступ к данным вашей учётной записи Alliance Auth"
+
+msgid "Logged in as:"
+msgstr "Вы вошли как:"
+
+msgid "The application is requesting the following"
+msgstr "Приложение запрашивает следующее"
+
+msgid "You will be redirected back to the application after authorization"
+msgstr "После авторизации вы вернётесь в приложение"
+
+msgid "This Application cannot access other data within Alliance Auth!"
+msgstr "Это приложение не имеет доступа к другим данным в Alliance Auth!"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Authorize"
+msgstr "Авторизовать"
+
+msgid "Error:"
+msgstr "Ошибка:"
+
+#, python-format
+msgid ""
+"User \"%(username)s\" has no permission to use application \"%(app_name)s\"."
+msgstr "У пользователя «%(username)s» нет доступа к приложению «%(app_name)s»."
+
+#, python-format
+msgid "User \"%(username)s\" has no permission to use OIDC applications."
+msgstr ""
+"У пользователя «%(username)s» нет права на использование OIDC-приложений."
+
+msgid "If you believe this is in error please contact the administrators."
+msgstr "Если вы считаете это ошибкой, свяжитесь с администрацией."
+
+msgid "This action has been logged"
+msgstr "Это действие зафиксировано в журнале"
+
+msgid "Confirm Logout requested by"
+msgstr "Подтвердите выход, инициированный приложением"
+
+msgid "Confirm Logout"
+msgstr "Подтвердить выход"
+
+msgid "Logout"
+msgstr "Выйти"
+
+msgid "User not allowed global OIDC access"
+msgstr "Пользователю не разрешён глобальный доступ к OIDC"
+
+msgid "User not allowed for this application"
+msgstr "Пользователю не разрешён доступ к этому приложению"

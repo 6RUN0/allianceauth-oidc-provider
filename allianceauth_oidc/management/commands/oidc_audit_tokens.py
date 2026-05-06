@@ -7,6 +7,7 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from oauth2_provider.models import (
     get_access_token_model,
     get_application_model,
@@ -25,21 +26,24 @@ class Command(BaseCommand):
     refreshable sessions?" diagnostics.
     """
 
-    help = "List active OIDC access tokens with optional filters."
+    # See ``oidc_create_app.Command.help`` for the type-ignore rationale.
+    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
+        "List active OIDC access tokens with optional filters."
+    )
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument(
             "--username",
-            help="Filter by exact username.",
+            help=_("Filter by exact username."),
         )
         parser.add_argument(
             "--client-id",
-            help="Filter by application client_id.",
+            help=_("Filter by application client_id."),
         )
         parser.add_argument(
             "--include-expired",
             action="store_true",
-            help="Include tokens past their expiry timestamp.",
+            help=_("Include tokens past their expiry timestamp."),
         )
         parser.add_argument(
             "--format",
@@ -67,9 +71,7 @@ class Command(BaseCommand):
         if options["client_id"]:
             Application = get_application_model()
             try:
-                app = Application.objects.get(
-                    client_id=options["client_id"]
-                )
+                app = Application.objects.get(client_id=options["client_id"])
             except Application.DoesNotExist as exc:
                 raise CommandError(
                     f"client_id={options['client_id']!r} not found"

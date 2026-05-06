@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils.translation import gettext_lazy as _
 from oauth2_provider.generators import (
     generate_client_id,
     generate_client_secret,
@@ -42,7 +43,13 @@ class Command(BaseCommand):
     default), so capture it from this output.
     """
 
-    help = "Create a new AllianceAuthApplication and print its credentials."
+    # django-stubs types ``BaseCommand.help`` as ``str``; lazy
+    # translatables are accepted at runtime (Django str()-coerces in
+    # ``BaseCommand.create_parser``) but mypy / basedpyright don't
+    # know that.
+    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
+        "Create a new AllianceAuthApplication and print its credentials."
+    )
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--name", required=True)
@@ -50,7 +57,7 @@ class Command(BaseCommand):
             "--user-id",
             required=True,
             type=int,
-            help="ID of the User who owns the app.",
+            help=_("ID of the User who owns the app."),
         )
         parser.add_argument(
             "--client-type",
@@ -66,19 +73,19 @@ class Command(BaseCommand):
             "--redirect-uri",
             action="append",
             default=[],
-            help="Allowed redirect URI (repeat for multiple).",
+            help=_("Allowed redirect URI (repeat for multiple)."),
         )
         parser.add_argument(
             "--state",
             action="append",
             default=[],
-            help="Allowed AA state name (repeat for multiple).",
+            help=_("Allowed AA state name (repeat for multiple)."),
         )
         parser.add_argument(
             "--group",
             action="append",
             default=[],
-            help="Allowed Django group name (repeat for multiple).",
+            help=_("Allowed Django group name (repeat for multiple)."),
         )
         parser.add_argument("--debug-mode", action="store_true")
         parser.add_argument(
@@ -157,7 +164,7 @@ class Command(BaseCommand):
                     f"Created via oidc_create_app (grant={options['grant_type']})"  # noqa: E501
                 ),
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             # LogEntry is best-effort; failing to record audit must
             # not undo the creation.
             logger.exception("OIDC create_app: failed to write LogEntry")

@@ -23,14 +23,14 @@
 
                 <div class="control-group">
                     <div class="controls">
-                        <input type="submit" class="btn btn-large" value="Cancel"/>
-                        <input type="submit" class="btn btn-large btn-primary" name="allow" value="Logout"/>
+                        <input type="submit" class="btn btn-large" value="{% translate 'Cancel' %}"/>
+                        <input type="submit" class="btn btn-large btn-primary" name="allow" value="{% translate 'Logout' %}"/>
                     </div>
                 </div>
             </form>
 
         {% else %}
-            <h2>Error: {{ error.error }}</h2>
+            <h2>{% translate "Error:" %} {{ error.error }}</h2>
             <p>{{ error.description }}</p>
         {% endif %}
     </div>

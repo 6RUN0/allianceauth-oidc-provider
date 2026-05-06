@@ -46,9 +46,16 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# Translations
+# Translations: .po is the source, .mo is the compiled binary. We
+# commit shipped .mo files (under allianceauth_oidc/locale/) so the
+# wheel ships compiled catalogues and operators don't need to run
+# `compilemessages`. The blanket *.mo ignore still catches stray .mo
+# files left around by ad-hoc `django-admin compilemessages` runs in
+# other directories. Same idea for the .pot template.
 *.mo
 *.pot
+!allianceauth_oidc/locale/**/*.mo
+!allianceauth_oidc/locale/django.pot
 
 # Django stuff:
 *.log*
