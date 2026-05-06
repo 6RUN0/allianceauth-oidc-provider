@@ -2,16 +2,53 @@
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NewType, TypedDict
 
 from . import app_settings
 
 __all__ = [
+    "OIDCDebugMeta",
+    "RedactedSecret",
     "app_log",
     "build_oidc_debug_meta",
     "mask_secret",
     "redact_secret",
 ]
+
+
+# A string that has passed through ``redact_secret``. Runtime no-op
+# (NewType is erased), but the type-checker now refuses to accept a raw
+# ``str`` from ``request.POST.get("client_secret")`` in any field that
+# is annotated as ``RedactedSecret``. Catches "forgot to call
+# redact_secret" at edit time.
+RedactedSecret = NewType("RedactedSecret", str)
+
+
+class OIDCDebugMeta(TypedDict):
+    """
+    Curated payload for ``debug_mode`` token-endpoint logging.
+
+    The schema is fixed (every field always present, ``None`` for
+    "not in this request"). Secret-shaped fields are typed
+    ``RedactedSecret | None`` so the type-checker fails any future
+    code that tries to put raw ``request.POST.get("client_secret")``
+    here without going through ``redact_secret``.
+    """
+
+    grant_type: str | None
+    scope: str | None
+    client_id: str | None
+    redirect_uri: str | None
+    code: RedactedSecret | None
+    refresh_token_req: RedactedSecret | None
+    client_secret: RedactedSecret | None
+    assertion: RedactedSecret | None
+    token_type: str | None
+    expires_in: int | None
+    scope_resp: str | None
+    access_token: RedactedSecret | None
+    refresh_token: RedactedSecret | None
+    id_token: RedactedSecret | None
 
 
 def app_log(
@@ -48,7 +85,9 @@ def app_log(
         logger.log(level, msg, *args, **kwargs)
 
 
-def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
+def mask_secret(
+    value: object, *, head: int = 2, tail: int = 2
+) -> RedactedSecret | None:
     """
     Mask a secret value, exposing only ``head``/``tail`` characters.
 
@@ -70,19 +109,19 @@ def mask_secret(value: object, *, head: int = 2, tail: int = 2) -> str | None:
     elif isinstance(value, str):
         s = value
     else:
-        return f"<non-string:{type(value).__name__}>"
+        return RedactedSecret(f"<non-string:{type(value).__name__}>")
     if not s:
-        return ""
+        return RedactedSecret("")
     head = max(0, head)
     tail = max(0, tail)
     if head + tail == 0:
-        return "..."
+        return RedactedSecret("...")
     if len(s) <= head + tail:
-        return "*" * len(s)
-    return f"{s[:head]}…{s[-tail:]}"
+        return RedactedSecret("*" * len(s))
+    return RedactedSecret(f"{s[:head]}…{s[-tail:]}")
 
 
-def redact_secret(value: object) -> str | None:
+def redact_secret(value: object) -> RedactedSecret | None:
     """
     Return a redacted version of the secret value for logging.
 
@@ -100,7 +139,7 @@ def redact_secret(value: object) -> str | None:
     if value is None:
         return None
     if not app_settings.log_masked_secrets():
-        return "<redacted>"
+        return RedactedSecret("<redacted>")
     return mask_secret(
         value,
         head=app_settings.log_mask_head(),
@@ -111,7 +150,7 @@ def redact_secret(value: object) -> str | None:
 def build_oidc_debug_meta(
     request: object,
     payload: Mapping[str, Any] | None,
-) -> dict[str, Any]:
+) -> OIDCDebugMeta:
     """
     Build a dict safe for logging in debug_mode.
 
