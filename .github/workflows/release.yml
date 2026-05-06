@@ -69,6 +69,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Install GNU gettext
         # ``django-admin compilemessages`` shells out to ``msgfmt`` from
@@ -80,7 +82,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up Python
         run: uv python install 3.12
@@ -162,6 +164,7 @@ jobs:
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Download distribution artefacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -180,7 +183,18 @@ jobs:
         # Trusted publishing — no API token, no secret. The action
         # auto-detects the GitHub OIDC token and exchanges it at PyPI
         # for a short-lived upload token (~15 minute TTL).
+        #
+        # ``verify-metadata: false`` skips the action's bundled
+        # twine pre-check, which (as of v1.9.0) ships an older twine
+        # that does not understand ``Metadata-Version: 2.4`` produced
+        # by modern flit-core (PEP 685, 2024). The build job above
+        # already runs ``uv run --with twine python -m twine check
+        # dist/*`` with a current twine in the project venv, so the
+        # defence-in-depth pre-check is preserved. PyPI server-side
+        # validation is unaffected.
         uses: pypa/gh-action-pypi-publish@4bb033805d9e19112d8c697528791ff53f6c2f74  # v1.9.0
+        with:
+          verify-metadata: false
 
       - name: Create GitHub Release from CHANGELOG section
         env:
