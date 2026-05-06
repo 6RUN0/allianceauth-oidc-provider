@@ -23,11 +23,15 @@ Auth: AuthAuthorizationView (views.py)
 DOT: django-oauth-toolkit
 Token: TokenView (views.py)
 V: AllianceAuthOAuth2Validator (auth_provider.py)
+AP: AccessPolicy.pkce_required (security.py)
 
 "Layer 1 — views.py:dispatch() runs on GET *and* POST": {
   RP -> Auth: GET/POST /o/authorize/\nresponse_type=code
   Auth -> Auth: check global access_oidc\n+ state/group whitelist
   Auth -> DOT: forward (policy passes)
+  DOT -> AP: pkce_required(client_id)\nvia OAUTH2_PROVIDER callable
+  AP -> DOT: True / False (per-app)
+  DOT -> DOT: enforce PKCE per resolver\n(reject if required and missing)
   DOT -> RP: 302 redirect with auth code
 }
 

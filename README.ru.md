@@ -369,6 +369,28 @@ python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
 > проставляется `True`, а callable сохраняется нетронутым. После миграции пройдитесь по
 > приложениям через admin и поправьте per-app значения.
 
+**Массовые операции.** Одиночные переключения удобно делать через admin; на >5 приложений
+быстрее через ORM:
+
+```python
+# manage.py shell
+from allianceauth_oidc.models import AllianceAuthApplication
+
+# Отключить PKCE для всех приложений с префиксом в имени:
+AllianceAuthApplication.objects.filter(
+    name__startswith="Legacy-"
+).update(pkce_required=False)
+
+# Или по списку client_id:
+AllianceAuthApplication.objects.filter(
+    client_id__in=["abc", "def"]
+).update(pkce_required=False)
+```
+
+Обратное направление идентично (`pkce_required=True`). Для *новых* приложений, создаваемых
+через CLI вместо admin, `oidc_create_app --no-pkce-required` сразу выставляет нужное значение
+без последующего визита в admin; default — `True`.
+
 ### Debug-логи
 
 Per-application `Debug Mode` (включается в админке) поднимает уровень token-flow логов с `DEBUG`

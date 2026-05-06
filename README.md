@@ -369,6 +369,27 @@ request via the `per_app_pkce_required` callable wired into `OAUTH2_PROVIDER`.
 > backfills every existing app to `True` and preserves the callable untouched. Review per-app
 > values via Django admin afterward.
 
+**Bulk operations.** Single toggles use admin; for >5 apps the ORM is faster:
+
+```python
+# manage.py shell
+from allianceauth_oidc.models import AllianceAuthApplication
+
+# Disable PKCE for everything matching a name prefix:
+AllianceAuthApplication.objects.filter(
+    name__startswith="Legacy-"
+).update(pkce_required=False)
+
+# Or by client_id list:
+AllianceAuthApplication.objects.filter(
+    client_id__in=["abc", "def"]
+).update(pkce_required=False)
+```
+
+Reverse direction is identical (`pkce_required=True`). For *new* apps created from CLI rather
+than admin, `oidc_create_app --no-pkce-required` opts out at creation time without a follow-up
+admin visit; the default is `True`.
+
 ### Debug logging
 
 Per-application `Debug Mode` (toggled in the admin) escalates token-flow logs from `DEBUG` to
