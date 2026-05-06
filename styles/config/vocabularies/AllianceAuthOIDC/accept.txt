@@ -127,6 +127,8 @@ client_id
 client_secret
 grant_type
 redirect_uri
+validate_code
+save_bearer_token
 state-of-truth
 source-of-truth
 client_credentials

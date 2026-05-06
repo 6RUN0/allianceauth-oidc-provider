@@ -14,6 +14,29 @@
 
 ## [Unreleased]
 
+## [0.1.0b4] - 2026-05-06
+
+### Изменено
+
+- Диаграмма policy-flow в README теперь — pre-rendered D2 SVG,
+  а не Mermaid-блок. `readme-renderer` на PyPI не понимает
+  Mermaid-расширения, поэтому страница v0.1.0b3 показывала
+  диаграмму как сырой Mermaid-код. Новая схема: source остаётся
+  diagram-as-code (`assets/diagrams/policy-flow.d2`), рядом
+  лежит pre-rendered output (`policy-flow.svg`), README ссылается
+  через raw GitHub URL на default-branch репо. Картинка
+  рендерится одинаково на GitHub, на PyPI и в любом другом
+  Markdown-viewer'е.
+
+### Инструментарий
+
+- Новая `nox`-сессия `diagrams` и `make`-шим `make diagrams`
+  рендерят `assets/diagrams/*.d2` в SVG через бинарь `d2`.
+  Та же opt-in схема graceful-skip с предупреждением, что и у
+  `markdown_lint` и `actions_lint` — контрибьютору без
+  установленного `d2` сессия пройдёт зелёной с подсказкой по
+  установке (Gentoo overlay / d2lang.com).
+
 ## [0.1.0b3] - 2026-05-06
 
 Теги `v0.1.0b1` и `v0.1.0b2` зафиксированы в git, но до PyPI не
