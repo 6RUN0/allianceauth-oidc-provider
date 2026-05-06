@@ -7,7 +7,7 @@ from django.conf import settings
 from django.test import override_settings
 from oauth2_provider.settings import oauth2_settings
 
-from ._oidc_testcase import SCOPE_PROFILE, OIDCTestCase
+from ._oidc_testcase import REDIRECT_STATUSES, SCOPE_PROFILE, OIDCTestCase
 
 
 def _enable_rp_logout():
@@ -56,7 +56,7 @@ class TestRPInitiatedLogout(OIDCTestCase):
                 "/o/logout/", data={"post_logout_redirect_uri": allowed}
             )
             self.assertNotEqual(500, resp_ok.status_code)
-            if resp_ok.status_code in (301, 302, 303, 307, 308):
+            if resp_ok.status_code in REDIRECT_STATUSES:
                 self.assertTrue(
                     resp_ok.headers.get("Location", "").startswith(allowed)
                 )
@@ -66,7 +66,7 @@ class TestRPInitiatedLogout(OIDCTestCase):
                 "/o/logout/", data={"post_logout_redirect_uri": denied}
             )
             self.assertNotEqual(500, resp_bad.status_code)
-            if resp_bad.status_code in (301, 302, 303, 307, 308):
+            if resp_bad.status_code in REDIRECT_STATUSES:
                 self.assertFalse(
                     resp_bad.headers.get("Location", "").startswith(denied)
                 )
@@ -101,7 +101,7 @@ class TestRPInitiatedLogout(OIDCTestCase):
                 },
             )
             self.assertNotEqual(500, resp.status_code)
-            if resp.status_code in (301, 302, 303, 307, 308):
+            if resp.status_code in REDIRECT_STATUSES:
                 loc = resp.headers.get("Location", "")
                 self.assertTrue(
                     loc.startswith(allowed),
@@ -132,7 +132,7 @@ class TestRPInitiatedLogout(OIDCTestCase):
                 },
             )
             self.assertNotEqual(500, resp.status_code)
-            if resp.status_code in (301, 302, 303, 307, 308):
+            if resp.status_code in REDIRECT_STATUSES:
                 loc = resp.headers.get("Location", "")
                 self.assertFalse(
                     loc.startswith(denied),

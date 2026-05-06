@@ -1,5 +1,6 @@
 import json
-from typing import Any, ClassVar
+from http import HTTPStatus
+from typing import Any, ClassVar, Final
 from urllib.parse import parse_qs, urlparse
 
 from allianceauth.authentication.models import (
@@ -26,6 +27,19 @@ SCOPE_OPENID = "openid"
 SCOPE_PROFILE = "openid profile"
 SCOPE_FULL = "openid profile email"
 DEFAULT_EXPIRES_IN = 60
+
+# All HTTP redirect statuses: 301 Moved Permanently, 302 Found,
+# 303 See Other, 307 Temporary Redirect, 308 Permanent Redirect.
+# Frozen so a typo like ``REDIRECT_STATUSES.add(...)`` fails fast.
+REDIRECT_STATUSES: Final[frozenset[int]] = frozenset(
+    {
+        HTTPStatus.MOVED_PERMANENTLY,
+        HTTPStatus.FOUND,
+        HTTPStatus.SEE_OTHER,
+        HTTPStatus.TEMPORARY_REDIRECT,
+        HTTPStatus.PERMANENT_REDIRECT,
+    }
+)
 
 
 class OIDCTestCase(TestCase):
@@ -100,7 +114,7 @@ class OIDCTestCase(TestCase):
     def parse_redirect(
         self,
         response: Any,
-        status_codes: tuple[int, ...] = (301, 302, 303, 307, 308),
+        status_codes: frozenset[int] | tuple[int, ...] = REDIRECT_STATUSES,
     ) -> tuple[str, str, dict[str, list[str]]]:
         """
         Parses a redirect response from the authorize endpoint.
