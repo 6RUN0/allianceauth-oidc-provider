@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Final
 
 from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
-from . import app_settings
 from .app_settings import OIDCSettings
 from .security import check_user_state_and_groups
 
@@ -172,28 +172,6 @@ class ClaimsBuilder:
 class AllianceAuthOAuth2Validator(OAuth2Validator):
     """Wrap DOT's validator with state/group checks and AA-specific claims."""
 
-    # Bind the AA-specific "groups" claim to the standard "profile" scope
-    # so consumers don't need to request a separate scope to receive it.
-    # (DOT's get_oidc_claims filters claims by oidc_claim_scope; any new
-    # claim added to get_additional_claims must have a matching entry here
-    # or it will silently never reach userinfo / id_token.)
-    oidc_claim_scope = OAuth2Validator.oidc_claim_scope.copy()
-    oidc_claim_scope.update({"groups": "profile"})
-    # Bind EVE-specific claims (character/corporation/alliance) to the
-    # configured scope. This is class-level: changing the prefix or scope
-    # via Django settings requires a process restart, since DOT reads
-    # `oidc_claim_scope` from the class once. The prefix used inside
-    # `get_additional_claims` is read on every call (see
-    # `app_settings.eve_claim_prefix`), so the prefix CAN be flipped at
-    # runtime via @override_settings — but keeping it consistent with the
-    # bound scope map requires the same prefix here.
-    oidc_claim_scope.update(
-        {
-            f"{app_settings.eve_claim_prefix()}{n}": app_settings.eve_claim_scope()  # noqa: E501
-            for n in _EVE_CLAIM_NAMES
-        }
-    )
-
     # Cap the `groups` claim payload. JWTs are URL-encoded in headers /
     # cookies and a pathological 10k-group user would produce a 200KB
     # token nobody can use. The state name still gets appended after
@@ -201,6 +179,34 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     # silently lose it. Override via subclassing if your deployment
     # genuinely needs more.
     MAX_GROUPS_IN_CLAIM = 256
+
+    @cached_property
+    def oidc_claim_scope(self) -> dict[str, str]:
+        """
+        Per-instance map of claim → required scope (DOT's filter key).
+
+        Replaces the previous class-level binding that snapshotted
+        ``ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX`` /
+        ``ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE`` at module import; that
+        meant ``@override_settings`` in tests was silently invisible
+        and a deploy-time setting flip required a process restart.
+        ``cached_property`` defers the read to first instance access,
+        so each per-request validator picks up the live values once.
+
+        The "groups" → "profile" binding stays here too: it must
+        accompany the EVE-claim bindings or DOT's ``get_oidc_claims``
+        filters our claim out before it reaches userinfo / id_token.
+        """
+        scopes: dict[str, str] = OAuth2Validator.oidc_claim_scope.copy()
+        scopes["groups"] = "profile"
+        settings = OIDCSettings.from_django()
+        scopes.update(
+            {
+                f"{settings.eve_claim_prefix}{n}": settings.eve_claim_scope
+                for n in _EVE_CLAIM_NAMES
+            }
+        )
+        return scopes
 
     @staticmethod
     def _enforce_policy(request, client) -> bool:
