@@ -36,15 +36,15 @@ sequenceDiagram
     participant Validator as AllianceAuthOAuth2Validator
 
     RP->>Auth: GET/POST authorize, response_type=code
-    Note over Auth: Слой 1 — dispatch()<br/>глобальный access_oidc<br/>+ whitelist по state/группам
+    Note over Auth: Слой 1 — dispatch() запускает глобальный access_oidc и whitelist по state/группам
     Auth->>DOT: forward (если политика прошла)
     DOT-->>RP: 302 redirect с auth code
     RP->>Token: POST code + client_secret
     Token->>Validator: validate_code(code, request)
-    Note over Validator: Слой 2 — повторная проверка<br/>state/групп при обмене
+    Note over Validator: Слой 2 — повторная проверка state/групп при обмене
     Validator-->>Token: ok / invalid_grant
     Token->>Validator: save_bearer_token(...)
-    Note over Validator: Слой 3 — последний guard;<br/>PermissionDenied становится invalid_grant
+    Note over Validator: Слой 3 — последний guard, PermissionDenied становится invalid_grant
     Validator-->>RP: 200 access_token + id_token
 ```
 

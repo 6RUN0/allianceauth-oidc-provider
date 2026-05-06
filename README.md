@@ -37,15 +37,15 @@ sequenceDiagram
     participant Validator as AllianceAuthOAuth2Validator
 
     RP->>Auth: GET/POST authorize, response_type=code
-    Note over Auth: Layer 1 — dispatch()<br/>global access_oidc<br/>+ state/group whitelist
+    Note over Auth: Layer 1 — dispatch() runs global access_oidc + state/group whitelist
     Auth->>DOT: forward (if policy passes)
     DOT-->>RP: 302 redirect with auth code
     RP->>Token: POST code + client_secret
     Token->>Validator: validate_code(code, request)
-    Note over Validator: Layer 2 — re-checks<br/>state/group on exchange
+    Note over Validator: Layer 2 — re-checks state/group on exchange
     Validator-->>Token: ok / invalid_grant
     Token->>Validator: save_bearer_token(...)
-    Note over Validator: Layer 3 — last guard;<br/>PermissionDenied becomes invalid_grant
+    Note over Validator: Layer 3 — last guard, PermissionDenied becomes invalid_grant
     Validator-->>RP: 200 access_token + id_token
 ```
 
