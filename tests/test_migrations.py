@@ -8,6 +8,8 @@ matrix:
 - value=``True``  → backfilled to ``True``
 - value=``False`` → backfilled to ``False``
 - ``OAUTH2_PROVIDER`` empty / missing → backfilled to ``False``
+- value is ``None`` (key present but unset) → backfilled to ``False``
+  (``bool(None) == False``; not callable, not secure-by-default)
 - value is a callable (``operator-supplied resolver``) → fall back to
   ``True`` and emit a stderr warning
 - rollback (``0010 → 0009 → 0010``) preserves row count
@@ -119,6 +121,25 @@ class TestPkceRequiredBackfillEmptyOauth2Provider(_PkceMigrationBase):
     def test_empty_oauth2_provider_backfills_to_false(self):
         _migrate_to([(APP_LABEL, MIGRATION_PREVIOUS)])
         _create_legacy_app(name="legacy-empty")
+        _migrate_to([(APP_LABEL, MIGRATION_TARGET)])
+        self.assertEqual({False}, _live_apps_pkce_value())
+
+
+class TestPkceRequiredBackfillNone(_PkceMigrationBase):
+    """
+    ``OAUTH2_PROVIDER['PKCE_REQUIRED'] = None`` is neither callable
+    nor truthy. The migration takes the ``else`` branch and writes
+    ``bool(None) == False`` to every existing row — the same as a
+    boolean ``False``. Pinning this rules out a future refactor that
+    re-interprets ``None`` as 'unset → secure-by-default ``True``';
+    that would silently flip every existing app on operators who
+    explicitly nulled the key in `local.py`.
+    """
+
+    @override_settings(OAUTH2_PROVIDER={"PKCE_REQUIRED": None})
+    def test_none_is_treated_as_false(self):
+        _migrate_to([(APP_LABEL, MIGRATION_PREVIOUS)])
+        _create_legacy_app(name="legacy-none")
         _migrate_to([(APP_LABEL, MIGRATION_TARGET)])
         self.assertEqual({False}, _live_apps_pkce_value())
 

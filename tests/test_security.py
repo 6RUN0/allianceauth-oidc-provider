@@ -153,6 +153,26 @@ class TestPkceRequired(OIDCTestCase):
             f"unknown client_id not surfaced in log: {cm.output}",
         )
 
+    def test_none_client_id_falls_back_to_true(self):
+        """
+        The ``client_id`` parameter is annotated ``str``, but a malformed
+        validator path (or a future DOT signature change) might deliver
+        ``None``. ``Application.objects.get(client_id=None)`` issues a
+        ``WHERE client_id IS NULL`` query — different SQL path from a
+        string lookup, but the same ``DoesNotExist`` outcome on a column
+        with ``unique=True``. The resolver must fail-safe to ``True``,
+        not propagate as a 500.
+        """
+        self.assertTrue(DEFAULT_POLICY.pkce_required(None))
+
+    def test_empty_client_id_falls_back_to_true(self):
+        """
+        Empty string is a yet-different SQL path
+        (``WHERE client_id = ''``) and is functionally unknown. Same
+        fail-safe contract.
+        """
+        self.assertTrue(DEFAULT_POLICY.pkce_required(""))
+
 
 class TestSettingsWiring(OIDCTestCase):
     """

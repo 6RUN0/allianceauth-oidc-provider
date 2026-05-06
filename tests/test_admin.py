@@ -50,3 +50,17 @@ class TestApplicationAdminPkceRequired(OIDCTestCase):
         )
         response = self.client.get(url + "?pkce_required__exact=1")
         self.assertEqual(200, response.status_code)
+
+    def test_changelist_filter_by_pkce_required_negative(self):
+        """
+        Symmetric with ``test_changelist_filter_by_pkce_required``:
+        the filter accepts the negative case (``=0``) too. Without
+        this assertion an admin regression that wires up the filter
+        only for ``BooleanFieldListFilter``'s default 'Yes' branch
+        would slip through the affirmative-only test.
+        """
+        url = reverse(
+            "admin:allianceauth_oidc_allianceauthapplication_changelist"
+        )
+        response = self.client.get(url + "?pkce_required__exact=0")
+        self.assertEqual(200, response.status_code)
