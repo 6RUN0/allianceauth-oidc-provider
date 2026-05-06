@@ -199,8 +199,10 @@ def make_app(
     redirect_uri: str = "http://localhost/redir/",
     skip_authorization: bool = False,
     algorithm: str = "RS256",
-    client_type: str = "confidential",
-    grant_type: str = "authorization-code",
+    client_type: str = AbstractApplication.CLIENT_CONFIDENTIAL,
+    authorization_grant_type: str = (
+        AbstractApplication.GRANT_AUTHORIZATION_CODE
+    ),
 ) -> AppCredentials:
     """
     Create an AllianceAuthApplication owned by ``owner``.
@@ -211,6 +213,16 @@ def make_app(
     secret is exposed because DOT hashes it on save when
     ``HASH_CLIENT_SECRET`` is True; tests need the cleartext value to
     drive the token endpoint.
+
+    ``client_type`` and ``authorization_grant_type`` default to DOT's
+    own constants — keeping the source of truth on
+    ``AbstractApplication`` removes the footgun of string drift
+    between this factory and ``oidc_create_app``: the previous
+    ``grant_type="authorization-code"`` parameter looked
+    confusable with the OAuth2 protocol value
+    ``"authorization_code"`` (different separator), and a typo
+    silently produced an unrejected-but-broken row. Renamed to
+    ``authorization_grant_type`` to match Django's field name.
     """
     client_id = generate_client_id()
     raw_secret = generate_client_secret()
@@ -219,7 +231,7 @@ def make_app(
         client_id=client_id,
         redirect_uris=redirect_uri,
         client_type=client_type,
-        authorization_grant_type=grant_type,
+        authorization_grant_type=authorization_grant_type,
         client_secret=raw_secret,
         name=f"TEST APP - {client_id}",
         skip_authorization=skip_authorization,
