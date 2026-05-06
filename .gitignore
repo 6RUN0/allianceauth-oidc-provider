@@ -131,3 +131,10 @@ desktop.ini
 # AI tooling
 .omc/
 .claude/
+
+# Vale: ``styles/`` holds project-shipped vocabularies under
+# ``config/vocabularies/`` (committed) plus any external packages
+# pulled by ``vale sync`` (NOT committed — they're downloads). Keep
+# the project's vocab tracked, ignore the rest.
+styles/*
+!styles/config/
