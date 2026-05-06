@@ -41,6 +41,7 @@ dev = [
     "pip-audit>=2.10",
     "basedpyright>=1.31",
     "pre-commit>=4.5.1",
+    "requests>=2.32",
     "ruff>=0.15",
 ]
 

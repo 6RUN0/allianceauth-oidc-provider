@@ -93,6 +93,7 @@ dev = [
     { name = "parameterized" },
     { name = "pip-audit" },
     { name = "pre-commit" },
+    { name = "requests" },
     { name = "ruff" },
 ]
 
@@ -115,6 +116,7 @@ dev = [
     { name = "parameterized", specifier = ">=0.9" },
     { name = "pip-audit", specifier = ">=2.10" },
     { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "ruff", specifier = ">=0.15" },
 ]
 

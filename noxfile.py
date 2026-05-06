@@ -141,3 +141,36 @@ def typecheck(session: nox.Session) -> None:
 def audit(session: nox.Session) -> None:
     """Audit dependencies for known vulnerabilities."""
     session.run("pip-audit")
+
+
+@nox.session
+def integration(session: nox.Session) -> None:
+    """
+    Run wire-level integration tests (mock-RP via LiveServerTestCase).
+
+    Forces ``--parallel 1``: ``LiveServerTestCase`` boots a WSGI server
+    in a thread that shares the test process's DB connection, which
+    does not survive Django's test-runner ``fork()``.
+
+    Excluded from the default sessions (``lint`` + ``tests``) because
+    real-HTTP tests are an order of magnitude slower than the test-
+    client ones and require ``requests`` from the dev group. Run on
+    demand with ``uv run nox -s integration``.
+    """
+    posargs = tuple(session.posargs)
+    has_label = any(not arg.startswith("-") for arg in posargs)
+    labels: list[str] = (
+        list(posargs)
+        if has_label
+        else ["tests.test_integration_mock_rp", *posargs]
+    )
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "test",
+        *TEST_ARGS_BASE,
+        "--parallel=1",
+        *labels,
+        env=_test_env(session),
+    )

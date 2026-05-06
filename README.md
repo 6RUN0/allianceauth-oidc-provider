@@ -345,3 +345,25 @@ This will output the public key in the PEM format for jwt.io to check the signat
 >   href="{% url 'auth_sso_login' %}{% if request.GET.next %}?next={{ request.GET.next | urlencode }}{% endif %}"
 > ></a>
 > ```
+
+## Development
+
+### Integration tests (mock-RP over real HTTP)
+
+`nox -s integration` runs the wire-level integration tests in
+`tests/test_integration_mock_rp.py`. They boot a `LiveServerTestCase`
+and walk the OIDC code flow with `requests` + `jwcrypto`, validating
+the id_token signature against a JWKS retrieved over the wire. This
+catches regressions the standard `nox -s tests` set cannot — Django's
+test client short-circuits the WSGI layer, so absolute-URL bugs in
+`iss` / `jwks_uri` and Bearer-header / cookie issues only surface here.
+
+```sh
+uv run nox -s integration                   # run the full mock-RP suite
+uv run nox -s integration -- --keepdb       # forward args to django test
+```
+
+The session is excluded from the default `nox` run because real-HTTP
+tests are an order of magnitude slower than the test-client suite and
+force `--parallel=1` (LiveServerTestCase is incompatible with the test
+runner's `fork()`).
