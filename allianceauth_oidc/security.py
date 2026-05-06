@@ -139,37 +139,45 @@ class AccessPolicy:
             raise PermissionDenied(f"Missing {PERM_ACCESS_OIDC} permission")
 
     def _check_app(self, user: object, app: object) -> None:
-        """Enforce per-application state/group access for ``user``."""
-        # Global gate runs first; this method is only reached after
-        # ``_check_global`` already passed (via ``decide``) but is
-        # also invoked directly by the legacy
-        # ``check_user_state_and_groups`` wrapper, so the global
-        # check is repeated there for parity with the old contract.
+        """
+        Enforce per-application state/group access for ``user``.
+
+        Materialises the app's ``states`` / ``groups`` managers once
+        each via ``list(...)`` so that consumers using
+        ``prefetch_related("states", "groups")``
+        (``views._get_app``) hit the prefetch cache instead of two
+        round-trips per check (``exists()`` + ``filter().exists()``).
+        Validator-path callers (no prefetch) still benefit: one
+        SELECT all instead of one ``exists()`` plus one ``filter
+        ... exists()``.
+        """
         if is_superuser(user):
             return
 
         debug_mode = getattr(app, "debug_mode", False)
-        app_states = getattr(app, "states", None)
-        app_groups = getattr(app, "groups", None)
+        app_states_mgr = getattr(app, "states", None)
+        app_groups_mgr = getattr(app, "groups", None)
 
         # If the application doesn't look like the expected DOT model,
         # deny rather than accidentally allowing access.
-        if app_states is None or app_groups is None:
+        if app_states_mgr is None or app_groups_mgr is None:
             raise PermissionDenied(
                 "Invalid application object (missing states/groups)"
             )
 
-        has_state_restrictions = app_states.exists()
-        has_group_restrictions = app_groups.exists()
+        # Materialise once: with prefetch_related the cache is hit
+        # (zero queries); without it, one query per manager.
+        app_states = list(app_states_mgr.all())
+        app_groups = list(app_groups_mgr.all())
 
         # No app-level restrictions ⇒ allow without further checks.
-        if not has_state_restrictions and not has_group_restrictions:
+        if not app_states and not app_groups:
             return
 
         state_access = False
         group_access = False
 
-        if has_state_restrictions:
+        if app_states:
             profile = getattr(user, "profile", None)
             user_state = (
                 getattr(profile, "state", None)
@@ -177,34 +185,33 @@ class AccessPolicy:
                 else None
             )
             user_state_pk = getattr(user_state, "pk", None)
+            state_pks = {s.pk for s in app_states}
             state_access = (
-                bool(user_state_pk)
-                and app_states.filter(pk=user_state_pk).exists()
+                user_state_pk is not None and user_state_pk in state_pks
             )
-            # ``list(queryset)`` is expensive — only materialise when
-            # debug_mode AND the INFO level is enabled. The STATE /
-            # GROUP debug logs expose what matched (not the decision
-            # itself), so they survive the M1 logging consolidation.
+            # The STATE / GROUP debug logs expose what matched (not
+            # the decision itself), so they survive the M1 logging
+            # consolidation. Materialised lists are reused for both
+            # the access check and the log line.
             if debug_mode and self.log.isEnabledFor(logging.INFO):
                 self.log.info(
                     "OIDC STATE: user_state=%s app_states=%s",
                     user_state,
-                    list(app_states.values_list("name", flat=True)),
+                    [s.name for s in app_states],
                 )
 
-        if has_group_restrictions:
-            user_groups = getattr(user, "groups", None)
-            if user_groups is not None:
+        if app_groups:
+            user_groups_mgr = getattr(user, "groups", None)
+            if user_groups_mgr is not None:
+                user_groups = list(user_groups_mgr.all())
                 if debug_mode and self.log.isEnabledFor(logging.INFO):
                     self.log.info(
                         "OIDC GROUP: user_groups=%s app_groups=%s",
-                        list(user_groups.values_list("name", flat=True)),
-                        list(app_groups.values_list("name", flat=True)),
+                        [g.name for g in user_groups],
+                        [g.name for g in app_groups],
                     )
-                user_group_ids = user_groups.values_list("id", flat=True)
-                group_access = app_groups.filter(
-                    id__in=user_group_ids
-                ).exists()
+                group_pks = {g.pk for g in app_groups}
+                group_access = any(g.pk in group_pks for g in user_groups)
 
         if group_access or state_access:
             return
