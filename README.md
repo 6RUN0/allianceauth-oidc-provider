@@ -178,9 +178,9 @@ migration backfills `AllianceAuthApplication.pkce_required` from the previous gl
    change without a full restart by calling `oauth2_settings.reload()`.
 
 If steps 2 and 3 are run out of order — i.e. the callable is in place when `migrate` runs —
-the data step detects the callable, fails over to RFC 9700 secure-by-default, and force-sets
-every existing app to `pkce_required=True`. Recovery is to flip individual apps back to
-`False` via Django admin. The matching stderr warning is described under
+the data step detects the non-boolean value, fails over to RFC 9700 secure-by-default, and
+force-sets every existing app to `pkce_required=True`. Recovery is to flip individual apps
+back to `False` via Django admin. The matching `RuntimeWarning` is described under
 [Operations → Per-app PKCE](#per-app-pkce).
 
 ## Configuration
@@ -360,14 +360,16 @@ request via the `per_app_pkce_required` callable wired into `OAUTH2_PROVIDER`.
 > toggle while a flow is in progress neither retroactively secures nor retroactively weakens
 > that flow.
 >
-> **Migration warning on a callable global.** If `manage.py migrate` writes
-> `OAUTH2_PROVIDER['PKCE_REQUIRED'] is callable; backfilling pkce_required=True (RFC 9700 ...)`
-> to stderr, your previous `local.py` already defined a custom resolver, **or** you swapped
+> **Migration warning on a non-boolean global.** If `manage.py migrate` raises a Python
+> `RuntimeWarning` mentioning
+> `OAUTH2_PROVIDER['PKCE_REQUIRED'] is <type> (expected bool); backfilling pkce_required=True`,
+> your previous `local.py` already defined a custom resolver, **or** you swapped
 > `PKCE_REQUIRED` for the `per_app_pkce_required` callable before running migrate (see
 > [Upgrading from a previous release](#upgrading-from-a-previous-release) for the correct
-> ordering). Either way, the migration cannot evaluate the callable per row safely, so it
-> backfills every existing app to `True` and preserves the callable untouched. Review per-app
-> values via Django admin afterward.
+> ordering), **or** the key is missing / `None`. Any non-boolean value is ambiguous, so the
+> migration falls back to RFC 9700 secure-by-default — every existing app is set to `True`
+> and the global setting is left untouched. Review per-app values via Django admin afterward.
+> Greenfield installs (no pre-existing app rows) skip the warning entirely.
 
 **Bulk operations.** Single toggles use admin; for >5 apps the ORM is faster:
 
@@ -385,6 +387,12 @@ AllianceAuthApplication.objects.filter(
     client_id__in=["abc", "def"]
 ).update(pkce_required=False)
 ```
+
+`QuerySet.update()` does not call `Model.save()`, so it bypasses `pre_save` / `post_save`
+signals and does not write a Django admin `LogEntry` for each row touched. The trade-off
+is intentional — bulk updates are atomic and fast. If you need an audit trail, loop over
+`.all()` and call `instance.save(update_fields=["pkce_required"])` per row, or paste a one-line
+record into your operations log noting the filter expression and timestamp.
 
 Reverse direction is identical (`pkce_required=True`). For *new* apps created from CLI rather
 than admin, `oidc_create_app --no-pkce-required` opts out at creation time without a follow-up

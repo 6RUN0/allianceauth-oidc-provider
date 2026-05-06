@@ -177,10 +177,10 @@ myauth/
    `OAUTH2_PROVIDER`, можно подтянуть без полного рестарта вызовом `oauth2_settings.reload()`.
 
 Если шаги 2 и 3 выполнены в обратном порядке — т.е. на момент `migrate` уже стоит callable —
-data-шаг это видит, переключается в RFC 9700 secure-by-default режим и принудительно ставит
-`pkce_required=True` всем существующим приложениям. Откат — поправить нужные приложения в
-Django admin вручную. Соответствующее stderr-предупреждение описано в разделе
-[Эксплуатация → Per-app PKCE](#per-app-pkce).
+data-шаг видит non-boolean значение, переключается в RFC 9700 secure-by-default режим и
+принудительно ставит `pkce_required=True` всем существующим приложениям. Откат —
+поправить нужные приложения в Django admin вручную. Соответствующий `RuntimeWarning` описан
+в разделе [Эксплуатация → Per-app PKCE](#per-app-pkce).
 
 ## Конфигурация
 
@@ -360,14 +360,17 @@ python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
 > флаг во время идущего flow — это не делает уже выпущенный код задним числом ни безопаснее, ни
 > уязвимее.
 >
-> **Предупреждение миграции про callable global.** Если `manage.py migrate` пишет в stderr
-> `OAUTH2_PROVIDER['PKCE_REQUIRED'] is callable; backfilling pkce_required=True (RFC 9700 ...)`,
+> **Предупреждение миграции про non-boolean global.** Если `manage.py migrate` поднимает
+> Python `RuntimeWarning` с текстом вида
+> `OAUTH2_PROVIDER['PKCE_REQUIRED'] is <type> (expected bool); backfilling pkce_required=True`,
 > значит в `local.py` уже был задан кастомный resolver, **либо** вы заменили `PKCE_REQUIRED` на
 > callable `per_app_pkce_required` до запуска migrate (правильный порядок —
-> в разделе [Обновление с предыдущей версии](#обновление-с-предыдущей-версии)). В любом случае
-> миграция не может безопасно вызвать callable построчно, поэтому всем существующим приложениям
-> проставляется `True`, а callable сохраняется нетронутым. После миграции пройдитесь по
-> приложениям через admin и поправьте per-app значения.
+> в разделе [Обновление с предыдущей версии](#обновление-с-предыдущей-версии)), **либо** ключ
+> отсутствует / равен `None`. Любое non-boolean значение неоднозначно, поэтому миграция падает
+> в RFC 9700 secure-by-default — всем существующим приложениям проставляется `True`, а
+> глобальная настройка остаётся нетронутой. После миграции пройдитесь по приложениям через
+> admin и поправьте per-app значения. Свежие установки (без существующих строк) предупреждение
+> пропускают.
 
 **Массовые операции.** Одиночные переключения удобно делать через admin; на >5 приложений
 быстрее через ORM:
@@ -386,6 +389,13 @@ AllianceAuthApplication.objects.filter(
     client_id__in=["abc", "def"]
 ).update(pkce_required=False)
 ```
+
+`QuerySet.update()` не вызывает `Model.save()` — то есть проходит мимо `pre_save` / `post_save`
+сигналов и не пишет запись в Django admin `LogEntry` на каждую затронутую строку. Это
+осознанный компромисс: bulk-обновление атомарно и быстро. Если нужен audit trail —
+пройдитесь по `.all()` и вызовите `instance.save(update_fields=["pkce_required"])` для
+каждой записи, либо оставьте однострочную пометку в вашем operations log с указанием фильтра
+и времени.
 
 Обратное направление идентично (`pkce_required=True`). Для *новых* приложений, создаваемых
 через CLI вместо admin, `oidc_create_app --no-pkce-required` сразу выставляет нужное значение

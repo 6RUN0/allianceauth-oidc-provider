@@ -252,22 +252,11 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         self.assertDeniedApp(response, self.user1, creds.app)
 
     def test_active_false_wins_over_pkce_required(self):
-        import hashlib
-        import os
-        from base64 import urlsafe_b64encode
+        from oauth2_provider.models import get_grant_model
 
         creds = make_app(owner=self.user1, pkce_required=True, active=False)
         self.grant_oidc_access(self.user1)
-        verifier = (
-            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
-        )
-        challenge = (
-            urlsafe_b64encode(
-                hashlib.sha256(verifier.encode("ascii")).digest()
-            )
-            .rstrip(b"=")
-            .decode("ascii")
-        )
+        _, challenge = self.make_pkce_pair()
         # Send a perfectly valid PKCE challenge — the active=False gate
         # must still reject the request.
         response = self.authorize_get_default(
@@ -282,17 +271,22 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         )
         # ``is_usable=False`` short-circuits before any code is issued.
         # DOT may render the consent page with an error, redirect with
-        # an error, or 400 — assert "no code anywhere".
+        # an error, or 400 — assert "no code anywhere" both in the
+        # response and in the database. The DB check is the strong
+        # invariant: a Grant row would mean a usable code reached the
+        # storage layer regardless of how the response was rendered.
         body = response.content.decode("utf-8", errors="ignore") + str(
             response.headers
         )
-        self.assertNotIn("code=", body[:2048])
+        self.assertNotIn("code=", body)
+        Grant = get_grant_model()
+        self.assertFalse(
+            Grant.objects.filter(application=creds.app).exists(),
+            "no Grant row should be persisted for an inactive app",
+        )
 
     def test_admin_toggle_does_not_affect_in_flight_code(self):
-        import hashlib
         import json
-        import os
-        from base64 import urlsafe_b64encode
         from urllib.parse import parse_qs, urlparse
 
         creds = make_app(
@@ -302,16 +296,7 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         )
         self.grant_oidc_access(self.user1)
 
-        verifier = (
-            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
-        )
-        challenge = (
-            urlsafe_b64encode(
-                hashlib.sha256(verifier.encode("ascii")).digest()
-            )
-            .rstrip(b"=")
-            .decode("ascii")
-        )
+        verifier, challenge = self.make_pkce_pair()
 
         resp = self.authorize_get_default(
             self.user1,
@@ -332,16 +317,11 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         creds.app.pkce_required = False
         creds.app.save()
 
-        token_resp = self.client.post(
-            "/o/token/",
-            data={
-                "grant_type": "authorization_code",
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "redirect_uri": REDIRECT_URI,
-                "code": code,
-                "code_verifier": verifier,
-            },
+        token_resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier=verifier,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
         )
         self.assertEqual(200, token_resp.status_code)
         body = json.loads(token_resp.content.decode("utf-8"))

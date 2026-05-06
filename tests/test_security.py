@@ -18,7 +18,6 @@ from django.test import SimpleTestCase
 from django.test.utils import CaptureQueriesContext
 
 from allianceauth_oidc.security import (
-    DEFAULT_POLICY,
     AccessDecision,
     AccessPolicy,
     DenyReason,
@@ -102,68 +101,127 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
         self.assertIs(self.oauth_app, decision.app)
 
 
-class TestPkceRequired(OIDCTestCase):
+class TestPkceRequiredPolicy(SimpleTestCase):
     """
-    Per-app PKCE resolution via ``AccessPolicy.pkce_required``.
+    ``AccessPolicy.pkce_required(app)`` — the pure-logic decision.
 
-    The adapter
-    ``allianceauth_oidc.pkce.per_app_pkce_required`` delegates to
-    ``DEFAULT_POLICY.pkce_required(client_id)`` directly — **not**
-    through ``validator.policy``. Future tests that wish to mock the
-    policy must patch ``allianceauth_oidc.pkce.DEFAULT_POLICY`` (or
+    The DI seam: synthetic ``SimpleNamespace`` doubles satisfy the
+    ``AppLike`` Protocol so the policy method stays testable without
+    spinning up ORM. ORM-lookup behaviour lives one frame up in
+    ``TestPkceRequiredAdapter``.
+    """
+
+    def test_app_with_required_true(self):
+        app = SimpleNamespace(
+            pkce_required=True, debug_mode=False, states=None, groups=None
+        )
+        self.assertTrue(policy.pkce_required(app))
+
+    def test_app_with_required_false(self):
+        app = SimpleNamespace(
+            pkce_required=False, debug_mode=False, states=None, groups=None
+        )
+        self.assertFalse(policy.pkce_required(app))
+
+    def test_app_missing_attr_falls_back_to_true(self):
+        # An object that doesn't expose ``pkce_required`` at all
+        # (a partial mock or a future shape change) must take the
+        # strict path — RFC 9700 secure-by-default.
+        app = SimpleNamespace(debug_mode=False, states=None, groups=None)
+        self.assertTrue(policy.pkce_required(app))
+
+    def test_app_none_falls_back_to_true(self):
+        # ``None`` means "no app resolved" — strict path.
+        self.assertTrue(policy.pkce_required(None))
+
+
+class TestPkceRequiredAdapter(OIDCTestCase):
+    """
+    ``allianceauth_oidc.pkce.per_app_pkce_required`` — the DOT adapter.
+
+    Tests cover the resolver's ORM-lookup behaviour: known client_id
+    delegates to the policy, unknown / ``None`` / empty fail-safe to
+    ``True`` with a ``WARNING`` log, and the lookup query is bounded
+    to a single column.
+
+    Tests that wish to mock the policy must patch
+    ``allianceauth_oidc.pkce.DEFAULT_POLICY`` (or
     ``allianceauth_oidc.security.DEFAULT_POLICY`` upstream), not the
     validator's ``policy`` attribute. The adapter is module-level and
     binds to ``DEFAULT_POLICY`` at import time.
     """
 
-    def test_pkce_required_true_returns_true(self):
-        creds = make_app(owner=self.user1, pkce_required=True)
-        self.assertTrue(DEFAULT_POLICY.pkce_required(creds.client_id))
+    def test_known_client_with_pkce_required_true(self):
+        from allianceauth_oidc.pkce import per_app_pkce_required
 
-    def test_pkce_required_false_returns_false(self):
+        creds = make_app(owner=self.user1, pkce_required=True)
+        self.assertTrue(per_app_pkce_required(creds.client_id))
+
+    def test_known_client_with_pkce_required_false(self):
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
         creds = make_app(owner=self.user1, pkce_required=False)
-        self.assertFalse(DEFAULT_POLICY.pkce_required(creds.client_id))
+        self.assertFalse(per_app_pkce_required(creds.client_id))
 
     def test_unknown_client_id_falls_back_to_true(self):
-        self.assertTrue(DEFAULT_POLICY.pkce_required("does-not-exist"))
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
+        self.assertTrue(per_app_pkce_required("does-not-exist"))
 
     def test_query_is_bounded_to_single_select(self):
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
         creds = make_app(owner=self.user1, pkce_required=True)
         with CaptureQueriesContext(connection) as captured:
-            DEFAULT_POLICY.pkce_required(creds.client_id)
+            per_app_pkce_required(creds.client_id)
         self.assertEqual(1, len(captured.captured_queries))
         sql = captured.captured_queries[0]["sql"].lower()
-        # The query must not pull non-essential columns. We assert the
-        # negative — `redirect_uri`, `client_secret`, `hashed` (DOT's
-        # secret-hash column variant). Asserting positive presence of
-        # `pkce_required` would couple to alias rewrites; the negative
-        # form is what `.only("pkce_required")` actually buys us.
+        # Negative-form: SELECT must skip heavy / sensitive columns.
+        # Pairs with the positive sanity-check below: a regression that
+        # accidentally drops the ``.only(...)`` would expand the column
+        # list well past 4 entries (the deferred set the model carries
+        # post-init: id, pkce_required + a couple of pk-related stubs).
         for column in ("redirect_uri", "client_secret", "hashed"):
             self.assertNotIn(
                 column, sql, f"unexpected {column!r} in SELECT: {sql}"
             )
+        # Sanity: ``.only("pkce_required")`` produces a small column
+        # list; a regression dropping it produces ~20 columns. Use
+        # comma count as a robust proxy for column count without
+        # coupling to alias renames.
+        self.assertLess(
+            sql.count(","),
+            5,
+            f"SELECT looks unbounded ({sql.count(',')} commas): {sql}",
+        )
 
     def test_unknown_client_id_logs_warning(self):
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
         with self.assertLogs(
-            "extensions.allianceauth_oidc.security", level="WARNING"
+            "extensions.allianceauth_oidc.pkce", level="WARNING"
         ) as cm:
-            DEFAULT_POLICY.pkce_required("unknown-cid-xyz")
+            per_app_pkce_required("unknown-cid-xyz")
         self.assertTrue(
             any("unknown-cid-xyz" in line for line in cm.output),
             f"unknown client_id not surfaced in log: {cm.output}",
         )
+        # %a formatter renders ASCII-safe; injected control characters
+        # in client_id must not propagate as raw bytes to log storage.
+        for line in cm.output:
+            self.assertNotIn("\n", line.split(":", 2)[-1].strip())
 
     def test_none_client_id_falls_back_to_true(self):
         """
-        The ``client_id`` parameter is annotated ``str``, but a malformed
-        validator path (or a future DOT signature change) might deliver
-        ``None``. ``Application.objects.get(client_id=None)`` issues a
-        ``WHERE client_id IS NULL`` query — different SQL path from a
-        string lookup, but the same ``DoesNotExist`` outcome on a column
-        with ``unique=True``. The resolver must fail-safe to ``True``,
-        not propagate as a 500.
+        ``None`` may arrive from a malformed validator path. Django's
+        ORM turns it into ``WHERE client_id IS NULL`` — different SQL
+        path from a string lookup, but same ``DoesNotExist`` outcome
+        on a column with ``unique=True``. The resolver must fail-safe
+        to ``True``, not propagate as a 500.
         """
-        self.assertTrue(DEFAULT_POLICY.pkce_required(None))
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
+        self.assertTrue(per_app_pkce_required(None))
 
     def test_empty_client_id_falls_back_to_true(self):
         """
@@ -171,23 +229,15 @@ class TestPkceRequired(OIDCTestCase):
         (``WHERE client_id = ''``) and is functionally unknown. Same
         fail-safe contract.
         """
-        self.assertTrue(DEFAULT_POLICY.pkce_required(""))
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
+        self.assertTrue(per_app_pkce_required(""))
 
 
 class TestSettingsWiring(OIDCTestCase):
-    """
-    Confirm DOT picks up the per-app callable verbatim.
+    """Confirm DOT picks up the per-app callable verbatim."""
 
-    The adapter ``allianceauth_oidc.pkce.per_app_pkce_required``
-    delegates to ``DEFAULT_POLICY.pkce_required(client_id)`` directly,
-    **not** through ``validator.policy``. Future stubbing tests that
-    wish to mock the policy must patch
-    ``allianceauth_oidc.pkce.DEFAULT_POLICY``, not the validator's
-    ``policy`` attribute. The adapter is module-level and binds to
-    ``DEFAULT_POLICY`` at import time.
-    """
-
-    def test_oauth2_settings_pkce_required_is_adapter(self):
+    def test_dot_picks_up_per_app_pkce_callable(self):
         from oauth2_provider.settings import oauth2_settings
 
         from allianceauth_oidc.pkce import per_app_pkce_required

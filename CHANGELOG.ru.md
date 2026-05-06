@@ -28,10 +28,22 @@
 ### Изменено
 
 - `OAUTH2_PROVIDER['PKCE_REQUIRED']` теперь указывает на callable
-  (`per_app_pkce_required`), который делегирует в
-  `AccessPolicy.pkce_required` (`security.py`). Callable живёт в лёгком
-  модуле `allianceauth_oidc.pkce` — этот модуль безопасно импортировать
-  из Django settings (settings грузятся до `apps.populate()`).
+  (`per_app_pkce_required`), который живёт в лёгком модуле
+  `allianceauth_oidc.pkce`. Adapter делает ORM-резолв через
+  `.only("pkce_required")` и делегирует решение в
+  `AccessPolicy.pkce_required(app)` (`security.py`); сам policy-метод
+  стал чистой логикой (без ORM, тестируется через `AppLike` Protocol
+  DI seam). Неизвестный `client_id` пишется в лог `WARNING` (через
+  `%a` — защита от log injection) и сваливается в `True`.
+- Schema/data-миграция per-app PKCE разделена: `0010` добавляет
+  колонку (schema-only, реверсивна), `0011` делает
+  environment-зависимый backfill отдельным файлом. Свежие установки
+  (без существующих строк) data-шаг пропускают целиком.
+- Backfill теперь принимает только явный `bool` буквально; любая
+  другая форма (callable, `None`, отсутствующий ключ, `str`, `int`)
+  считается неоднозначной и сваливается в `pkce_required=True`
+  (RFC 9700), поднимая `RuntimeWarning` вместо прежней записи в
+  stderr.
 
 > ⚠️ **Изменение конфигурации**: семантика `OAUTH2_PROVIDER['PKCE_REQUIRED']`
 > изменилась с boolean на callable. Старые конфиги с `True`/`False`

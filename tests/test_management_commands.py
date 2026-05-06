@@ -120,6 +120,25 @@ class TestOIDCCreateAppCommand(OIDCTestCase):
         # Atomic: failed validation must not leave a partial app.
         self.assertEqual(before, Application.objects.count())
 
+    def test_unknown_group_fails_before_app_is_created(self) -> None:
+        """
+        Symmetric with ``test_unknown_state_fails_before_app_is_created``:
+        an unknown ``--group`` must raise ``CommandError`` before the
+        app is persisted, not silently drop the group reference.
+        """
+        Application = get_application_model()
+        before = Application.objects.count()
+        with self.assertRaises(CommandError) as ctx:
+            call_command(
+                "oidc_create_app",
+                "--name=will-not-exist-grp",
+                f"--user-id={self.user1.pk}",
+                "--group=NoSuchGroup",
+                stdout=StringIO(),
+            )
+        self.assertIn("NoSuchGroup", str(ctx.exception))
+        self.assertEqual(before, Application.objects.count())
+
     def test_state_and_group_links_are_persisted(self) -> None:
         State.objects.get_or_create(name="Member")
         grp, _ = Group.objects.get_or_create(name="cmd-grp")
@@ -373,6 +392,20 @@ class TestOIDCAuditTokensCommand(OIDCTestCase):
                 stdout=StringIO(),
             )
 
+    def test_unknown_client_id_fails_loudly(self) -> None:
+        """
+        Symmetric with ``test_unknown_username_fails_loudly`` —
+        ``--client-id`` pointing at a non-existent app must raise
+        ``CommandError``, not silently filter to an empty result set.
+        """
+        with self.assertRaises(CommandError) as ctx:
+            call_command(
+                "oidc_audit_tokens",
+                "--client-id=does-not-exist",
+                stdout=StringIO(),
+            )
+        self.assertIn("does-not-exist", str(ctx.exception))
+
     def test_audit_surfaces_pkce_required_per_application(self) -> None:
         """
         Each row exposes the application's ``pkce_required`` flag so an
@@ -391,11 +424,11 @@ class TestOIDCAuditTokensCommand(OIDCTestCase):
         call_command("oidc_audit_tokens", "--format=json", stdout=out)
         rows = json.loads(out.getvalue())
         self.assertEqual(1, len(rows))
-        self.assertTrue(rows[0]["pkce"])
+        self.assertTrue(rows[0]["pkce_required"])
 
         self.oauth_app.pkce_required = False
         self.oauth_app.save()
         out = StringIO()
         call_command("oidc_audit_tokens", "--format=json", stdout=out)
         rows = json.loads(out.getvalue())
-        self.assertFalse(rows[0]["pkce"])
+        self.assertFalse(rows[0]["pkce_required"])

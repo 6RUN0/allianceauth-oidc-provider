@@ -26,10 +26,22 @@ is preserved in `git log`; this file documents fork-specific changes only.
 ### Changed
 
 - `OAUTH2_PROVIDER['PKCE_REQUIRED']` now points at a callable
-  (`per_app_pkce_required`), which delegates to
-  `AccessPolicy.pkce_required` in `security.py`. The callable lives in
-  the lightweight `allianceauth_oidc.pkce` module so it is safe to
-  import from Django settings (which load before `apps.populate()`).
+  (`per_app_pkce_required`) living in the lightweight
+  `allianceauth_oidc.pkce` module. The adapter resolves `client_id` to
+  an application row via `.only("pkce_required")` and delegates the
+  decision to `AccessPolicy.pkce_required(app)` in `security.py`,
+  which stays a pure-logic method (no ORM, testable through the
+  `AppLike` Protocol DI seam). Unknown `client_id` is logged at
+  `WARNING` (with `%a` for log-injection safety) and falls back to
+  `True`.
+- The PKCE schema/data migration is now split: `0010` adds the column
+  (schema-only, reversible), `0011` performs the
+  environment-dependent backfill in a separate file. Greenfield
+  installs (no pre-existing rows) skip the data step entirely.
+- The data backfill now accepts only an explicit `bool` value verbatim;
+  any other shape (callable, `None`, missing key, `str`, `int`) is
+  ambiguous and falls back to `pkce_required=True` per RFC 9700,
+  emitting a `RuntimeWarning` rather than a raw stderr write.
 
 > ⚠️ **Configuration change**: `OAUTH2_PROVIDER['PKCE_REQUIRED']` semantics
 > changed from a boolean to a callable. Existing operator settings that

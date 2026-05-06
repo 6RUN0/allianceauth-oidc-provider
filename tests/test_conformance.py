@@ -19,14 +19,13 @@ regressions in DOT integration, not to replace a formal OIDC test suite.
 """
 
 import base64
-import hashlib
 import json
 import os
 
 from jwcrypto import jwk, jwt
 
 from ._factories import make_app
-from ._oidc_testcase import REDIRECT_URI, SCOPE_OPENID, OIDCTestCase
+from ._oidc_testcase import SCOPE_OPENID, OIDCTestCase
 
 REQUIRED_DISCOVERY_KEYS = frozenset(
     {
@@ -249,12 +248,6 @@ class TestRevokeAndIntrospect(OIDCTestCase):
 
 
 class TestPKCEFlow(OIDCTestCase):
-    @staticmethod
-    def _make_verifier_and_challenge() -> tuple[str, str]:
-        verifier = _b64url(os.urandom(32))
-        challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
-        return verifier, challenge
-
     def _authorize_with_pkce(self, *, challenge: str, state: str) -> str:
         """Issue an authorization code with a code_challenge attached."""
         return self.authorize_to_code(
@@ -267,20 +260,11 @@ class TestPKCEFlow(OIDCTestCase):
             },
         )
 
-    def _exchange_with_verifier(
+    def _exchange(
         self, *, code: str, verifier: str | None
     ) -> tuple[int, dict]:
-        """POST /o/token/ with the given code and (optional) verifier."""
-        payload = {
-            "grant_type": "authorization_code",
-            "client_id": self.oauth_id,
-            "client_secret": self.oauth_secret,
-            "redirect_uri": REDIRECT_URI,
-            "code": code,
-        }
-        if verifier is not None:
-            payload["code_verifier"] = verifier
-        resp = self.client.post("/o/token/", data=payload)
+        """Wrap :meth:`exchange_code_with_verifier` for legacy tuple shape."""
+        resp = self.exchange_code_with_verifier(code=code, verifier=verifier)
         return resp.status_code, json.loads(resp.content.decode("utf-8"))
 
     def test_pkce_s256_round_trip(self):
@@ -294,14 +278,12 @@ class TestPKCEFlow(OIDCTestCase):
         verifier round-trip — DOT enforces PKCE whenever the
         authorize-time challenge is present.
         """
-        verifier, challenge = self._make_verifier_and_challenge()
+        verifier, challenge = self.make_pkce_pair()
         self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-happy"
         )
-        status, body = self._exchange_with_verifier(
-            code=code, verifier=verifier
-        )
+        status, body = self._exchange(code=code, verifier=verifier)
         self.assertEqual(200, status)
         self.assertIn("access_token", body)
         self.assertIn("id_token", body)
@@ -313,15 +295,13 @@ class TestPKCEFlow(OIDCTestCase):
 
         Otherwise PKCE provides no protection.
         """
-        _, challenge = self._make_verifier_and_challenge()
+        _, challenge = self.make_pkce_pair()
         wrong_verifier = _b64url(os.urandom(32))  # unrelated random bytes
         self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-wrong-verifier"
         )
-        status, body = self._exchange_with_verifier(
-            code=code, verifier=wrong_verifier
-        )
+        status, body = self._exchange(code=code, verifier=wrong_verifier)
         self.assertEqual(400, status)
         self.assertIn(
             body.get("error"),
@@ -337,12 +317,31 @@ class TestPKCEFlow(OIDCTestCase):
 
         Omitting it must fail.
         """
-        _, challenge = self._make_verifier_and_challenge()
+        _, challenge = self.make_pkce_pair()
         self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-missing-verifier"
         )
-        status, body = self._exchange_with_verifier(code=code, verifier=None)
+        status, body = self._exchange(code=code, verifier=None)
+        self.assertEqual(400, status)
+        self.assertIn(
+            body.get("error"),
+            {"invalid_grant", "invalid_request"},
+        )
+
+    def test_pkce_empty_verifier_is_rejected(self):
+        """
+        Empty ``code_verifier`` cannot match any non-empty challenge
+        hash — DOT must reject the exchange. Pinned because an
+        empty-string fast-path that bypassed the hash compare would
+        defeat PKCE entirely.
+        """
+        _, challenge = self.make_pkce_pair()
+        self.grant_oidc_access(self.user1)
+        code = self._authorize_with_pkce(
+            challenge=challenge, state="pkce-empty-verifier"
+        )
+        status, body = self._exchange(code=code, verifier="")
         self.assertEqual(400, status)
         self.assertIn(
             body.get("error"),
@@ -408,6 +407,8 @@ class TestPerAppPkceRequired(OIDCTestCase):
         the challenge verbatim. With ``pkce_required=True`` this still
         round-trips because the challenge is supplied.
         """
+        from urllib.parse import parse_qs, urlparse
+
         verifier = _b64url(os.urandom(32))
         challenge = verifier  # plain method: challenge == verifier
         creds = make_app(
@@ -427,21 +428,54 @@ class TestPerAppPkceRequired(OIDCTestCase):
         self.assertEqual(302, resp.status_code)
         location = resp.headers["Location"]
         self.assertIn("code=", location)
-        # Extract the code and exchange it.
-        from urllib.parse import parse_qs, urlparse
-
         code = parse_qs(urlparse(location).query)["code"][0]
-        token_resp = self.client.post(
-            "/o/token/",
-            data={
-                "grant_type": "authorization_code",
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "redirect_uri": REDIRECT_URI,
-                "code": code,
-                "code_verifier": verifier,
-            },
+        token_resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier=verifier,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
         )
         self.assertEqual(200, token_resp.status_code)
         body = json.loads(token_resp.content.decode("utf-8"))
         self.assertIn("access_token", body)
+
+    def test_strict_app_empty_verifier_at_exchange_is_rejected(self):
+        """
+        Empty verifier at exchange must fail under strict mode — same
+        contract as the global fixture's
+        ``test_pkce_empty_verifier_is_rejected`` but cross-checked
+        against per-app override to guard against a regression that
+        bypasses verifier validation when ``pkce_required=True``
+        forces the authorize-time check.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+        _, challenge = self.make_pkce_pair()
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="strict-empty",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+        token_resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier="",
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertEqual(400, token_resp.status_code)
+        body = json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn(
+            body.get("error"),
+            {"invalid_grant", "invalid_request"},
+        )

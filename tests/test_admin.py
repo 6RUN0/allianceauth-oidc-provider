@@ -1,17 +1,22 @@
 """
 Admin changelist + edit page smoke tests for ``pkce_required``.
 
-Tests run with ``LANGUAGE_CODE='en'`` so assertions cite the English
-source string for the verbose name.
+The class-level ``override_settings(LANGUAGE_CODE='en')`` pins the
+expected source string for the verbose name. Without it, a future PR
+that flips the test settings module's locale to ``ru`` would silently
+break ``self.assertIn("PKCE required", body)`` since the verbose name
+would render translated.
 """
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 
 from ._factories import make_app
 from ._oidc_testcase import OIDCTestCase
 
 
+@override_settings(LANGUAGE_CODE="en")
 class TestApplicationAdminPkceRequired(OIDCTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -19,7 +24,10 @@ class TestApplicationAdminPkceRequired(OIDCTestCase):
         # permission gate
         User = get_user_model()
         self.admin = User.objects.create_user(
-            "admin-smoke", password="x", is_superuser=True, is_staff=True
+            "admin-smoke",
+            password="x",  # nosec B106 - test fixture
+            is_superuser=True,
+            is_staff=True,
         )
         self.client.force_login(self.admin)
         self.creds = make_app(owner=self.user1, pkce_required=True)

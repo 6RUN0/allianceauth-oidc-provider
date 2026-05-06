@@ -240,10 +240,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         Audit signal must also dispatch when the token was issued under
         a strict-PKCE contract.
         """
-        import hashlib
         import json
-        import os
-        from base64 import urlsafe_b64encode
         from urllib.parse import parse_qs, urlparse
 
         from ._factories import make_app
@@ -253,16 +250,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         )
         self.grant_oidc_access(self.user1)
 
-        verifier = (
-            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
-        )
-        challenge = (
-            urlsafe_b64encode(
-                hashlib.sha256(verifier.encode("ascii")).digest()
-            )
-            .rstrip(b"=")
-            .decode("ascii")
-        )
+        verifier, challenge = self.make_pkce_pair()
 
         resp = self.authorize_get_default(
             self.user1,
@@ -275,16 +263,11 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
             },
         )
         code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
-        token_resp = self.client.post(
-            "/o/token/",
-            data={
-                "grant_type": "authorization_code",
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "redirect_uri": REDIRECT_URI,
-                "code": code,
-                "code_verifier": verifier,
-            },
+        token_resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier=verifier,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
         )
         self.assertEqual(200, token_resp.status_code)
         body = json.loads(token_resp.content.decode("utf-8"))

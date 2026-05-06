@@ -1,4 +1,7 @@
+import hashlib
 import json
+import os
+from base64 import urlsafe_b64encode
 from http import HTTPStatus
 from typing import Any, ClassVar, Final
 from urllib.parse import parse_qs, urlparse
@@ -136,6 +139,60 @@ class OIDCTestCase(TestCase):
         path = parsed.path
         qs = parse_qs(parsed.query)
         return (loc, path, qs)
+
+    @staticmethod
+    def make_pkce_pair() -> tuple[str, str]:
+        """
+        Build a fresh PKCE ``(verifier, challenge)`` pair for S256.
+
+        ``verifier``: 256 bits of randomness, base64url-encoded without
+        padding (RFC 7636 §4.1, 43-character ASCII output).
+        ``challenge``: SHA-256 of the verifier, base64url-encoded
+        without padding (RFC 7636 §4.2).
+
+        Lives on the test case rather than the factory module because
+        every call site is test-only and the helper has no model
+        dependency.
+        """
+        verifier = (
+            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+        )
+        challenge = (
+            urlsafe_b64encode(
+                hashlib.sha256(verifier.encode("ascii")).digest()
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        return verifier, challenge
+
+    def exchange_code_with_verifier(
+        self,
+        *,
+        code: str,
+        verifier: str | None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        redirect_uri: str = REDIRECT_URI,
+    ) -> Any:
+        """
+        POST /o/token/ with the given code and (optional) verifier.
+
+        Mirror of :meth:`exchange_code_for_token` for PKCE-aware tests:
+        passes ``code_verifier`` only when a non-``None`` value is
+        supplied so callers can drive the omitted-verifier negative
+        path with the same helper.
+        """
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": client_id or self.oauth_id,
+            "client_secret": client_secret or self.oauth_secret,
+            "redirect_uri": redirect_uri,
+            "code": code,
+        }
+        if verifier is not None:
+            payload["code_verifier"] = verifier
+        return self.client.post("/o/token/", data=payload)
 
     def authorize_get(self, user: User, params: dict | None = None) -> Any:
         self.client.force_login(user)

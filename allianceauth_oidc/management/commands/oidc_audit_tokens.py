@@ -78,11 +78,12 @@ class Command(BaseCommand):
                 ) from exc
             qs = qs.filter(application=app)
 
-        # ``pkce`` reflects the matching ``AllianceAuthApplication``'s
-        # ``pkce_required`` flag. The ``select_related("application")``
-        # above keeps this an in-memory attribute access — no extra
-        # query per row. Useful when triaging "did this token come from
-        # a strict-PKCE client?" without context-switching to admin.
+        # ``pkce_required`` mirrors the matching ``AllianceAuthApplication``'s
+        # field. The ``select_related("application")`` above keeps this an
+        # in-memory attribute access — no extra query per row. Useful when
+        # triaging "did this token come from a strict-PKCE client?" without
+        # context-switching to admin. Column name matches the model field
+        # for symmetry with ``oidc_create_app`` output.
         rows = [
             {
                 "id": t.id,
@@ -90,7 +91,7 @@ class Command(BaseCommand):
                 "client_id": getattr(t.application, "client_id", None),
                 "scope": t.scope,
                 "expires": t.expires.isoformat() if t.expires else "",
-                "pkce": getattr(t.application, "pkce_required", None),
+                "pkce_required": getattr(t.application, "pkce_required", None),
             }
             for t in qs.order_by("-expires").iterator()
         ]
@@ -103,7 +104,7 @@ class Command(BaseCommand):
                     "client_id",
                     "scope",
                     "expires",
-                    "pkce",
+                    "pkce_required",
                 ),
                 fmt=options["format"],
             )

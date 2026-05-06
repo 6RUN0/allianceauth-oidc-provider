@@ -100,9 +100,7 @@ class Command(BaseCommand):
             action=argparse.BooleanOptionalAction,
             default=True,
             help=_(
-                "Require PKCE on the authorization endpoint for this app "
-                "(RFC 7636 / 9700). Default: True. Pass --no-pkce-required "
-                "for known-incompatible legacy clients."
+                "Require PKCE on the authorization endpoint for this app (RFC 7636 / 9700). Default: True. Pass --no-pkce-required for known-incompatible legacy clients."  # noqa: E501
             ),
         )
         parser.add_argument(
