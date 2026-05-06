@@ -17,8 +17,6 @@ __all__ = [
     "SecretRedactor",
     "app_log",
     "build_oidc_debug_meta",
-    "mask_secret",
-    "redact_secret",
 ]
 
 
@@ -91,56 +89,22 @@ def app_log(
         logger.log(level, msg, *args, **kwargs)
 
 
-def mask_secret(
-    value: object, *, head: int = 2, tail: int = 2
-) -> RedactedSecret | None:
-    """
-    Mask a secret value, exposing only ``head``/``tail`` characters.
-
-    Why masking exists: in debug scenarios you may need to confirm a secret
-    is present/non-empty (or changing), but you must never log the full value.
-
-    Args:
-        value: The secret value to mask.
-        head: Number of characters to show at the start.
-        tail: Number of characters to show at the end.
-
-    Returns:
-        The masked secret string, or None if the input was None.
-    """
-    if value is None:
-        return None
-    if isinstance(value, bytes):
-        s = value.decode("utf-8", errors="replace")
-    elif isinstance(value, str):
-        s = value
-    else:
-        return RedactedSecret(f"<non-string:{type(value).__name__}>")
-    if not s:
-        return RedactedSecret("")
-    head = max(0, head)
-    tail = max(0, tail)
-    if head + tail == 0:
-        return RedactedSecret("...")
-    if len(s) <= head + tail:
-        return RedactedSecret("*" * len(s))
-    return RedactedSecret(f"{s[:head]}…{s[-tail:]}")
-
-
 @dataclass(frozen=True, slots=True)
 class SecretRedactor:
     """
     Stateful redactor that turns secret-shaped values into
     ``RedactedSecret``.
 
-    Same semantics as the free ``redact_secret`` function, but with
-    its three settings (``enabled``, ``head``, ``tail``) captured in
-    the instance instead of read from ``django.conf.settings`` on
-    every call. Tests can construct one inline
+    Captures the three masking knobs (``enabled``, ``head``, ``tail``)
+    in the instance instead of reading from ``django.conf.settings``
+    on every call. Tests construct one inline
     (``SecretRedactor(enabled=True, head=4, tail=4)``) without
-    ``@override_settings`` boilerplate, and request-scoped code can
-    reuse the same instance across many fields without re-reading
-    settings each time.
+    ``@override_settings`` boilerplate; request-scoped code reuses the
+    same instance across many fields without re-reading settings.
+
+    The static ``mask_secret`` is exposed for callers that need raw
+    head/tail-controlled masking outside the
+    ``OIDCSettings``-bound flow (e.g. debug helpers, ad-hoc tests).
     """
 
     enabled: bool = False
@@ -153,7 +117,40 @@ class SecretRedactor:
             return None
         if not self.enabled:
             return RedactedSecret("<redacted>")
-        return mask_secret(value, head=self.head, tail=self.tail)
+        return self.mask_secret(value, head=self.head, tail=self.tail)
+
+    @staticmethod
+    def mask_secret(
+        value: object, *, head: int = 2, tail: int = 2
+    ) -> RedactedSecret | None:
+        """
+        Mask a secret, exposing only ``head``/``tail`` characters.
+
+        Why masking exists: in debug scenarios you may need to confirm
+        a secret is present/non-empty (or changing), but you must never
+        log the full value. Returns ``None`` for ``None`` input,
+        ``RedactedSecret("")`` for empty input, and a ``"<non-string:X>"``
+        marker for unrecognised types — all wrapped in
+        ``RedactedSecret`` so the type-checker treats the result as
+        already-redacted.
+        """
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            s = value.decode("utf-8", errors="replace")
+        elif isinstance(value, str):
+            s = value
+        else:
+            return RedactedSecret(f"<non-string:{type(value).__name__}>")
+        if not s:
+            return RedactedSecret("")
+        head = max(0, head)
+        tail = max(0, tail)
+        if head + tail == 0:
+            return RedactedSecret("...")
+        if len(s) <= head + tail:
+            return RedactedSecret("*" * len(s))
+        return RedactedSecret(f"{s[:head]}…{s[-tail:]}")
 
     @classmethod
     def from_settings(cls, settings: OIDCSettings) -> Self:
@@ -166,27 +163,8 @@ class SecretRedactor:
 
     @classmethod
     def from_django(cls) -> Self:
-        """Convenience for the legacy ``app_settings`` accessors."""
+        """Build a redactor from the cached Django settings snapshot."""
         return cls.from_settings(OIDCSettings.from_django())
-
-
-def redact_secret(value: object) -> RedactedSecret | None:
-    """
-    Return a redacted version of the secret value for logging.
-
-    Backward-compat wrapper that constructs a fresh ``SecretRedactor``
-    from current Django settings on every call. Production code paths
-    that issue many redactions in a single request should build a
-    ``SecretRedactor`` instance once and reuse it instead — that's what
-    ``build_oidc_debug_meta`` does now.
-
-    Args:
-        value: The secret value to redact.
-
-    Returns:
-        Redacted secret string, or None if the input was None.
-    """
-    return SecretRedactor.from_django()(value)
 
 
 def build_oidc_debug_meta(

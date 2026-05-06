@@ -13,66 +13,79 @@ from types import SimpleNamespace
 from django.test import SimpleTestCase, override_settings
 
 from allianceauth_oidc.utils import (
+    SecretRedactor,
     app_log,
     build_oidc_debug_meta,
-    mask_secret,
-    redact_secret,
 )
+
+# Local alias — keep the test bodies tight without losing the
+# class-method origin in the import block.
+mask = SecretRedactor.mask_secret
 
 
 class TestMaskSecret(SimpleTestCase):
     def test_none_returns_none(self):
-        self.assertIsNone(mask_secret(None))
+        self.assertIsNone(mask(None))
 
     def test_empty_string_returns_empty(self):
-        self.assertEqual("", mask_secret(""))
+        self.assertEqual("", mask(""))
 
     def test_short_string_fully_masked(self):
         # head + tail >= len(value) → all characters become '*'.
-        self.assertEqual("***", mask_secret("abc"))
-        self.assertEqual("****", mask_secret("abcd"))
+        self.assertEqual("***", mask("abc"))
+        self.assertEqual("****", mask("abcd"))
 
     def test_long_string_shows_head_and_tail(self):
-        self.assertEqual("ab…yz", mask_secret("abcdefxyyz"))
+        self.assertEqual("ab…yz", mask("abcdefxyyz"))
 
     def test_custom_head_tail(self):
-        self.assertEqual("a…z", mask_secret("abcdefxyz", head=1, tail=1))
-        self.assertEqual("abc…xyz", mask_secret("abcdefghxyz", head=3, tail=3))
+        self.assertEqual("a…z", mask("abcdefxyz", head=1, tail=1))
+        self.assertEqual("abc…xyz", mask("abcdefghxyz", head=3, tail=3))
 
     def test_zero_head_tail_returns_ellipsis(self):
-        self.assertEqual("...", mask_secret("abcdef", head=0, tail=0))
+        self.assertEqual("...", mask("abcdef", head=0, tail=0))
 
     def test_negative_head_tail_clamped_to_zero(self):
         # Defensive: caller passes a negative head/tail, treat as 0.
-        self.assertEqual("...", mask_secret("abcdef", head=-3, tail=-3))
+        self.assertEqual("...", mask("abcdef", head=-3, tail=-3))
 
     def test_bytes_input_decoded(self):
-        self.assertEqual("ab…yz", mask_secret(b"abcdefxyyz"))
+        self.assertEqual("ab…yz", mask(b"abcdefxyyz"))
 
     def test_bytes_with_non_utf8_replaced(self):
         # `errors="replace"` substitutes invalid bytes with U+FFFD.
-        self.assertIn("…", mask_secret(b"\xff\xfeabcdef\xff\xfe"))
+        self.assertIn("…", mask(b"\xff\xfeabcdef\xff\xfe"))
 
     def test_non_string_returns_typed_marker(self):
         # Defensive path: int/float/dict shouldn't crash, get a marker.
-        self.assertEqual("<non-string:int>", mask_secret(42))
-        self.assertEqual("<non-string:dict>", mask_secret({"a": 1}))
+        self.assertEqual("<non-string:int>", mask(42))
+        self.assertEqual("<non-string:dict>", mask({"a": 1}))
 
 
-class TestRedactSecret(SimpleTestCase):
+class TestSecretRedactorCall(SimpleTestCase):
+    """
+    Cover ``SecretRedactor.__call__`` end-to-end: ``None`` passthrough,
+    the disabled-mode ``"<redacted>"`` marker, the enabled-mode
+    masking dispatch, and ``from_django()`` + ``@override_settings``
+    integration.
+    """
+
     def test_none_returns_none(self):
-        self.assertIsNone(redact_secret(None))
+        self.assertIsNone(SecretRedactor.from_django()(None))
 
     def test_default_returns_redacted_marker(self):
-        # `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS` is False by default.
-        self.assertEqual("<redacted>", redact_secret("super-secret"))
-        self.assertEqual("<redacted>", redact_secret(b"bytes-secret"))
+        # ``ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS`` is False by default,
+        # so neither length nor prefixes/suffixes leak.
+        redactor = SecretRedactor.from_django()
+        self.assertEqual("<redacted>", redactor("super-secret"))
+        self.assertEqual("<redacted>", redactor(b"bytes-secret"))
 
     @override_settings(ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True)
     def test_masked_mode_uses_mask_secret(self):
-        # Lazy accessors in app_settings.py read settings at call time, so
-        # @override_settings now works without reimport gymnastics.
-        self.assertEqual("su…et", redact_secret("super-secret"))
+        # ``@override_settings`` triggers ``setting_changed`` →
+        # ``OIDCSettings`` cache cleared → ``from_django()`` returns a
+        # fresh redactor that honours the override.
+        self.assertEqual("su…et", SecretRedactor.from_django()("super-secret"))
 
     @override_settings(
         ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True,
@@ -80,9 +93,12 @@ class TestRedactSecret(SimpleTestCase):
         ALLIANCEAUTH_OIDC_LOG_MASK_TAIL=3,
     )
     def test_masked_mode_honours_head_and_tail_overrides(self):
-        # Regression for the lazy-accessor refactor: head/tail overrides
-        # used to be invisible because they were snapshotted at import.
-        self.assertEqual("s…ret", redact_secret("super-secret"))
+        self.assertEqual("s…ret", SecretRedactor.from_django()("super-secret"))
+
+    def test_inline_construction_skips_settings(self):
+        # The class is DI-friendly: tests can build a redactor without
+        # @override_settings and assert directly on the result.
+        self.assertEqual("su…et", SecretRedactor(enabled=True)("super-secret"))
 
 
 class TestBuildOidcDebugMeta(SimpleTestCase):
