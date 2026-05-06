@@ -16,6 +16,7 @@ Examples::
     uv run nox -s audit                            # pip-audit
     uv run nox -s makemessages                     # extract -> .po + .pot
     uv run nox -s compilemessages                  # compile .po -> .mo
+    uv run nox -s makemigrations                   # generate Django migrations
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
@@ -193,6 +194,33 @@ def compilemessages(session: nox.Session) -> None:
             "compilemessages",
             env=_test_env(session),
         )
+
+
+@nox.session
+def makemigrations(session: nox.Session) -> None:
+    """
+    Generate Django migrations for the ``allianceauth_oidc`` app.
+
+    Runs Django's ``makemigrations`` against the test settings module
+    so AA + DOT are wired up the same way they are in the test suite.
+    Pass extra args via ``--``: e.g.::
+
+        uv run nox -s makemigrations -- --name rename_logo_url --dry-run
+        uv run nox -s makemigrations -- --check
+
+    Resulting files land in ``allianceauth_oidc/migrations/`` and
+    should be reviewed before commit.
+    """
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "makemigrations",
+        "allianceauth_oidc",
+        f"--settings={TEST_SETTINGS}",
+        *session.posargs,
+        env=_test_env(session),
+    )
 
 
 @nox.session
