@@ -260,7 +260,7 @@ def poll_module(
     session: requests.Session,
     *,
     module_id: str,
-    timeout_s: int = 60,
+    timeout_s: int = 90,
     poll_interval_s: int = 3,
 ) -> str:
     """
