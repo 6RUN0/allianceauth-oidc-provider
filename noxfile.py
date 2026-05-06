@@ -281,34 +281,59 @@ def markdown_lint(session: nox.Session) -> None:
 @nox.session
 def actions_lint(session: nox.Session) -> None:
     """
-    Lint GitHub Actions workflows via ``actionlint``, if installed.
+    Lint GitHub Actions workflows.
 
-    ``actionlint`` is a Go binary; install via the system package
-    manager (Gentoo: ``dev-util/actionlint``) or the upstream release
-    page (https://github.com/rhysd/actionlint). The session is a noop
-    with a warning when the binary is missing — same opt-in pattern as
-    ``markdown_lint``.
+    Runs two complementary system-installed tools when present, each
+    independent — same opt-in pattern as ``markdown_lint``:
 
-    actionlint runs three checks in one pass: YAML schema validation
-    against the GitHub Actions grammar, expression-language lint for
-    ``${{ ... }}`` blocks, and shellcheck integration for every
-    ``run:`` script.
+    - ``actionlint`` — correctness checks: YAML schema validation
+      against the GitHub Actions grammar, ``${{ ... }}`` expression
+      language lint, and ``shellcheck`` integration for every
+      ``run:`` block. Install: Gentoo ``dev-util/actionlint`` or
+      https://github.com/rhysd/actionlint.
+    - ``zizmor`` — security audit: workflow injection, persistent
+      credentials, broad permissions, dangerous triggers
+      (``pull_request_target`` etc.), expired actions. Install:
+      Gentoo ``dev-util/zizmor`` or https://github.com/woodruffw/zizmor.
+
+    Each tool is skipped (with a warning) if it is not on ``PATH``.
+    Use ``external=True`` because these are system binaries, not
+    Python dependencies.
     """
     workflow_dir = pathlib.Path(".github/workflows")
-    workflows = sorted(
-        str(p) for p in workflow_dir.glob("*.yml")
-    ) + sorted(str(p) for p in workflow_dir.glob("*.yaml"))
+    workflows = sorted(str(p) for p in workflow_dir.glob("*.yml")) + sorted(
+        str(p) for p in workflow_dir.glob("*.yaml")
+    )
     if not workflows:
         session.skip("no GitHub Actions workflows to lint")
-    if not shutil.which("actionlint"):
+
+    if shutil.which("actionlint"):
+        session.run("actionlint", "-color", *workflows, external=True)
+    else:
         session.warn(
             "actionlint not installed; skipping. "
             "Install via system package manager (Gentoo: "
             "dev-util/actionlint) or "
             "https://github.com/rhysd/actionlint"
         )
-        return
-    session.run("actionlint", "-color", *workflows, external=True)
+
+    if shutil.which("zizmor"):
+        # ``--persona=regular`` is the default; spell it out so a future
+        # bump to ``pedantic`` (more aggressive findings) is an explicit
+        # choice rather than a silent regression.
+        session.run(
+            "zizmor",
+            "--persona=regular",
+            *workflows,
+            external=True,
+        )
+    else:
+        session.warn(
+            "zizmor not installed; skipping security audit. "
+            "Install via system package manager (Gentoo: "
+            "dev-util/zizmor) or "
+            "https://github.com/woodruffw/zizmor"
+        )
 
 
 @nox.session
