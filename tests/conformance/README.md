@@ -91,16 +91,23 @@ docker-compose; override them when targeting another deployment:
 
 The four containers share the default compose bridge network:
 
-```
-+-------------+       +---------+       +--------+
-|  run_plan.py|----TLS+--nginx--+--HTTP-+ server |
-|  (host)     | 8443  |         |       +--------+
-+-------------+       +---------+         |
-       |                                  | http://provider:8080
-       v                                  v
-   localhost.emobix.co.uk:8443       +----------+
-   (cert valid)                      | provider |
-                                     +----------+
+```mermaid
+flowchart LR
+    runner["run_plan.py<br/>(host)"]
+    browser["host browser<br/>(localhost.emobix.co.uk:8443)"]
+
+    subgraph compose["docker-compose bridge network"]
+        nginx["nginx<br/>(TLS, :8443)"]
+        server["server<br/>(suite Java)"]
+        provider["provider<br/>(:8080)"]
+        mongo["mongodb"]
+    end
+
+    runner -- "REST over TLS" --> nginx
+    browser -- "UI" --> nginx
+    nginx -- "proxy HTTP" --> server
+    server -- "OIDC discovery / authorize / token" --> provider
+    server -- "state" --> mongo
 ```
 
 - The suite (Java service) and its embedded headless browser both

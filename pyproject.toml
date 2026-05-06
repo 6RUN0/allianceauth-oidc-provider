@@ -25,9 +25,10 @@ dynamic = [ "description", "version" ]
 
 dependencies = [ "allianceauth>=4,<5", "django-oauth-toolkit>=3.2,<4" ]
 
-urls.Homepage = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
-urls.Source = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
-urls.Tracker = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider/issues"
+urls.Homepage = "https://github.com/6RUN0/allianceauth-oidc-provider"
+urls.Source = "https://github.com/6RUN0/allianceauth-oidc-provider"
+urls.Tracker = "https://github.com/6RUN0/allianceauth-oidc-provider/issues"
+urls.Upstream = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
 
 [dependency-groups]
 dev = [

@@ -1,5 +1,13 @@
 # allianceauth_oidc
 
+> Fork of
+> [Solar-Helix-Independent-Transport/allianceauth-oidc-provider](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider)
+> maintained at
+> [6RUN0/allianceauth-oidc-provider](https://github.com/6RUN0/allianceauth-oidc-provider) — adds
+> wire-level integration tests, an OIDC Conformance Suite harness, operator CLI commands,
+> EVE-specific claims, runtime localisation (en/ru/uk), and a Russian-language
+> [README.ru.md](README.ru.md).
+
 ## Allianceauth OIDC Provider
 
 ## Features
@@ -15,13 +23,45 @@
   - State access
   - group access
 
+## Code flow + three-layer access policy
+
+Every authorization-code exchange traverses three independent gates. Removing any one of them opens a
+hole, which is why the regression tests exercise each layer separately.
+
+```mermaid
+sequenceDiagram
+    participant RP as Relying Party
+    participant Auth as /o/authorize/
+    participant DOT as django-oauth-toolkit
+    participant Token as /o/token/
+    participant Validator as AllianceAuthOAuth2Validator
+
+    RP->>Auth: GET / POST authorize (response_type=code)
+    Note over Auth: Layer 1 — dispatch()<br/>global access_oidc<br/>+ state/group whitelist
+    Auth->>DOT: forward (if policy passes)
+    DOT-->>RP: 302 ?code=<code>
+    RP->>Token: POST code + client_secret
+    Token->>Validator: validate_code(code, request)
+    Note over Validator: Layer 2 — re-checks<br/>state/group on exchange
+    Validator-->>Token: ok / invalid_grant
+    Token->>Validator: save_bearer_token(...)
+    Note over Validator: Layer 3 — last guard;<br/>PermissionDenied → invalid_grant
+    Validator-->>RP: 200 access_token + id_token
+```
+
 ## Example
 
 ![Imgur](https://i.imgur.com/gcrFcRL.png)
 
 ## Setup/Install
 
-1. `pip install allianceauth-oidc-provider`
+1. Install the fork from git (the package name `allianceauth-oidc-provider` collides with the
+   upstream PyPI release, so install by VCS URL rather than `pip install allianceauth-oidc-provider`):
+
+   ```sh
+   pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"
+   ```
+
 1. add to `INSTALLED_APPS` in your `local.py`
 
    ```python
@@ -72,7 +112,6 @@
 
    Please see [this](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key)
    for more info on creating and managing a private key
-
 1. Add the endpoints to your `urls.py`
 
    ```python
@@ -258,12 +297,14 @@ with whatever edge / infra you already operate:
 
 ### Create an application
 
-Before configuring the external application you want to go on your auth admin pannel at `/admin/allianceauth_oidc` and create a new alliance auth application.
+Before configuring the external application you want to go on your auth admin pannel at
+`/admin/allianceauth_oidc` and create a new alliance auth application.
 
 - `User` can be set to 1, this is a parameter for the upstream library not used in this application
 - `client type` should be confidential
 - `authorization grant type` should be `Authorization code`
-- `Client secret` needs to be saved somewhere **before** hitting save if you leave the hashing on (it won't be displayed again)
+- `Client secret` needs to be saved somewhere **before** hitting save if you leave the hashing on
+  (it won't be displayed again)
 - `Algorithm`: `RSA with SHA-2 256`
 
 Then you can set which states or group can access this application. \
@@ -271,7 +312,8 @@ _Note that they will also need the `allianceauth_oidc.access_oidc` role to acces
 
 ### WikiJS
 
-Manually create and groups you care for your users to have in the wiki and the service will map them for you. This greatly cuts down on group spam.
+Manually create and groups you care for your users to have in the wiki and the service will map them
+for you. This greatly cuts down on group spam.
 in auth create `Administrators` to give access to the full wiki admin site.
 
 #### Administration > Authentication > Generic OpenID Connect / OAuth2
@@ -319,7 +361,8 @@ api_url = https://<your.auth.url>/o/userinfo/
 [01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued app_id=1 client_id=abc123 user_id=42 meta={'grant_type': 'authorization_code', 'scope': 'openid email profile', 'client_id': 'abc123', 'redirect_uri': 'https://app.example/cb', 'code': '<redacted>', 'refresh_token_req': None, 'client_secret': None, 'assertion': None, 'token_type': 'Bearer', 'expires_in': 111, 'scope_resp': 'openid email profile', 'access_token': '<redacted>', 'refresh_token': '<redacted>', 'id_token': '<redacted>'}
 ```
 
-1. take the `id_token` field and paste it into https://jwt.io/ to debug the data being sent to the application. it should be fairly self explanitory expect for these 2 fields.
+1. take the `id_token` field and paste it into <https://jwt.io/> to debug the data being sent to the
+   application. it should be fairly self explanitory expect for these 2 fields.
 
 - `iss` is the issuer that must match exactly in the applications own settings.
 - `sub` is your user id if you need to debug why user is being sent.
