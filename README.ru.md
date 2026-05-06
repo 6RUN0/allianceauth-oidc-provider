@@ -68,8 +68,8 @@ myauth/
    втором установке с file-conflict'ом. Удалите апстримный пакет, если
    он установлен.
 
-   Если хочется отслеживать `main` напрямую — установка из git тоже
-   работает:
+   Если хочется отслеживать `current` напрямую — установка из git
+   тоже работает:
 
    ```sh
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"

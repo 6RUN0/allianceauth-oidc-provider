@@ -71,7 +71,7 @@ edits below to those.
    second install with a file conflict. Remove the upstream package
    first if it is present.
 
-   Tracking `main` directly is also supported:
+   Tracking `current` directly is also supported:
 
    ```sh
    pip install "git+https://github.com/6RUN0/allianceauth-oidc-provider.git@current"
