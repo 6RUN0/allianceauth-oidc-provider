@@ -12,19 +12,29 @@ ARG IMAGE_TAG=release-v5.1.43
 FROM registry.gitlab.com/openid/conformance-suite:${IMAGE_TAG}
 
 # Build context is ``tls/`` so the CA cert is alongside this file.
-COPY ca.crt /tmp/conformance-provider-ca.crt
+COPY ca.crt /usr/local/share/ca-certificates/conformance-provider-ca.crt
 
-# ``$JAVA_HOME/lib/security/cacerts`` is the standard JKS keystore;
-# ``changeit`` is the immutable JDK default password. We use a stable
-# alias so re-builds are idempotent — keytool refuses duplicates by
-# default, hence the explicit ``-noprompt`` + cleanup-on-conflict
-# wrapper.
-RUN keytool -delete -alias allianceauth-oidc-provider-ca \
+# Two-pronged trust install:
+# 1. ``$JAVA_HOME/lib/security/cacerts`` is the standard JKS keystore
+#    used by Spring HttpClient when the suite fetches the discovery
+#    document, JWKS, and so on. ``changeit`` is the immutable JDK
+#    default password. The stable alias makes the import idempotent —
+#    keytool refuses duplicates by default, hence the
+#    cleanup-on-conflict wrapper.
+# 2. The suite's headless Chromium (driven by Selenium for
+#    browser-required modules: login form fill, consent click) uses
+#    the **Linux** trust store, not Java's. ``update-ca-certificates``
+#    folds the cert from ``/usr/local/share/ca-certificates/`` into
+#    ``/etc/ssl/certs/ca-certificates.crt``; without this step
+#    Chromium hits the provider's self-signed cert as untrusted and
+#    sits on the browser's interstitial-error page until the
+#    per-module 5-minute poll timeout fires.
+RUN update-ca-certificates \
+    && keytool -delete -alias allianceauth-oidc-provider-ca \
         -keystore "$JAVA_HOME/lib/security/cacerts" \
         -storepass changeit 2>/dev/null || true \
     && keytool -import -trustcacerts \
         -alias allianceauth-oidc-provider-ca \
-        -file /tmp/conformance-provider-ca.crt \
+        -file /usr/local/share/ca-certificates/conformance-provider-ca.crt \
         -keystore "$JAVA_HOME/lib/security/cacerts" \
-        -storepass changeit -noprompt \
-    && rm /tmp/conformance-provider-ca.crt
+        -storepass changeit -noprompt

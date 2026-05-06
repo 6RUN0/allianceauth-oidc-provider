@@ -32,6 +32,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 import urllib3
@@ -117,6 +118,22 @@ class ModuleResult:
     log_excerpt: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _host_root(public_url: str) -> str:
+    """
+    Strip the OIDC path prefix from ``public_url`` to recover the
+    Django host root.
+
+    AA's login and consent templates live on the host root (no
+    ``/o/`` prefix); the suite's headless browser hits both during
+    automation, so we need a clean base URL — not the
+    ``rstrip('/o')`` character-set strip, which silently removes
+    every trailing ``/`` and ``o`` and breaks on any host whose path
+    happens to share those characters.
+    """
+    parsed = urlparse(public_url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def build_plan_config() -> dict[str, Any]:
     """
     Build the JSON config the suite stores against a plan.
@@ -126,6 +143,7 @@ def build_plan_config() -> dict[str, Any]:
     credentials go under ``resource`` so the suite's browser driver
     can submit AA's standard Django login form.
     """
+    host_root = _host_root(PUBLIC_URL)
     return {
         "alias": "conformance",
         "description": "allianceauth-oidc-provider conformance run",
@@ -151,22 +169,21 @@ def build_plan_config() -> dict[str, Any]:
             "resourceUrl": f"{PUBLIC_URL}/userinfo/",
         },
         # ``browser`` is a list of browser-driving sequences (the
-        # suite casts it as a JsonArray on init). Selectors target
-        # AA's stock Django auth login form; override the public URL
-        # via env if your provider runs behind a reverse proxy with a
-        # different path prefix.
+        # suite casts it as a JsonArray on init). The suite's matcher
+        # rejects any URL the headless Chromium navigates to that does
+        # not match one of these entries, so each surface AA can
+        # render during a code-flow needs an explicit handler:
+        # - login form on the host root, and
+        # - the consent template on ``/o/authorize/``.
+        # Override ``CONFORMANCE_PUBLIC_URL`` if your provider runs
+        # behind a reverse proxy with a different path prefix.
         "browser": [
-            # PUBLIC_URL ends with ``/o``; AA's login form lives on
-            # the host root (``/account/login/``), so we match the URL
-            # without the OIDC path prefix.
             {
-                "match": (f"{PUBLIC_URL.rstrip('/o')}/account/login/*"),
+                "match": f"{host_root}/account/login/*",
                 "tasks": [
                     {
                         "task": "Login",
-                        "match": (
-                            f"{PUBLIC_URL.rstrip('/o')}/account/login/*"
-                        ),
+                        "match": f"{host_root}/account/login/*",
                         "commands": [
                             ["text", "id", "id_username", USERNAME],
                             ["text", "id", "id_password", PASSWORD],
@@ -174,7 +191,35 @@ def build_plan_config() -> dict[str, Any]:
                         ],
                     }
                 ],
-            }
+            },
+            # Consent screen — matches all variants:
+            # 1. ``allianceauth_oidc/templates/.../authorize.html`` form
+            #    contains ``<input name="allow" value="Authorize"/>``.
+            #    Tests where the seeded app has ``skip_authorization=False``
+            #    land here; the click submits the form.
+            # 2. Apps seeded with ``skip_authorization=True`` (see
+            #    ``seed.py``) skip the template entirely — DOT issues a
+            #    302 directly. The browser may briefly stop at
+            #    ``/o/authorize/`` while DOT redirects; this matcher
+            #    declares the URL as expected so the suite does not
+            #    log "Could not find a match for url" and stall.
+            {
+                "match": f"{host_root}/o/authorize*",
+                "tasks": [
+                    {
+                        "task": "Authorize",
+                        "match": f"{host_root}/o/authorize*",
+                        # ``optional: true`` lets the suite skip the
+                        # click when the element does not exist — i.e.
+                        # the skip_authorization=True path that
+                        # auto-redirects without rendering the form.
+                        "optional": True,
+                        "commands": [
+                            ["click", "name", "allow"],
+                        ],
+                    }
+                ],
+            },
         ],
     }
 
