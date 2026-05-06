@@ -14,7 +14,16 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
-## [0.1.0b1] - 2026-05-06
+## [0.1.0b2] - 2026-05-06
+
+The `v0.1.0b1` tag exists in git history but never reached PyPI —
+the release pipeline failed at the bundled twine pre-check inside
+`pypa/gh-action-pypi-publish` (it does not understand
+`Metadata-Version: 2.4` produced by modern flit-core). `v0.1.0b2`
+re-runs the same release content with the pre-check skipped (PyPI
+server-side validation is unaffected) and is therefore the actual
+first PyPI publication of the fork. See `fix(ci):` commit for the
+full diagnosis.
 
 ### Added
 
