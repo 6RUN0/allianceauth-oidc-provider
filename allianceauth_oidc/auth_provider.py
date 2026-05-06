@@ -232,6 +232,39 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     # captured logger or a custom DI'd policy.
     policy: Final = DEFAULT_POLICY
 
+    @staticmethod
+    def _resolve_user_and_client(
+        request, client_arg: object | None = None
+    ) -> tuple[object | None, object | None]:
+        """
+        Pull (user, client) out of the validator's request shape.
+
+        ``validate_code`` / ``validate_refresh_token`` receive ``client``
+        as a positional argument; ``save_bearer_token`` doesn't, so it
+        falls back to ``request.client`` then ``request.application``
+        (oauthlib's older / newer attr names — DOT mutates one or the
+        other depending on grant flow).
+
+        Returns ``(None, None)`` for "skip the policy" cases:
+        unauthenticated user, missing user, or missing client. Callers
+        only run the policy when both halves are present.
+        """
+        user = getattr(request, "user", None)
+        # Treat AnonymousUser the same as None: client_credentials and
+        # similar end-user-less grants must not be funnelled through
+        # the state/group gate. ``is_authenticated`` is the canonical
+        # Django check that covers both ``None`` and AnonymousUser.
+        if user is None or not getattr(user, "is_authenticated", False):
+            return None, None
+        client = (
+            client_arg
+            or getattr(request, "client", None)
+            or getattr(request, "application", None)
+        )
+        if client is None:
+            return None, None
+        return user, client
+
     def _enforce_policy(self, request, client) -> bool:
         """
         Run the per-app state/groups gate against ``request.user``.
@@ -241,20 +274,10 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         so the same gate runs on every token-issuing path; missing it on either
         side leaves a hole.
         """
-        user = getattr(request, "user", None)
-        # Treat AnonymousUser the same as None: client_credentials and
-        # similar end-user-less grants must not be funnelled through the
-        # state/group gate. A future DOT version may set
-        # request.user = AnonymousUser instead of None for those grants;
-        # `is_authenticated` is the canonical Django check that covers
-        # both cases.
-        if (
-            user is None
-            or not getattr(user, "is_authenticated", False)
-            or client is None
-        ):
+        user, resolved_client = self._resolve_user_and_client(request, client)
+        if user is None or resolved_client is None:
             return True
-        allowed = self.policy.is_allowed(user, client)
+        allowed = self.policy.is_allowed(user, resolved_client)
         if not allowed:
             # Validator path doesn't render a denied page (the OAuth
             # response is the bool → invalid_grant translation), so log
@@ -263,8 +286,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             logger.warning(
                 "OIDC DENIED: validator user=%s client=%s client_id=%s",
                 user,
-                client,
-                getattr(client, "client_id", None),
+                resolved_client,
+                getattr(resolved_client, "client_id", None),
             )
         return allowed
 
@@ -295,16 +318,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
         This prevents "token issued then denied" races/500s.
         """
-        user = getattr(request, "user", None)
-        client = getattr(request, "client", None) or getattr(
-            request, "application", None
-        )
-        # See `_enforce_policy` for the AnonymousUser rationale.
-        if (
-            user is not None
-            and getattr(user, "is_authenticated", False)
-            and client is not None
-        ):
+        user, client = self._resolve_user_and_client(request)
+        if user is not None and client is not None:
             try:
                 self.policy.enforce(user, client)
             except PermissionDenied:
