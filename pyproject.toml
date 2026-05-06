@@ -86,6 +86,12 @@ convention = "pep257"
 # is a Django convention without docstring.
 "allianceauth_oidc/admin.py" = [ "RUF012", "D106" ]
 "allianceauth_oidc/models.py" = [ "RUF012", "D106" ]
+# Management commands: ``Foo = get_foo_model()`` returns a class, and
+# Django convention is to bind it to a PascalCase local — N806 would
+# flag every such call site. ``add_arguments`` / ``handle`` are
+# framework hooks whose contract is documented on ``BaseCommand``,
+# not on each subclass — D102 docstring requirements there are noise.
+"allianceauth_oidc/management/commands/*" = [ "N806", "D102" ]
 # Test docstrings and assertions are routinely long; custom assertXxx methods
 # follow unittest.TestCase camelCase convention (N802); some test files use
 # hardcoded "secrets" intentionally (covered by `# nosec`/inline noqa).

@@ -152,7 +152,12 @@ class Command(BaseCommand):
         try:
             from django.contrib.admin.models import ADDITION, LogEntry
 
-            LogEntry.objects.log_action(  # pyright: ignore[reportDeprecated]
+            # ``log_action`` is the Django 4.2 public API; Django 5.1
+            # marked it deprecated in favour of bulk ``log_actions``,
+            # which the django-stubs we depend on already mirror —
+            # hence the typing ignores. We keep the singular call
+            # because it matches the runtime AA installation.
+            LogEntry.objects.log_action(  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
                 user_id=owner_id,
                 content_type_id=ContentType.objects.get_for_model(
                     Application

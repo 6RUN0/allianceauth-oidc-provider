@@ -24,8 +24,8 @@ class AllianceAuthApplication(AbstractApplication):
         # Restrict to the two schemes we actually render.
         validators=[URLValidator(schemes=["http", "https"])],
         help_text=_(
-            "URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL."
-        ),  # noqa: E501
+            "URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL."  # noqa: E501
+        ),
     )
     states = models.ManyToManyField(State, blank=True)
     groups = models.ManyToManyField(Group, blank=True)
@@ -33,8 +33,8 @@ class AllianceAuthApplication(AbstractApplication):
     debug_mode = models.BooleanField(
         default=False,
         help_text=_(
-            "Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings."
-        ),  # noqa: E501
+            "Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings."  # noqa: E501
+        ),
     )
 
     @override

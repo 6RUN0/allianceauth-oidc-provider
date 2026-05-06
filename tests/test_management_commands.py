@@ -201,7 +201,7 @@ class TestOIDCRevokeUserTokensCommand(OIDCTestCase):
         return at.pk, rt.pk
 
     def test_dry_run_reports_counts_without_revoking(self) -> None:
-        at_pk, rt_pk = self._seed_tokens()
+        at_pk, _rt_pk = self._seed_tokens()
         out = StringIO()
         call_command(
             "oidc_revoke_user_tokens",
