@@ -289,10 +289,12 @@ class TestUserinfoClaims(OIDCTestCase):
         ``setting_changed`` — so the override is honoured by both
         sides of the pipeline.
         """
-        from allianceauth_oidc import app_settings
+        from allianceauth_oidc.app_settings import OIDCSettings
 
         with override_settings(ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX="custom_"):
-            self.assertEqual("custom_", app_settings.eve_claim_prefix())
+            self.assertEqual(
+                "custom_", OIDCSettings.from_django().eve_claim_prefix
+            )
             info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
         # New prefix made it through: claim emitted under custom_ AND
         # bound under custom_ in the scope map → DOT lets it through.
