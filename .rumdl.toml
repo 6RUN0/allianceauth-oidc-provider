@@ -1,0 +1,15 @@
+# rumdl (Markdown linter) configuration.
+# https://github.com/rvben/rumdl
+
+[MD013]
+# Default 80 cols is too tight for Markdown — we keep Python at 79
+# but allow longer lines in prose / code-fences / Mermaid node
+# labels. 120 catches the truly absurd 200-char monsters without
+# forcing manual wrapping of every URL / Mermaid label / table cell.
+line_length = 120
+# Long lines inside fenced code blocks are usually log/output
+# samples or full-form CLI commands where wrapping would hurt
+# copy-paste fidelity. Tables likewise — wrapping a row breaks the
+# alignment.
+code_blocks = false
+tables = false

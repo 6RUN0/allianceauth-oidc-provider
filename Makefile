@@ -1,10 +1,11 @@
-.PHONY: help clean dev test lint typecheck coverage audit messages compilemessages makemigrations package deploy
+.PHONY: help clean dev test lint lint-md typecheck coverage audit messages compilemessages makemigrations package deploy
 
 help:
 	@echo "Available targets (all run via uv):"
 	@echo "  dev              sync dev dependencies (uv sync --all-groups + pre-commit install)"
 	@echo "  test             run Django test suite (nox -s tests)"
 	@echo "  lint             run pre-commit on all files (nox -s lint)"
+	@echo "  lint-md          lint Markdown via rumdl + lychee + vale (nox -s markdown_lint)"
 	@echo "  typecheck        run mypy + basedpyright (nox -s typecheck)"
 	@echo "  coverage         run tests with coverage report (nox -s coverage)"
 	@echo "  audit            pip-audit dependencies (nox -s audit)"
@@ -24,6 +25,9 @@ test:
 
 lint:
 	uv run nox -s lint
+
+lint-md:
+	uv run nox -s markdown_lint
 
 typecheck:
 	uv run nox -s typecheck

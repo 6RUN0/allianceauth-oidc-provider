@@ -17,12 +17,14 @@ Examples::
     uv run nox -s makemessages                     # extract -> .po + .pot
     uv run nox -s compilemessages                  # compile .po -> .mo
     uv run nox -s makemigrations                   # generate Django migrations
+    uv run nox -s markdown_lint                    # rumdl + lychee + vale
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
 from __future__ import annotations
 
 import pathlib
+import shutil
 
 import nox
 
@@ -194,6 +196,47 @@ def compilemessages(session: nox.Session) -> None:
             "compilemessages",
             env=_test_env(session),
         )
+
+
+@nox.session
+def markdown_lint(session: nox.Session) -> None:
+    """
+    Lint shipped Markdown files.
+
+    Runs three system-installed tools when present, each independent:
+
+    - ``rumdl`` — fast Markdown structural lint (heading levels,
+      list spacing, line length, etc.).
+    - ``lychee`` — link checker; default network mode validates
+      external URLs.
+    - ``vale`` — prose style linter; activated only when
+      ``.vale.ini`` exists at the repo root.
+
+    Each tool is skipped (with a warning) if it is not on ``PATH``.
+    Use ``external=True`` because these are system binaries, not
+    Python dependencies.
+    """
+    md_files = sorted(str(p) for p in pathlib.Path().glob("*.md"))
+    if not md_files:
+        session.skip("no top-level Markdown files to lint")
+
+    if shutil.which("rumdl"):
+        session.run("rumdl", "check", *md_files, external=True)
+    else:
+        session.warn("rumdl not installed; skipping markdown structural lint")
+
+    if shutil.which("lychee"):
+        session.run("lychee", "--no-progress", *md_files, external=True)
+    else:
+        session.warn("lychee not installed; skipping link check")
+
+    if shutil.which("vale"):
+        if pathlib.Path(".vale.ini").exists():
+            session.run("vale", *md_files, external=True)
+        else:
+            session.warn("vale: .vale.ini missing; skipping prose lint")
+    else:
+        session.warn("vale not installed; skipping prose lint")
 
 
 @nox.session
