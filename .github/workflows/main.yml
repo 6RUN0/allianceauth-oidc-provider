@@ -93,6 +93,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install GNU gettext
+        # ``django-admin compilemessages`` shells out to ``msgfmt`` from
+        # GNU gettext; ubuntu-latest images don't include it by default.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
