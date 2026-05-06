@@ -168,56 +168,59 @@ def build_plan_config() -> dict[str, Any]:
         "resource": {
             "resourceUrl": f"{PUBLIC_URL}/userinfo/",
         },
-        # ``browser`` is a list of browser-driving sequences (the
-        # suite casts it as a JsonArray on init). The suite's matcher
-        # rejects any URL the headless Chromium navigates to that does
-        # not match one of these entries, so each surface AA can
-        # render during a code-flow needs an explicit handler:
-        # - login form on the host root, and
-        # - the consent template on ``/o/authorize/``.
-        # Override ``CONFORMANCE_PUBLIC_URL`` if your provider runs
-        # behind a reverse proxy with a different path prefix.
+        # ``browser`` drives the suite's headless HtmlUnit. The suite
+        # selects a TOP-LEVEL entry by matching the ``goToUrl`` URL it
+        # tells the browser to visit. Inside the entry, each TASK has
+        # its own ``match`` field that fires against the browser's
+        # CURRENT URL after navigation.
+        #
+        # Flow:
+        # 1. Suite ``goToUrl(/o/authorize/...)`` — matches the entry
+        #    below.
+        # 2. AA middleware 302's an unauthenticated user to
+        #    ``LOGIN_URL`` (= ``/admin/login/`` in conformance
+        #    settings; AA's stock ``/account/login/`` is EVE-SSO-only
+        #    with no fillable form).
+        # 3. Login task fires against the admin-login URL — fills
+        #    ``id_username`` / ``id_password`` and submits. Django
+        #    admin's form uses exactly those IDs.
+        # 4. On success, admin redirects to the ``next`` URL
+        #    (``/o/authorize/...``).
+        # 5. If the seeded app has ``skip_authorization=False``, DOT
+        #    renders our consent template; the Authorize task clicks
+        #    ``name=allow``. Apps seeded with
+        #    ``skip_authorization=True`` (the default in
+        #    ``seed.py``) skip the consent screen — DOT 302's
+        #    directly to the RP callback. Both tasks are
+        #    ``optional: true`` so a single configuration handles
+        #    both flows.
+        # 6. ``[type=submit]`` (CSS selector) matches both
+        #    ``<input type="submit">`` (admin login) and
+        #    ``<button type="submit">`` (other forms) — the
+        #    previous ``button[type=submit]`` selector missed the
+        #    admin form's input element.
         "browser": [
-            {
-                "match": f"{host_root}/account/login/*",
-                "tasks": [
-                    {
-                        "task": "Login",
-                        "match": f"{host_root}/account/login/*",
-                        "commands": [
-                            ["text", "id", "id_username", USERNAME],
-                            ["text", "id", "id_password", PASSWORD],
-                            ["click", "css", "button[type=submit]"],
-                        ],
-                    }
-                ],
-            },
-            # Consent screen — matches all variants:
-            # 1. ``allianceauth_oidc/templates/.../authorize.html`` form
-            #    contains ``<input name="allow" value="Authorize"/>``.
-            #    Tests where the seeded app has ``skip_authorization=False``
-            #    land here; the click submits the form.
-            # 2. Apps seeded with ``skip_authorization=True`` (see
-            #    ``seed.py``) skip the template entirely — DOT issues a
-            #    302 directly. The browser may briefly stop at
-            #    ``/o/authorize/`` while DOT redirects; this matcher
-            #    declares the URL as expected so the suite does not
-            #    log "Could not find a match for url" and stall.
             {
                 "match": f"{host_root}/o/authorize*",
                 "tasks": [
                     {
+                        "task": "Login",
+                        "match": f"{host_root}/admin/login*",
+                        "optional": True,
+                        "commands": [
+                            ["text", "id", "id_username", USERNAME],
+                            ["text", "id", "id_password", PASSWORD],
+                            ["click", "css", "[type=submit]"],
+                        ],
+                    },
+                    {
                         "task": "Authorize",
                         "match": f"{host_root}/o/authorize*",
-                        # ``optional: true`` lets the suite skip the
-                        # click when the element does not exist — i.e.
-                        # the skip_authorization=True path that
-                        # auto-redirects without rendering the form.
                         "optional": True,
                         "commands": [
                             ["click", "name", "allow"],
                         ],
-                    }
+                    },
                 ],
             },
         ],
@@ -257,7 +260,7 @@ def poll_module(
     session: requests.Session,
     *,
     module_id: str,
-    timeout_s: int = 300,
+    timeout_s: int = 60,
     poll_interval_s: int = 3,
 ) -> str:
     """

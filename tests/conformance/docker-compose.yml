@@ -45,6 +45,19 @@ services:
   nginx:
     image: registry.gitlab.com/openid/conformance-suite/nginx:${IMAGE_TAG:-release-v5.1.43}
     restart: unless-stopped
+    networks:
+      # Browser-driven modules follow OIDC redirects to the
+      # ``redirect_uri`` (``https://localhost.emobix.co.uk:8443/test/a/conformance/callback``)
+      # from inside the suite's HtmlUnit. Without this alias the
+      # hostname resolves to 127.0.0.1 inside the suite container —
+      # which has nothing on :8443 — and HtmlUnit hits "Connection
+      # refused" on every browser test. Aliasing nginx to the public
+      # hostname routes the callback through the same TLS terminator
+      # the host-side browser uses, so the request lands on the suite
+      # itself.
+      default:
+        aliases:
+          - localhost.emobix.co.uk
     ports:
       - "8443:8443"
     depends_on:

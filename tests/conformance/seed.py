@@ -119,6 +119,13 @@ def _ensure_user(main_char: EveCharacter):
         user = User.objects.get(username=USERNAME)
     user.set_password(PASSWORD)
     user.email = "conformance@example.test"
+    # Conformance suite drives login through Django admin's view (AA's
+    # stock /account/login/ is EVE-SSO-only with no fillable form).
+    # Admin-login requires ``is_staff=True`` to accept the credentials,
+    # so flag the user accordingly. Production AA would never want
+    # this — the conformance container runs in isolation, never seen
+    # by real users.
+    user.is_staff = True
     if user.last_login is None:
         user.last_login = timezone.now()
     user.save()
@@ -151,6 +158,13 @@ def _ensure_app(
     Application = get_application_model()
     # ``skip_authorization`` removes the consent screen so the
     # suite's Selenium driver only has to fill the login form.
+    # ``pkce_required=False`` because the OIDC basic-certification
+    # plan runs MOST modules without PKCE (the suite sends authorize
+    # requests without ``code_challenge`` for non-PKCE plans). The
+    # model default is ``True`` per RFC 9700 — appropriate for real
+    # apps but blocks every basic-cert module that does not opt into
+    # PKCE. The suite has its own dedicated ``oidcc-pkce-*`` plans
+    # for verifying PKCE behaviour.
     Application.objects.update_or_create(
         client_id=client_id,
         defaults={
@@ -165,6 +179,7 @@ def _ensure_app(
             "algorithm": "RS256",
             "skip_authorization": True,
             "active": True,
+            "pkce_required": False,
         },
     )
 

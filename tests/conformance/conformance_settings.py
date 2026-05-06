@@ -71,6 +71,13 @@ OAUTH2_PROVIDER["OIDC_ISS_ENDPOINT"] = CONFORMANCE_PUBLIC_URL
 # A longer access token TTL keeps the suite from spinning into refresh
 # tests prematurely.
 OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"] = 3600
+# The suite spends 60+ seconds between issuing the auth code and
+# exchanging it (fixture setup, state validation, callback parsing,
+# ID-token sanity probes). DOT's default 60-second auth-code TTL
+# expires the code mid-flow, causing every browser-driven module
+# to fail at /o/token/ with ``invalid_grant``. Bump to 10 minutes —
+# real apps should keep the production default.
+OAUTH2_PROVIDER["AUTHORIZATION_CODE_EXPIRE_SECONDS"] = 600
 
 # The conformance suite POSTs to /account/login/ with a normal Django
 # session cookie. Production AA sets Secure on the session cookie; the
@@ -79,6 +86,18 @@ OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"] = 3600
 # settings module — production AA settings are unaffected.
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
+
+# AA's stock ``/account/login/`` template is EVE-SSO-only — a single
+# OAuth-redirect link, no username/password form. The conformance
+# suite's headless browser expects a fillable login form
+# (``id_username`` / ``id_password``), so route the login flow
+# through Django admin's login view instead. Admin's template uses
+# exactly those field IDs and accepts a ``next=`` parameter, so AA's
+# middleware sends unauthenticated users there, and on success the
+# browser is redirected back to ``/o/authorize/...`` to complete the
+# OIDC flow. The seeded conformance user has ``is_staff=True`` (see
+# ``seed.py``) so admin login accepts it.
+LOGIN_URL = "/admin/login/"
 
 # Alliance Auth's base settings use ``AaManifestStaticFilesStorage``,
 # which expects ``collectstatic`` to have populated a manifest of
