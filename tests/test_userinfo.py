@@ -275,30 +275,30 @@ class TestUserinfoClaims(OIDCTestCase):
             self.char3.alliance_ticker, info["eve_alliance_ticker"]
         )
 
-    def test_eve_claim_prefix_override_documents_restart_requirement(self):
+    def test_eve_claim_prefix_override_works_end_to_end(self):
         """
         ``@override_settings(ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX="custom_")``
-        flips the prefix returned by ``app_settings.eve_claim_prefix()``
-        (lazy accessor) but does NOT rebind the class-level
-        ``oidc_claim_scope`` map — DOT reads that once on import.
+        now propagates through both the claim emission *and* DOT's
+        scope-map filter, end-to-end on a live userinfo request.
 
-        Net effect: with a runtime-only override, claims emitted by
-        ``get_additional_claims`` under the new prefix are then
-        filtered out by DOT because the new prefix has no scope-map
-        entry. We pin this contract so a future maintainer trying to
-        "fix" the apparent inconsistency understands why the binding
-        is class-level and a process restart is needed for prefix
-        changes.
+        Regression: an earlier implementation snapshotted the scope
+        map at class-definition time, so a runtime prefix flip would
+        emit ``custom_*`` claims that DOT then filtered out (no
+        scope-map entry). The current implementation keys the map on
+        the cached ``OIDCSettings`` snapshot — invalidated on
+        ``setting_changed`` — so the override is honoured by both
+        sides of the pipeline.
         """
         from allianceauth_oidc import app_settings
 
         with override_settings(ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX="custom_"):
             self.assertEqual("custom_", app_settings.eve_claim_prefix())
             info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
-        # Neither prefix appears in userinfo: custom_ has no scope-map
-        # entry (filtered out), eve_ has a scope-map entry but the
-        # validator emitted under the runtime prefix.
-        self.assertNotIn("custom_character_id", info)
+        # New prefix made it through: claim emitted under custom_ AND
+        # bound under custom_ in the scope map → DOT lets it through.
+        self.assertIn("custom_character_id", info)
+        # Old prefix is gone: scope map no longer contains eve_*
+        # entries under the override.
         self.assertNotIn("eve_character_id", info)
 
     def test_eve_claims_omitted_for_user_without_main_character(self):

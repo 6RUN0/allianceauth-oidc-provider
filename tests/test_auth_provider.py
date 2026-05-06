@@ -128,10 +128,11 @@ class TestSaveBearerTokenAuthGuard(OIDCTestCase):
 
 class TestOidcClaimScopeBinding(SimpleTestCase):
     """
-    ``oidc_claim_scope`` was a class-level dict that snapshotted
-    settings at module import; ``cached_property`` defers the read to
-    first instance access, so each per-request validator picks up the
-    live values.
+    ``oidc_claim_scope`` reads from a process-level cache keyed on
+    the ``OIDCSettings`` snapshot. Settings flips (via
+    ``@override_settings``) produce a new snapshot → cache miss →
+    fresh map; same-settings reads share one dict across all
+    validator instances.
     """
 
     def test_default_settings_emit_eve_prefix_under_profile(self):
@@ -148,25 +149,33 @@ class TestOidcClaimScopeBinding(SimpleTestCase):
     def test_override_settings_reflected_per_validator_instance(self):
         # Regression: with the previous class-level binding,
         # @override_settings was invisible — every test saw whatever
-        # had been snapshotted at import. ``cached_property`` makes
-        # each new validator read the live values once.
+        # had been snapshotted at import. The cache now hangs off the
+        # OIDCSettings snapshot, which is rebuilt on setting_changed.
         validator = AllianceAuthOAuth2Validator()
         self.assertEqual(
             "eve", validator.oidc_claim_scope["custom_character_id"]
         )
         self.assertNotIn("eve_character_id", validator.oidc_claim_scope)
 
-    def test_caching_is_per_instance(self):
-        # ``cached_property`` is per-instance, so two validators built
-        # under different settings produce distinct maps even when the
-        # second validator accesses the property after the first has
-        # already cached.
+    def test_map_is_shared_across_instances_under_same_settings(self):
+        # Class-level cache: two validators built without changing
+        # settings receive the IDENTICAL dict object, not a copy.
+        # Saves a redundant rebuild on every per-request validator.
         v1 = AllianceAuthOAuth2Validator()
-        _ = v1.oidc_claim_scope  # warm the cache
+        v2 = AllianceAuthOAuth2Validator()
+        self.assertIs(v1.oidc_claim_scope, v2.oidc_claim_scope)
+
+    def test_override_settings_swaps_map_for_all_instances(self):
+        # Inverse of the previous per-instance test: under
+        # @override_settings, both pre-existing AND new validators
+        # see the new map (the cache key changes with the snapshot,
+        # not with validator identity).
+        v1 = AllianceAuthOAuth2Validator()
+        self.assertIn("eve_character_id", v1.oidc_claim_scope)
         with override_settings(
             ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX="custom_",
         ):
             v2 = AllianceAuthOAuth2Validator()
+            # Both instances pick up the new prefix.
+            self.assertIn("custom_character_id", v1.oidc_claim_scope)
             self.assertIn("custom_character_id", v2.oidc_claim_scope)
-            # v1's cached map is unaffected.
-            self.assertIn("eve_character_id", v1.oidc_claim_scope)

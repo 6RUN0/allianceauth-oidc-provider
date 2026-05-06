@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import dataclass, field
-from functools import cached_property
 from typing import Any, Final
 
 from django.core.exceptions import PermissionDenied
@@ -37,6 +37,33 @@ _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
 # Module-level so ``ClaimsBuilder`` can default to it without importing
 # the validator class.
 _DEFAULT_MAX_GROUPS_IN_CLAIM: Final[int] = 256
+
+
+@functools.lru_cache(maxsize=1)
+def _build_oidc_claim_scope(settings: OIDCSettings) -> dict[str, str]:
+    """
+    Build the claim → scope filter map for a given settings snapshot.
+
+    Module-level + ``lru_cache`` keyed on the (frozen, hashable)
+    ``OIDCSettings`` instance so two validators built under the same
+    settings share one dict. ``OIDCSettings.from_django()`` is itself
+    cached with ``setting_changed`` invalidation (see
+    ``app_settings._cached_snapshot``), so a settings flip swaps the
+    key here and the cache misses cleanly.
+
+    The returned dict is intended read-only by callers (DOT iterates
+    it via ``.items()`` only). Mutation by a downstream consumer
+    would corrupt other validators sharing the same cache entry.
+    """
+    scopes: dict[str, str] = OAuth2Validator.oidc_claim_scope.copy()
+    scopes["groups"] = "profile"
+    scopes.update(
+        {
+            f"{settings.eve_claim_prefix}{n}": settings.eve_claim_scope
+            for n in _EVE_CLAIM_NAMES
+        }
+    )
+    return scopes
 
 
 @dataclass
@@ -180,33 +207,25 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     # genuinely needs more.
     MAX_GROUPS_IN_CLAIM = 256
 
-    @cached_property
+    @property
     def oidc_claim_scope(self) -> dict[str, str]:
         """
-        Per-instance map of claim → required scope (DOT's filter key).
+        Class-shared map of claim → required scope (DOT's filter key).
 
-        Replaces the previous class-level binding that snapshotted
-        ``ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX`` /
-        ``ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE`` at module import; that
-        meant ``@override_settings`` in tests was silently invisible
-        and a deploy-time setting flip required a process restart.
-        ``cached_property`` defers the read to first instance access,
-        so each per-request validator picks up the live values once.
+        Reads the cached ``OIDCSettings`` snapshot — itself backed by
+        ``functools.lru_cache`` invalidated on ``setting_changed`` —
+        and delegates to a process-level cache keyed on the snapshot.
+        Two validator instances under the same settings receive the
+        identical dict (no per-instance copy); a settings flip
+        produces a fresh ``OIDCSettings`` instance, so the lru_cache
+        misses and rebuilds.
 
-        The "groups" → "profile" binding stays here too: it must
-        accompany the EVE-claim bindings or DOT's ``get_oidc_claims``
-        filters our claim out before it reaches userinfo / id_token.
+        The "groups" → "profile" binding lives here alongside the
+        EVE-claim bindings: DOT's ``get_oidc_claims`` filters claims
+        by this map, so any claim missing from it never reaches
+        userinfo / id_token.
         """
-        scopes: dict[str, str] = OAuth2Validator.oidc_claim_scope.copy()
-        scopes["groups"] = "profile"
-        settings = OIDCSettings.from_django()
-        scopes.update(
-            {
-                f"{settings.eve_claim_prefix}{n}": settings.eve_claim_scope
-                for n in _EVE_CLAIM_NAMES
-            }
-        )
-        return scopes
+        return _build_oidc_claim_scope(OIDCSettings.from_django())
 
     @staticmethod
     def _enforce_policy(request, client) -> bool:
