@@ -93,6 +93,12 @@ myauth/
    ```python
    from pathlib import Path
 
+   # Per-app PKCE-резолвер. DOT не импортирует это значение по
+   # dotted-path строке — присваивайте сам callable. Импорт идёт из
+   # лёгкого модуля, безопасного на этапе загрузки settings (до
+   # ``apps.populate()``).
+   from allianceauth_oidc.pkce import per_app_pkce_required
+
    if (
        "allianceauth_oidc" in INSTALLED_APPS
        and "oauth2_provider" in INSTALLED_APPS
@@ -108,7 +114,7 @@ myauth/
                "email": "Registered email",
                "profile": "Main Character affiliation and Auth groups",
            },
-           "PKCE_REQUIRED": True,
+           "PKCE_REQUIRED": per_app_pkce_required,
            "ROTATE_REFRESH_TOKEN": True,
            "REFRESH_TOKEN_REUSE_PROTECTION": True,
            "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
@@ -146,6 +152,36 @@ myauth/
 > <a href="{% url 'auth_sso_login' %}{% if request.GET.next %}?next={{ request.GET.next | urlencode }}{% endif %}"></a>
 > ```
 
+## Обновление с предыдущей версии
+
+Свежие установки идут по [инструкции «Установка»](#установка) — оговорки про порядок шагов
+ниже к ним не относятся. Этот раздел — для операторов с живыми OAuth-приложениями, которые
+переезжают на новую версию.
+
+### Поле per-app PKCE (`pkce_required`)
+
+`OAUTH2_PROVIDER['PKCE_REQUIRED']` сменил тип с boolean на callable; новая data-миграция
+заполняет `AllianceAuthApplication.pkce_required` значением прежней глобальной настройки.
+
+**Выполняйте шаги строго в этом порядке:**
+
+1. `pip install -U allianceauth-oidc-provider-eveo7` — `local.py` пока не трогаем.
+2. `python manage.py migrate` — **оставьте `OAUTH2_PROVIDER['PKCE_REQUIRED']` в прежнем
+   boolean** на момент запуска миграции. Data-шаг читает глобальную настройку в run-time и
+   проставляет это значение всем существующим приложениям, поведение в боевом режиме не
+   меняется.
+3. Правка `myauth/settings/local.py`: замените boolean-значение `PKCE_REQUIRED` на callable
+   из [шага 3 установки](#установка). Дальше — per-app через Django admin.
+4. Перезапуск Auth (`supervisorctl restart myauth:` или ваш супервайзер).
+5. *По желанию:* живой долгоживущий процесс, у которого уже закэширован старый
+   `OAUTH2_PROVIDER`, можно подтянуть без полного рестарта вызовом `oauth2_settings.reload()`.
+
+Если шаги 2 и 3 выполнены в обратном порядке — т.е. на момент `migrate` уже стоит callable —
+data-шаг это видит, переключается в RFC 9700 secure-by-default режим и принудительно ставит
+`pkce_required=True` всем существующим приложениям. Откат — поправить нужные приложения в
+Django admin вручную. Соответствующее stderr-предупреждение описано в разделе
+[Эксплуатация → Per-app PKCE](#per-app-pkce).
+
 ## Конфигурация
 
 В предыдущем разделе уже есть готовый сниппет. Этот раздел — попунктная справка для тонкой
@@ -167,7 +203,7 @@ myauth/
 | `OAUTH2_VALIDATOR_CLASS` | `"allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"` | **Обязательно.** Реализует трёхслойную политику и AA-специфичные claim'ы. |
 | `APPLICATION_ADMIN_CLASS` | `"allianceauth_oidc.admin.ApplicationAdmin"` | **Обязательно.** AA-aware админка для нашей модели `Application`. |
 | `SCOPES` | `{"openid": "...", "email": "...", "profile": "..."}` | **Обязательно.** Какие scope-ы показывать на consent-экране. Строки — это user-facing метки. |
-| `PKCE_REQUIRED` | `True` | Рекомендуется (RFC 9700). Отключайте только если контролируете все клиенты и они умеют PKCE. |
+| `PKCE_REQUIRED` | `per_app_pkce_required` (callable, импорт из `allianceauth_oidc.pkce`) | Per-app override, читается из `AllianceAuthApplication.pkce_required`. Новые приложения получают `True` (RFC 9700); существующие — то значение, что было в глобальной настройке на момент миграции. Неизвестный `client_id` сваливается в `True` и пишется в лог как `WARNING`. Конфигурируется через Django admin. **Внимание: значение должно быть ссылкой на функцию, а не dotted-path строкой — DOT не импортирует это значение автоматически.** |
 | `ROTATE_REFRESH_TOKEN` | `True` | Рекомендуется. На каждом использовании выпускает свежий refresh-токен; старый аннулируется. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Рекомендуется. Защита от replay'я по RFC 6819 §5.2.2.3 — refresh-токен, предъявленный дважды, отзывает всё семейство токенов. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: короче TTL access-токена ⇒ RP вынуждены чаще ходить за refresh (быстрее реагирует на отзыв, больше нагрузки на token endpoint); длиннее ⇒ медленнее распространение отзыва, но трафика меньше. |
@@ -264,6 +300,16 @@ def forward_to_siem(sender, *, app, user, request, body, **kwargs):
 Не наследуйтесь от `TokenView` ради этого — сигнал и есть документированная точка интеграции,
 он переживает bump'ы DOT, которые меняют внутренности view'хи.
 
+### Поля приложения
+
+Помимо схемы DOT'овского `AbstractApplication`, `AllianceAuthApplication` добавляет:
+
+- `states` (M2M) и `groups` (M2M) — whitelist доступа; пусто = открыто для всех.
+- `active` — `is_usable()` возвращает это значение; деактивированное приложение не выдаёт коды.
+- `debug_mode` — per-app флаг повышенного уровня логов (см. *Debug-логи*).
+- `pkce_required` — per-app форсирование PKCE; читается через
+  `pkce.per_app_pkce_required` (делегирует в `AccessPolicy.pkce_required`).
+
 ## Эксплуатация
 
 ### Сервисные команды
@@ -291,6 +337,37 @@ python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
 
 `create_app` ещё пишет запись в Django admin `LogEntry` — действие сразу видно в истории
 `/admin/` без правок в коде. Деструктивные команды логируются на `INFO` / `WARNING`.
+
+### Per-app PKCE
+
+`AllianceAuthApplication.pkce_required` — per-app boolean, переключается через Django admin
+(колонка в changelist'е, чекбокс на форме редактирования, list filter). DOT читает значение на
+каждом authorize-запросе через callable `per_app_pkce_required`, прописанный в
+`OAUTH2_PROVIDER`.
+
+- **Новые приложения** по умолчанию `True` (RFC 9700, secure-by-default).
+- **Существующие приложения после апгрейда** заполняются миграцией значением прошлой глобальной
+  настройки `OAUTH2_PROVIDER['PKCE_REQUIRED']`. Если был глобальный `False` — все строки получат
+  `False`; если `True` — все строки получат `True`. Дальше включайте/отключайте per-app через
+  admin.
+- **Неизвестный `client_id`** (нет совпадения среди зарегистрированных приложений) даёт `True` с
+  записью `WARNING` в лог — аномальный трафик сразу заметен в audit'е.
+- **Кэш не используется** — каждый authorize-запрос делает один SELECT, ограниченный одним
+  столбцом `pkce_required`.
+
+> **Переключение `pkce_required` не влияет на уже выпущенные authorization-коды.** Код несёт
+> PKCE-контракт момента выпуска; обмен на токен проверяет тот же контракт. Если оператор переключает
+> флаг во время идущего flow — это не делает уже выпущенный код задним числом ни безопаснее, ни
+> уязвимее.
+>
+> **Предупреждение миграции про callable global.** Если `manage.py migrate` пишет в stderr
+> `OAUTH2_PROVIDER['PKCE_REQUIRED'] is callable; backfilling pkce_required=True (RFC 9700 ...)`,
+> значит в `local.py` уже был задан кастомный resolver, **либо** вы заменили `PKCE_REQUIRED` на
+> callable `per_app_pkce_required` до запуска migrate (правильный порядок —
+> в разделе [Обновление с предыдущей версии](#обновление-с-предыдущей-версии)). В любом случае
+> миграция не может безопасно вызвать callable построчно, поэтому всем существующим приложениям
+> проставляется `True`, а callable сохраняется нетронутым. После миграции пройдитесь по
+> приложениям через admin и поправьте per-app значения.
 
 ### Debug-логи
 

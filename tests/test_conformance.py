@@ -25,6 +25,7 @@ import os
 
 from jwcrypto import jwk, jwt
 
+from ._factories import make_app
 from ._oidc_testcase import REDIRECT_URI, SCOPE_OPENID, OIDCTestCase
 
 REQUIRED_DISCOVERY_KEYS = frozenset(
@@ -284,8 +285,14 @@ class TestPKCEFlow(OIDCTestCase):
 
     def test_pkce_s256_round_trip(self):
         """
-        Happy path: with PKCE_REQUIRED=False, a client opting into S256 PKCE
-        still gets a working code + verifier exchange.
+        Happy path: a client opting into S256 PKCE still gets a working
+        code + verifier exchange.
+
+        With per-app PKCE the shared fixture has ``pkce_required=False``
+        (so non-PKCE flows in other modules keep working), but a client
+        sending ``code_challenge`` regardless still drives the full
+        verifier round-trip — DOT enforces PKCE whenever the
+        authorize-time challenge is present.
         """
         verifier, challenge = self._make_verifier_and_challenge()
         self.grant_oidc_access(self.user1)
@@ -341,3 +348,100 @@ class TestPKCEFlow(OIDCTestCase):
             body.get("error"),
             {"invalid_grant", "invalid_request"},
         )
+
+
+class TestPerAppPkceRequired(OIDCTestCase):
+    """
+    Per-app ``pkce_required`` override exercised over the HTTP authorize
+    surface.
+
+    These tests build dedicated ``make_app(pkce_required=...)`` fixtures
+    so the shared OIDCTestCase fixture (``pkce_required=False``) stays
+    isolated and other modules' assumptions are not affected.
+    """
+
+    def _authorize_no_challenge(self, *, client_id: str, state: str):
+        return self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state=state,
+            extra={"client_id": client_id},
+        )
+
+    def test_pkce_required_per_app_strict_no_challenge(self):
+        """
+        Fixture ``pkce_required=True``; authorize without ``code_challenge``
+        must fail (DOT redirects with ``error=invalid_request``).
+        """
+        creds = make_app(owner=self.user1, pkce_required=True)
+        self.grant_oidc_access(self.user1)
+        resp = self._authorize_no_challenge(
+            client_id=creds.client_id, state="pkce-strict"
+        )
+        # DOT for missing PKCE returns either a 302 with the error
+        # encoded in the redirect, or a 400 with the error in the body.
+        # Accept both shapes.
+        self.assertIn(resp.status_code, (302, 400))
+        body = resp.content.decode("utf-8") + str(resp.headers)
+        self.assertIn("invalid_request", body)
+
+    def test_pkce_required_per_app_lenient_no_challenge(self):
+        """
+        Fixture ``pkce_required=False``; authorize without
+        ``code_challenge`` must succeed (302 redirect carrying ``code=``).
+        """
+        creds = make_app(
+            owner=self.user1, pkce_required=False, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+        resp = self._authorize_no_challenge(
+            client_id=creds.client_id, state="pkce-lenient"
+        )
+        self.assertEqual(302, resp.status_code)
+        location = resp.headers["Location"]
+        self.assertIn("code=", location)
+        self.assertNotIn("error=", location)
+
+    def test_pkce_required_with_method_plain_round_trip(self):
+        """
+        RFC 7636 §4.2 ``code_challenge_method=plain``: the verifier is
+        the challenge verbatim. With ``pkce_required=True`` this still
+        round-trips because the challenge is supplied.
+        """
+        verifier = _b64url(os.urandom(32))
+        challenge = verifier  # plain method: challenge == verifier
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="pkce-plain",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "plain",
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        location = resp.headers["Location"]
+        self.assertIn("code=", location)
+        # Extract the code and exchange it.
+        from urllib.parse import parse_qs, urlparse
+
+        code = parse_qs(urlparse(location).query)["code"][0]
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+                "code_verifier": verifier,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code)
+        body = json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)

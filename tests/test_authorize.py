@@ -11,7 +11,7 @@ from allianceauth.authentication.models import State
 from django.conf import settings
 from django.shortcuts import resolve_url
 
-from ._factories import make_character, make_user
+from ._factories import make_app, make_character, make_user
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
@@ -216,3 +216,133 @@ class TestAuthorizeGate(OIDCTestCase):
         self.assertAuthorizePage(
             response, self.oauth_app, ["openid", "profile"]
         )
+
+
+class TestPkceInteractionWithOtherGates(OIDCTestCase):
+    """
+    Pin the dispatch order between PKCE and the other authorize-gates.
+
+    PKCE is one of several gates around /o/authorize/. These tests
+    confirm:
+
+    1. State / group whitelist denial wins over a PKCE check (the
+       authorize view runs the policy gate in ``dispatch`` *before*
+       DOT inspects the PKCE challenge).
+    2. ``active=False`` denial wins over a successful PKCE challenge
+       (``is_usable`` runs first; an inactive app cannot issue codes
+       even with a perfect PKCE round-trip).
+    3. Toggling ``pkce_required`` mid-flow on the admin form does NOT
+       affect an already-issued authorization code (the code carries
+       its issuance-time PKCE contract through to token-exchange).
+    """
+
+    def test_state_group_denial_wins_over_pkce_check(self):
+        # App restricted to "Blue" state; user1 is "Member" → denied at
+        # the policy stage, not at the PKCE stage.
+        creds = make_app(owner=self.user1, pkce_required=True, states=["Blue"])
+        self.grant_oidc_access(self.user1)
+        response = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="state-vs-pkce",
+            extra={"client_id": creds.client_id},
+        )
+        # ``assertDeniedApp`` checks the rendered denial page (200 with
+        # the app name), not a PKCE-related error.
+        self.assertDeniedApp(response, self.user1, creds.app)
+
+    def test_active_false_wins_over_pkce_required(self):
+        import hashlib
+        import os
+        from base64 import urlsafe_b64encode
+
+        creds = make_app(owner=self.user1, pkce_required=True, active=False)
+        self.grant_oidc_access(self.user1)
+        verifier = (
+            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+        )
+        challenge = (
+            urlsafe_b64encode(
+                hashlib.sha256(verifier.encode("ascii")).digest()
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        # Send a perfectly valid PKCE challenge — the active=False gate
+        # must still reject the request.
+        response = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="active-vs-pkce",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        # ``is_usable=False`` short-circuits before any code is issued.
+        # DOT may render the consent page with an error, redirect with
+        # an error, or 400 — assert "no code anywhere".
+        body = response.content.decode("utf-8", errors="ignore") + str(
+            response.headers
+        )
+        self.assertNotIn("code=", body[:2048])
+
+    def test_admin_toggle_does_not_affect_in_flight_code(self):
+        import hashlib
+        import json
+        import os
+        from base64 import urlsafe_b64encode
+        from urllib.parse import parse_qs, urlparse
+
+        creds = make_app(
+            owner=self.user1,
+            pkce_required=True,
+            skip_authorization=True,
+        )
+        self.grant_oidc_access(self.user1)
+
+        verifier = (
+            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+        )
+        challenge = (
+            urlsafe_b64encode(
+                hashlib.sha256(verifier.encode("ascii")).digest()
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="race-issue",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+        # Operator flips the flag to False mid-flight (e.g. via admin).
+        # The previously-issued code retains its strict-PKCE contract.
+        creds.app.refresh_from_db()
+        creds.app.pkce_required = False
+        creds.app.save()
+
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+                "code_verifier": verifier,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code)
+        body = json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)

@@ -14,6 +14,40 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Added
+
+- Per-app PKCE override via the new `AllianceAuthApplication.pkce_required`
+  boolean. New applications default to `True` (RFC 9700 secure-by-default);
+  existing rows are backfilled from the previous global value at migration
+  time, preserving live behaviour. Unknown `client_id` falls back to `True`
+  with a logged warning (fail-safe to strict). Configurable via Django
+  admin (changelist column, edit-form checkbox, list filter).
+
+### Changed
+
+- `OAUTH2_PROVIDER['PKCE_REQUIRED']` now points at a callable
+  (`per_app_pkce_required`), which delegates to
+  `AccessPolicy.pkce_required` in `security.py`. The callable lives in
+  the lightweight `allianceauth_oidc.pkce` module so it is safe to
+  import from Django settings (which load before `apps.populate()`).
+
+> ⚠️ **Configuration change**: `OAUTH2_PROVIDER['PKCE_REQUIRED']` semantics
+> changed from a boolean to a callable. Existing operator settings that
+> use `True`/`False` continue to work but no longer match the recommended
+> configuration shown in the README. Update to import
+> `per_app_pkce_required` from `allianceauth_oidc.pkce` and assign it as
+> the value to take advantage of per-app overrides. If running migrations
+> against a long-lived process, call `oauth2_settings.reload()` to refresh
+> DOT's cached descriptor; new processes pick up the change automatically.
+>
+> ⚠️ **Upgrade ordering**: run `manage.py migrate` **before** swapping
+> `OAUTH2_PROVIDER['PKCE_REQUIRED']` from the previous boolean to the
+> `per_app_pkce_required` callable. The migration's data step reads the
+> previous global at runtime; the reverse order causes every existing
+> app to be force-flipped to `pkce_required=True` (RFC 9700 fail-safe).
+> The full upgrade recipe is in the `Upgrading from a previous release`
+> section of the README.
+
 ## [0.1.0b4] - 2026-05-06
 
 ### Changed

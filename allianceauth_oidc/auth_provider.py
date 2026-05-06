@@ -38,6 +38,18 @@ _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
 # the validator class.
 _DEFAULT_MAX_GROUPS_IN_CLAIM: Final[int] = 256
 
+
+# NOTE: ``per_app_pkce_required`` lives in ``allianceauth_oidc.pkce``,
+# not here. Operators must assign the callable to
+# ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` from inside their settings
+# module, which Django evaluates BEFORE ``apps.populate()``. Importing
+# from this module at settings-load time fails with
+# ``AppRegistryNotReady`` because ``auth_provider`` transitively
+# imports ``oauth2_provider.oauth2_validators`` → DOT's
+# ``AbstractApplication`` model class definition. The lighter
+# ``allianceauth_oidc.pkce`` module imports only ``DEFAULT_POLICY``
+# from ``security`` and is safe to import from settings.
+
 # AA-specific "groups" claim — emitted by ``ClaimsBuilder._groups``
 # AND bound under the ``profile`` scope inside
 # ``_build_oidc_claim_scope``. Pinned in one place so a future rename

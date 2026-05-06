@@ -37,7 +37,7 @@ class TestMultiAppIsolation(OIDCTestCase):
         # Second app belonging to the same owner. Different client_id /
         # client_secret — these are the OAuth client identity boundary.
         self.app_b, self.app_b_id, self.app_b_secret = make_app(
-            owner=self.user1
+            owner=self.user1, pkce_required=False
         )
 
     def _issue_token_for_app1(self) -> dict:

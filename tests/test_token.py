@@ -325,3 +325,81 @@ class TestTokenPolicyGuards(OIDCTestCase):
             self.assertTrue(qs["error"][0])
         else:
             self.assertNotEqual(302, resp.status_code)
+
+
+class TestPkceRequiredRefreshFlow(OIDCTestCase):
+    """
+    Per-app ``pkce_required=True`` must NOT block refresh-token grants.
+
+    DOT only enforces PKCE at the authorize endpoint; the issued
+    code carries the verifier contract through to token-exchange.
+    Refresh requests do not present a PKCE verifier and must succeed
+    on their existing refresh_token alone.
+    """
+
+    def test_pkce_required_does_not_block_refresh(self):
+        import hashlib
+        import os
+        from base64 import urlsafe_b64encode
+
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+
+        verifier = (
+            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+        )
+        challenge = (
+            urlsafe_b64encode(
+                hashlib.sha256(verifier.encode("ascii")).digest()
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+
+        # Drive the authorize → code path with the verifier.
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="pkce-refresh",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        from urllib.parse import parse_qs, urlparse
+
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+                "code_verifier": verifier,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code)
+        body = json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn("refresh_token", body)
+
+        refresh_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "refresh_token": body["refresh_token"],
+            },
+        )
+        self.assertEqual(200, refresh_resp.status_code)
+        refreshed = json.loads(refresh_resp.content.decode("utf-8"))
+        self.assertIn("access_token", refreshed)

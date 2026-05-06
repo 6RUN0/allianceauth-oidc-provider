@@ -67,6 +67,7 @@ class AppLike(Protocol):
     debug_mode: Any
     states: Any
     groups: Any
+    pkce_required: Any
 
 
 class DenyReason(str, Enum):
@@ -177,6 +178,44 @@ class AccessPolicy:
         raise PermissionDenied(
             f"OIDC access denied (reason={decision.deny_reason})"
         )
+
+    def pkce_required(self, client_id: str) -> bool:
+        """
+        Return whether PKCE is required for the application identified
+        by ``client_id``.
+
+        Looks up the :class:`AllianceAuthApplication` row keyed by
+        ``client_id`` and returns its ``pkce_required`` flag. When no
+        row matches, logs a warning and returns ``True`` (fail-safe to
+        strict): an unknown client must always take the strict path.
+        The query is bounded to a single column via
+        ``.only("pkce_required")`` because this hook runs on every
+        authorize / token request.
+
+        Shape asymmetry vs. ``decide`` / ``is_allowed`` / ``enforce``:
+        those methods take pre-loaded ``(user, app)`` objects because
+        their callers (the authorize view, the validators) have already
+        resolved the application. ``pkce_required`` instead takes a
+        raw ``client_id`` and owns the ORM lookup itself, because DOT's
+        ``is_pkce_required(client_id, request)`` call site does not
+        provide a loaded ``App``. Owning the resolution here keeps the
+        adapter (``auth_provider.per_app_pkce_required``) trivial; the
+        alternative — loading the app in the adapter — would just shift
+        the same lookup one frame up without testability gain.
+        """
+        from .models import AllianceAuthApplication
+
+        try:
+            app = AllianceAuthApplication.objects.only("pkce_required").get(
+                client_id=client_id
+            )
+        except AllianceAuthApplication.DoesNotExist:
+            self.log.warning(
+                "OIDC PKCE: unknown client_id=%r → fail-safe True",
+                client_id,
+            )
+            return True
+        return bool(app.pkce_required)
 
     # ---- internal building blocks (raise-form) --------------------
 

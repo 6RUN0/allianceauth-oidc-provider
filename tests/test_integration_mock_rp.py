@@ -98,6 +98,7 @@ class MockRelyingPartyFlow(LiveServerTestCase):
             owner=self.user,
             redirect_uri=REDIRECT_URI,
             skip_authorization=True,
+            pkce_required=False,
         )
 
     # ------------------------------------------------------------------

@@ -470,8 +470,14 @@ class OIDCTestCase(TestCase):
             "allianceauthapplication",
         )
 
+        # Shared fixture defaults to pkce_required=False so the broad
+        # cross-feature suites (userinfo, token, audit, logging, …) keep
+        # exercising their actual subject without manufacturing a PKCE
+        # verifier on every authorize. Tests that target PKCE behaviour
+        # build their own ``make_app(pkce_required=True)`` fixture (see
+        # ``test_conformance.py``).
         cls.oauth_app, cls.oauth_id, cls.oauth_secret = make_app(
-            owner=cls.user1
+            owner=cls.user1, pkce_required=False
         )
 
         cls.factory = RequestFactory()

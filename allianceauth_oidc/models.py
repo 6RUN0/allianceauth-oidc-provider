@@ -36,6 +36,13 @@ class AllianceAuthApplication(AbstractApplication):
             "Enables additional OIDC debug logging (INFO). Secrets/tokens are always redacted/masked according to settings."  # noqa: E501
         ),
     )
+    pkce_required = models.BooleanField(
+        default=True,
+        verbose_name=_("PKCE required"),
+        help_text=_(
+            "If enabled, this application must use PKCE on the authorization endpoint (RFC 7636 / 9700). Disable only for known-incompatible clients; new applications default to enabled."  # noqa: E501
+        ),
+    )
 
     @override
     def is_usable(self, request):

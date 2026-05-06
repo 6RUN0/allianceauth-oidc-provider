@@ -223,3 +223,70 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
             for v in kw_body.values():
                 if isinstance(v, str):
                     self.assertNotIn(token_body[token_kind], v)
+
+    def test_oidc_token_issued_fires_with_pkce_off(self):
+        """
+        Audit signal must dispatch on a non-PKCE token exchange — the
+        existing shared fixture has ``pkce_required=False``, so a plain
+        run_code_flow exercises this path directly.
+        """
+        self.grant_oidc_access(self.user1)
+        body = self.run_code_flow(self.user1, state="signal-pkce-off")
+        self.assertIn("access_token", body)
+        self.assertEqual(1, len(self.captured))
+
+    def test_oidc_token_issued_fires_with_pkce_on(self):
+        """
+        Audit signal must also dispatch when the token was issued under
+        a strict-PKCE contract.
+        """
+        import hashlib
+        import json
+        import os
+        from base64 import urlsafe_b64encode
+        from urllib.parse import parse_qs, urlparse
+
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+
+        verifier = (
+            urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+        )
+        challenge = (
+            urlsafe_b64encode(
+                hashlib.sha256(verifier.encode("ascii")).digest()
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope="openid",
+            state="signal-pkce-on",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+                "code_verifier": verifier,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code)
+        body = json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)
+        self.assertEqual(1, len(self.captured))

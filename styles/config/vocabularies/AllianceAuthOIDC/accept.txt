@@ -138,6 +138,14 @@ read-only
 write-only
 debug-mode
 debug_mode
+pkce_required
+per_app_pkce_required
+boolean
+backfilled
+backfills
+backfill
+changelist
+stderr
 state-of-truth
 fixture
 fixtures

@@ -203,6 +203,7 @@ def make_app(
     groups: list[str] | None = None,
     active: bool = True,
     debug_mode: bool = False,
+    pkce_required: bool = True,
     redirect_uri: str = DEFAULT_REDIRECT_URI,
     skip_authorization: bool = False,
     algorithm: str = "RS256",
@@ -245,6 +246,7 @@ def make_app(
         algorithm=algorithm,
         active=active,
         debug_mode=debug_mode,
+        pkce_required=pkce_required,
     )
     for state_name in states or []:
         app.states.add(State.objects.get(name=state_name))

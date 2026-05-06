@@ -11,6 +11,16 @@ from pathlib import Path  # noqa: E402
 
 from allianceauth.project_template.project_name.settings.base import *  # noqa: E402, F403
 
+# NOTE: DOT does NOT auto-import PKCE_REQUIRED from a dotted-path
+# string — `PKCE_REQUIRED` is not in DOT's IMPORT_STRINGS tuple
+# (oauth2_provider/settings.py). Assign the function object directly;
+# DOT's is_pkce_required (oauth2_validators.py) detects callables and
+# dispatches per-request. Import from ``allianceauth_oidc.pkce`` (not
+# ``auth_provider``) because settings are loaded before
+# ``apps.populate()`` and ``auth_provider`` transitively imports DOT
+# model classes.
+from allianceauth_oidc.pkce import per_app_pkce_required  # noqa: E402
+
 SITE_URL = "https://example.com"
 CSRF_TRUSTED_ORIGINS = [SITE_URL]
 
@@ -66,7 +76,7 @@ OAUTH2_PROVIDER = {
     ).read_text(),
     "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
     "SCOPES": {"openid": "openid", "email": "email", "profile": "profile"},
-    "PKCE_REQUIRED": False,
+    "PKCE_REQUIRED": per_app_pkce_required,
     "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
     "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
     "REFRESH_TOKEN_EXPIRE_SECONDS": 7 * 24 * 60 * 60,

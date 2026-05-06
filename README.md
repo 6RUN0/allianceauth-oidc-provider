@@ -95,6 +95,12 @@ edits below to those.
    ```python
    from pathlib import Path
 
+   # Per-app PKCE resolver. DOT does NOT auto-import this setting —
+   # it must be a callable, not a dotted-path string. The adapter is
+   # imported from a lightweight module that is safe to load before
+   # ``apps.populate()`` (which Django runs after settings).
+   from allianceauth_oidc.pkce import per_app_pkce_required
+
    if (
        "allianceauth_oidc" in INSTALLED_APPS
        and "oauth2_provider" in INSTALLED_APPS
@@ -110,7 +116,7 @@ edits below to those.
                "email": "Registered email",
                "profile": "Main Character affiliation and Auth groups",
            },
-           "PKCE_REQUIRED": True,
+           "PKCE_REQUIRED": per_app_pkce_required,
            "ROTATE_REFRESH_TOKEN": True,
            "REFRESH_TOKEN_REUSE_PROTECTION": True,
            "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
@@ -149,6 +155,34 @@ edits below to those.
 > <a href="{% url 'auth_sso_login' %}{% if request.GET.next %}?next={{ request.GET.next | urlencode }}{% endif %}"></a>
 > ```
 
+## Upgrading from a previous release
+
+Greenfield installs follow [Install](#install) — the ordering caveats below do not apply. This
+section is for operators carrying live OAuth applications across an upgrade.
+
+### Per-app PKCE field (`pkce_required`)
+
+`OAUTH2_PROVIDER['PKCE_REQUIRED']` changed from a boolean to a callable, and a new data
+migration backfills `AllianceAuthApplication.pkce_required` from the previous global value.
+
+**Run the steps in this order:**
+
+1. `pip install -U allianceauth-oidc-provider-eveo7` — do not edit `local.py` yet.
+2. `python manage.py migrate` — **leave `OAUTH2_PROVIDER['PKCE_REQUIRED']` at its previous
+   boolean** while migrate runs. The data step reads the global at runtime and writes that
+   value to every existing app, so live behaviour is preserved across the upgrade.
+3. Edit `myauth/settings/local.py`: replace the boolean `PKCE_REQUIRED` with the callable as
+   shown in [Install step 3](#install). Per-app overrides via Django admin from then on.
+4. Restart Auth (`supervisorctl restart myauth:` or your supervisor's equivalent).
+5. *Optional:* a long-lived process that already imported `OAUTH2_PROVIDER` can pick up the
+   change without a full restart by calling `oauth2_settings.reload()`.
+
+If steps 2 and 3 are run out of order — i.e. the callable is in place when `migrate` runs —
+the data step detects the callable, fails over to RFC 9700 secure-by-default, and force-sets
+every existing app to `pkce_required=True`. Recovery is to flip individual apps back to
+`False` via Django admin. The matching stderr warning is described under
+[Operations → Per-app PKCE](#per-app-pkce).
+
 ## Configuration
 
 The previous section already shows the paste-ready settings block. This section is the per-key
@@ -170,7 +204,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `OAUTH2_VALIDATOR_CLASS` | `"allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"` | **Required.** Implements the three-layer policy and AA-specific claims. |
 | `APPLICATION_ADMIN_CLASS` | `"allianceauth_oidc.admin.ApplicationAdmin"` | **Required.** AA-aware admin for the custom `Application` model. |
 | `SCOPES` | `{"openid": "...", "email": "...", "profile": "..."}` | **Required.** Scopes shown on the consent screen. Strings are user-facing labels. |
-| `PKCE_REQUIRED` | `True` | Recommended per RFC 9700. Disable only if you control all clients and they support PKCE. |
+| `PKCE_REQUIRED` | `per_app_pkce_required` (callable, imported from `allianceauth_oidc.pkce`) | Per-app override resolved from `AllianceAuthApplication.pkce_required`. New apps default to `True` (RFC 9700); existing apps land at the previous global value at migration time. Unknown `client_id` falls back to `True` and is logged at `WARNING`. Configurable through Django admin. **Note: must be assigned as a function reference, not a dotted-path string — DOT does not auto-import this setting.** |
 | `ROTATE_REFRESH_TOKEN` | `True` | Recommended. Mints a fresh refresh token on every use; old one is invalidated. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. |
@@ -267,6 +301,16 @@ def forward_to_siem(sender, *, app, user, request, body, **kwargs):
 Don't extend `TokenView` to do this — the signal is the documented integration point and survives
 DOT version bumps that change view internals.
 
+### Application fields
+
+Beyond DOT's `AbstractApplication` schema, `AllianceAuthApplication` adds:
+
+- `states` (M2M) and `groups` (M2M) — access whitelist; empty = open.
+- `active` — `is_usable()` returns this; deactivated apps cannot issue codes.
+- `debug_mode` — per-app flag escalating log level (see *Debug logging*).
+- `pkce_required` — per-app PKCE enforcement; resolved by
+  `pkce.per_app_pkce_required` (delegates to `AccessPolicy.pkce_required`).
+
 ## Operations
 
 ### Operator commands
@@ -294,6 +338,36 @@ python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
 
 `create_app` writes a Django admin `LogEntry` on success so the action is visible in `/admin/`'s
 history without code changes; the destructive commands log at `INFO` / `WARNING`.
+
+### Per-app PKCE
+
+`AllianceAuthApplication.pkce_required` is a per-app boolean flipped through Django admin (column
+on the changelist, checkbox on the edit form, list filter). DOT consults it on every authorize
+request via the `per_app_pkce_required` callable wired into `OAUTH2_PROVIDER`.
+
+- **New apps** default to `True` per RFC 9700 (secure-by-default).
+- **Existing apps after upgrade** are backfilled from the previous global
+  `OAUTH2_PROVIDER['PKCE_REQUIRED']` at migration time. Migrating from a global `False` lands
+  every existing row at `False`; from a global `True`, every row lands at `True`. Operators opt
+  in/out per-app afterward via admin.
+- **Unknown `client_id`** (none of the registered apps match) falls back to `True` and is logged
+  at `WARNING` so anomalous traffic is visible in the audit log.
+- **No caching layer** — each authorize request reads the row through DOT's per-request hook with
+  a single SELECT bounded to the `pkce_required` column.
+
+> **Toggling `pkce_required` does not affect already-issued authorization codes.** Codes carry
+> their issuance-time PKCE contract; the token-exchange enforces the same contract. An admin
+> toggle while a flow is in progress neither retroactively secures nor retroactively weakens
+> that flow.
+>
+> **Migration warning on a callable global.** If `manage.py migrate` writes
+> `OAUTH2_PROVIDER['PKCE_REQUIRED'] is callable; backfilling pkce_required=True (RFC 9700 ...)`
+> to stderr, your previous `local.py` already defined a custom resolver, **or** you swapped
+> `PKCE_REQUIRED` for the `per_app_pkce_required` callable before running migrate (see
+> [Upgrading from a previous release](#upgrading-from-a-previous-release) for the correct
+> ordering). Either way, the migration cannot evaluate the callable per row safely, so it
+> backfills every existing app to `True` and preserves the callable untouched. Review per-app
+> values via Django admin afterward.
 
 ### Debug logging
 
