@@ -7,7 +7,9 @@ Replaces hand-rolled `setUpTestData` blocks with composable helpers:
     corp_a = make_corp("ABC", alliance=alli1)
     char1 = make_character("alice", corp_a)
     user = make_user("alice", main=char1, alts=[char2], state="Member")
-    app, client_id, secret = make_app(owner=user)
+    creds = make_app(owner=user)              # NamedTuple — see below
+    creds.app, creds.client_id, creds.client_secret  # named access
+    app, client_id, secret = make_app(owner=user)    # legacy unpack still ok
 
 ID-counters start above the range commonly used in hand-written test data
 (>=1000) so a test that wants a specific ID can pick a low number without
@@ -17,6 +19,7 @@ clashing.
 from __future__ import annotations
 
 import itertools
+from typing import NamedTuple
 
 from allianceauth.authentication.models import (
     CharacterOwnership,
@@ -32,6 +35,22 @@ from oauth2_provider.generators import (
     generate_client_secret,
 )
 from oauth2_provider.models import AbstractApplication, get_application_model
+
+
+class AppCredentials(NamedTuple):
+    """
+    What ``make_app`` returns: the persisted application plus the *raw*
+    client credentials needed to drive the token endpoint in tests.
+
+    NamedTuple (not a frozen dataclass) so legacy positional unpacks
+    ``app, client_id, secret = make_app(...)`` keep working — the field
+    order MUST remain ``(app, client_id, client_secret)``.
+    """
+
+    app: AbstractApplication
+    client_id: str
+    client_secret: str
+
 
 # Each model gets its own counter so logs and assertions stay readable
 # (alliance 1xxx, corp 2xxx, char 3xxx, owner_hash 4xxx).
@@ -182,12 +201,16 @@ def make_app(
     algorithm: str = "RS256",
     client_type: str = "confidential",
     grant_type: str = "authorization-code",
-) -> tuple[AbstractApplication, str, str]:
+) -> AppCredentials:
     """
     Create an AllianceAuthApplication owned by ``owner``.
 
-    Returns ``(app, client_id, raw_client_secret)`` so tests can use the raw
-    secret in token requests (the model hashes it on save).
+    Returns an ``AppCredentials`` NamedTuple so tests can either unpack
+    it positionally (``app, client_id, secret = make_app(...)``) or use
+    named attribute access (``creds.client_secret``). The raw client
+    secret is exposed because DOT hashes it on save when
+    ``HASH_CLIENT_SECRET`` is True; tests need the cleartext value to
+    drive the token endpoint.
     """
     client_id = generate_client_id()
     raw_secret = generate_client_secret()
@@ -209,4 +232,6 @@ def make_app(
     for grp_name in groups or []:
         grp, _ = Group.objects.get_or_create(name=grp_name)
         app.groups.add(grp)
-    return app, client_id, raw_secret
+    return AppCredentials(
+        app=app, client_id=client_id, client_secret=raw_secret
+    )
