@@ -45,7 +45,7 @@ sequenceDiagram
     Note over Validator: Layer 2 — re-checks<br/>state/group on exchange
     Validator-->>Token: ok / invalid_grant
     Token->>Validator: save_bearer_token(...)
-    Note over Validator: Layer 3 — last guard;<br/>PermissionDenied -> invalid_grant
+    Note over Validator: Layer 3 — last guard;<br/>PermissionDenied becomes invalid_grant
     Validator-->>RP: 200 access_token + id_token
 ```
 

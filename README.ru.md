@@ -44,7 +44,7 @@ sequenceDiagram
     Note over Validator: Слой 2 — повторная проверка<br/>state/групп при обмене
     Validator-->>Token: ok / invalid_grant
     Token->>Validator: save_bearer_token(...)
-    Note over Validator: Слой 3 — последний guard;<br/>PermissionDenied -> invalid_grant
+    Note over Validator: Слой 3 — последний guard;<br/>PermissionDenied становится invalid_grant
     Validator-->>RP: 200 access_token + id_token
 ```
 
