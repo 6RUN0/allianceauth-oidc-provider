@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from django.dispatch import Signal
-from django.http import HttpRequest
 from typing_extensions import NotRequired
 
 from .constants import AUDIT_DISPATCH_UID
-from .security import TokenLike
+
+if TYPE_CHECKING:
+    from django.http import HttpRequest
+
+    from .security import TokenLike
 
 logger = logging.getLogger(f"extensions.{__name__}")
 

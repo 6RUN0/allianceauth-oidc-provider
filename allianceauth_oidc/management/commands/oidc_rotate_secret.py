@@ -10,6 +10,7 @@ from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from oauth2_provider.generators import generate_client_secret
 from oauth2_provider.models import get_application_model
+from typing_extensions import override
 
 from ._format import FORMAT_CHOICES, render_rows
 
@@ -31,6 +32,7 @@ class Command(BaseCommand):
         "Regenerate the client_secret of an OIDC application."
     )
 
+    @override
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--client-id", required=True)
         parser.add_argument(
@@ -44,6 +46,7 @@ class Command(BaseCommand):
             choices=FORMAT_CHOICES,
         )
 
+    @override
     def handle(self, *args: Any, **options: Any) -> None:
         Application = get_application_model()
         try:

@@ -11,9 +11,11 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Iterable, Sequence
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
 # Public-by-convention; commands import these names.
 __all__ = ["FORMAT_CHOICES", "OutputFormat", "render_rows"]

@@ -3,6 +3,7 @@
 from django.apps import AppConfig
 from django.utils.text import format_lazy
 from django.utils.translation import gettext_lazy as _
+from typing_extensions import override
 
 from . import __version__
 
@@ -21,6 +22,7 @@ class AllianceAuthOIDC(AppConfig):
         version=__version__,
     )
 
+    @override
     def ready(self):
         """Wire OIDC signals + cache invalidators on app load."""
         # Explicit connect calls — see ``signals.connect_default_receiver``

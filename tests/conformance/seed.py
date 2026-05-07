@@ -115,7 +115,15 @@ def _ensure_user(main_char: EveCharacter):
     User = get_user_model()
     try:
         user = AuthUtils.create_user(USERNAME)
-    except Exception:
+    except Exception:  # noqa: BLE001
+        # Create-or-fetch: ``AuthUtils.create_user`` (Alliance Auth)
+        # raises a variety of exceptions on duplicate
+        # (``IntegrityError`` typically, but the precise type is not
+        # part of the AA public contract and has shifted across
+        # versions). We accept any failure and fall through to the
+        # ``get`` — if the user genuinely cannot be resolved, the
+        # ``get`` itself raises ``DoesNotExist`` and the fixture
+        # setup aborts loudly.
         user = User.objects.get(username=USERNAME)
     user.set_password(PASSWORD)
     user.email = "conformance@example.test"

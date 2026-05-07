@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import fnmatch
 import json
-import pathlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import pathlib
 
 
 def _matches_any(name: str, patterns: set[str]) -> bool:

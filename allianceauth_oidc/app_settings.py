@@ -109,20 +109,20 @@ class OIDCSettings:
         if self.log_mask_head < 0:
             msg = (
                 "ALLIANCEAUTH_OIDC_LOG_MASK_HEAD must be >=0, "
-                + f"got {self.log_mask_head}"
+                f"got {self.log_mask_head}"
             )
             raise ValueError(msg)
         if self.log_mask_tail < 0:
             msg = (
                 "ALLIANCEAUTH_OIDC_LOG_MASK_TAIL must be >=0, "
-                + f"got {self.log_mask_tail}"
+                f"got {self.log_mask_tail}"
             )
             raise ValueError(msg)
         if self.portrait_size not in EVE_PORTRAIT_VALID_SIZES:
             valid = sorted(EVE_PORTRAIT_VALID_SIZES)
             msg = (
                 f"ALLIANCEAUTH_OIDC_PORTRAIT_SIZE must be one of {valid}, "
-                + f"got {self.portrait_size}"
+                f"got {self.portrait_size}"
             )
             raise ValueError(msg)
 

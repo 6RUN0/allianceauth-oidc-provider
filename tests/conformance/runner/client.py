@@ -17,15 +17,17 @@ from __future__ import annotations
 
 import json
 import logging
-import pathlib
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 import urllib3
 
 from .config import SUITE_URL, ModuleResult
 from .plan_config import build_plan_config
+
+if TYPE_CHECKING:
+    import pathlib
 
 # The suite's TLS cert is self-signed for localhost.emobix.co.uk; we
 # verify hostnames manually but skip CA verification to keep the

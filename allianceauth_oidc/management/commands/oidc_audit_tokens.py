@@ -12,6 +12,7 @@ from oauth2_provider.models import (
     get_access_token_model,
     get_application_model,
 )
+from typing_extensions import override
 
 from ._format import FORMAT_CHOICES, render_rows
 
@@ -31,6 +32,7 @@ class Command(BaseCommand):
         "List active OIDC access tokens with optional filters."
     )
 
+    @override
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument(
             "--username",
@@ -51,6 +53,7 @@ class Command(BaseCommand):
             choices=FORMAT_CHOICES,
         )
 
+    @override
     def handle(self, *args: Any, **options: Any) -> None:
         AccessToken = get_access_token_model()
         qs = AccessToken.objects.select_related("user", "application")

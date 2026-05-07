@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, QueryDict
 from django.shortcuts import render
@@ -22,7 +22,6 @@ from oauth2_provider.views.base import AuthorizationView
 from oauth2_provider.views.mixins import OAuthLibMixin
 from typing_extensions import assert_never
 
-from .models import AllianceAuthApplication
 from .security import (
     DEFAULT_POLICY,
     AllowedDecision,
@@ -33,6 +32,9 @@ from .security import (
 )
 from .signals import OIDCAuditBody, oidc_token_issued
 from .utils import app_log, build_oidc_debug_meta
+
+if TYPE_CHECKING:
+    from .models import AllianceAuthApplication
 
 logger = logging.getLogger(f"extensions.{__name__}")
 

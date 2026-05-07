@@ -57,7 +57,25 @@ target-version = "py310"
 extend-exclude = [ ".tox", ".venv", "htmlcov", "dist", "build" ]
 
 [tool.ruff.lint]
-select = [ "E", "F", "I", "B", "UP", "N", "SIM", "C4", "PIE", "RUF", "D" ]
+select = [
+    # Baseline (PEP-8 + pyflakes + isort + bugbear + modernization
+    # + naming + simplifier + comprehensions + comprehension-anti-patterns
+    # + ruff-specifics + pydocstyle).
+    "E", "F", "I", "B", "UP", "N", "SIM", "C4", "PIE", "RUF", "D",
+    # Layer 2 hardening — Django/logging/exception/path/type-checking
+    # patterns. Each group below was added after audit and lints clean
+    # against the current code:
+    "DJ",   # flake8-django (NullField, missing __str__, Meta ordering)
+    "LOG",  # flake8-logging (e.g. logger.exception placement)
+    "G",    # flake8-logging-format (no f-string in log args — kills lazy-formatting safe-logging contract)
+    "RET",  # flake8-return (unnecessary else-after-return etc.)
+    "DTZ",  # flake8-datetimez (naive datetime in a tz-aware Django app)
+    "ISC",  # flake8-implicit-str-concat (bug-prone "..." "..." adjacency)
+    "BLE",  # flake8-blind-except (no `except Exception` without re-raise)
+    "PTH",  # flake8-use-pathlib (os.path → Path)
+    "TC",   # flake8-type-checking (typing-only imports under TYPE_CHECKING)
+    "TID",  # flake8-tidy-imports (banned/relative imports policy)
+]
 # D213 (multi-line summary on second line) is the project's chosen
 # docstring shape. It is mutually exclusive with D212 (summary on the
 # first line), which the pep257 convention enables — so we explicitly
@@ -116,10 +134,30 @@ known-first-party = [ "allianceauth_oidc" ]
 
 [tool.mypy]
 python_version = "3.10"
+plugins = [ "mypy_django_plugin.main" ]
 warn_return_any = true
 warn_unused_configs = true
 warn_redundant_casts = true
 no_implicit_optional = true
+# Strict-mode incremental ramp: each flag below was a deliberate
+# add-on after baseline plus django-stubs plugin landed. Together
+# they raise the floor without requiring code edits — if a future
+# refactor regresses (e.g. an unreachable branch, a stale
+# ``# type: ignore``, an implicit ``None`` return), the
+# typecheck session fails it.
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+extra_checks = true
+enable_error_code = [
+    "redundant-expr",
+    "possibly-undefined",
+    "truthy-bool",
+    "unused-awaitable",
+    "explicit-override",
+]
 # Type-check production code only. Django dynamic attrs (User.profile,
 # setUpTestData ClassVars) need allianceauth-stubs which don't exist.
 exclude = [
@@ -128,6 +166,15 @@ exclude = [
     "build/.*",
     "dist/.*",
 ]
+
+[tool.django-stubs]
+# django-stubs plugin needs a settings module to resolve runtime
+# attributes (``settings.X`` lookups, the active user model, etc.).
+# We point at the test settings — that's the only canonical
+# Django wiring we ship; production deployments configure their
+# own settings on top of Alliance Auth's.
+django_settings_module = "tests.test_settingsAA4"
+strict_settings = false
 
 [[tool.mypy.overrides]]
 module = [
@@ -185,3 +232,49 @@ reportUnannotatedClassAttribute = "none"
 # They are inline-suppressed with `# nosec` where needed; this just trims the
 # scan to the production code.
 exclude_dirs = [ "tests", "allianceauth_oidc/migrations" ]
+
+[tool.coverage.run]
+# Branch coverage catches half-covered ``if`` arms even when the
+# statement-coverage line-count looks complete; an `if x: a else: b`
+# with only the truthy branch tested counts as 100% statement but
+# 50% branch coverage. For a security-adjacent codebase that's the
+# more honest signal.
+branch = true
+source = [ "allianceauth_oidc" ]
+omit = [
+    # Auto-generated; tests check end-state correctness, not migration
+    # body coverage.
+    "allianceauth_oidc/migrations/*",
+    # Tooling shims with no behaviour to cover.
+    "allianceauth_oidc/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# Stale per-line tracebacks from the matrix-test harness shouldn't
+# turn coverage red; the data file is authoritative.
+ignore_errors = true
+# ``exclude_also`` (vs the historical ``exclude_lines``) lets us layer on
+# top of coverage's built-in defaults without redeclaring them.
+exclude_also = [
+    "pragma: no cover",
+    # Type-checking imports never execute at runtime.
+    "if TYPE_CHECKING:",
+    # Abstract methods and explicit not-implemented stubs.
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    # CLI entry-points, not exercised under the django test runner.
+    "if __name__ == .__main__.:",
+    # Defensive guards — present for invariants, not for behaviour.
+    "raise AssertionError",
+    "if self\\.debug:",
+    # ``__repr__`` is debug-only; covering it has no behavioural value.
+    "def __repr__",
+    # ``assert_never(...)`` marks unreachable union exhaustion — the
+    # whole point is that the branch never runs, but coverage still
+    # counts it as missed otherwise.
+    "assert_never\\(",
+    # ``...`` Protocol method bodies are stubs, not behaviour.
+    "\\.\\.\\.",
+]

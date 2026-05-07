@@ -10,8 +10,8 @@ is ``run_plan``; ``cli.main`` is the argparse front-end.
 from __future__ import annotations
 
 import logging
-import pathlib
 import time
+from typing import TYPE_CHECKING
 
 import requests
 
@@ -21,9 +21,13 @@ from .client import (
     run_module,
     wait_for_suite_ready,
 )
-from .config import ModuleResult
 from .filtering import filter_modules
 from .summary import emit_summary, write_summary_json
+
+if TYPE_CHECKING:
+    import pathlib
+
+    from .config import ModuleResult
 
 logger = logging.getLogger(__name__)
 

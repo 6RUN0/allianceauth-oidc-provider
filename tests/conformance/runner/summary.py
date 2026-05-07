@@ -10,10 +10,13 @@ spinning up the suite stack.
 from __future__ import annotations
 
 import json
-import pathlib
 import sys
+from typing import TYPE_CHECKING
 
 from .config import FAIL_RESULTS, PASS_RESULTS, WARN_RESULTS, ModuleResult
+
+if TYPE_CHECKING:
+    import pathlib
 
 
 def _bucket_results(

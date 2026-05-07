@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, NewType, TypedDict
+from typing import TYPE_CHECKING, Any, NewType, TypedDict
 
-from django.http import HttpRequest
 from typing_extensions import Self
 
 from .app_settings import OIDCSettings
-from .security import AppLike
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from django.http import HttpRequest
+
+    from .security import AppLike
 
 __all__ = [
     "OIDCDebugMeta",

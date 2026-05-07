@@ -13,6 +13,7 @@ from oauth2_provider.models import (
     get_access_token_model,
     get_refresh_token_model,
 )
+from typing_extensions import override
 
 from ._format import FORMAT_CHOICES, render_rows
 
@@ -34,6 +35,7 @@ class Command(BaseCommand):
         "Revoke all OAuth2 tokens for a given user."
     )
 
+    @override
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument(
             "--username",
@@ -51,6 +53,7 @@ class Command(BaseCommand):
             choices=FORMAT_CHOICES,
         )
 
+    @override
     def handle(self, *args: Any, **options: Any) -> None:
         User = get_user_model()
         try:
