@@ -98,12 +98,12 @@ def render_rows(
     header = "  ".join(c.ljust(widths[c]) for c in columns)
     sep = "  ".join("-" * widths[c] for c in columns)
     lines = [header, sep]
-    for row in materialised:
-        lines.append(
-            "  ".join(
-                str(_coerce(row.get(c, ""))).ljust(widths[c]) for c in columns
-            )
+    lines.extend(
+        "  ".join(
+            str(_coerce(row.get(c, ""))).ljust(widths[c]) for c in columns
         )
+        for row in materialised
+    )
     return "\n".join(lines)
 
 

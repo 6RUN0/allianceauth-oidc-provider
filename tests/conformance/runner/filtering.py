@@ -100,7 +100,11 @@ def load_expected_failures(path: pathlib.Path) -> dict[str, str]:
     """
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
-        raise ValueError(
+        # Type assertion on the deserialised JSON shape — TypeError per
+        # TRY004 ("if you check the type, raise TypeError"). The
+        # caller (run_plan.py CLI bootstrap) prints the message
+        # verbatim, so keep it descriptive.
+        raise TypeError(
             f"{path}: expected JSON object {{module: reason}}, "
             f"got {type(data).__name__}"
         )

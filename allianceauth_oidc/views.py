@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
 
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, QueryDict
@@ -223,7 +224,7 @@ class TokenView(OAuthLibMixin, View):
         _, headers, body, status = self.create_token_response(request)
         # Access enforcement is handled in the OAuth2 validator before
         # token persistence; here we only emit a safe audit signal.
-        if status == 200:
+        if status == HTTPStatus.OK:
             TokenAudit(
                 request=request, body=body, sender=self.__class__
             ).emit()

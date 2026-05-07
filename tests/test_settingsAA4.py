@@ -32,7 +32,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = "memory://"
 CELERY_RESULT_BACKEND = "cache+memory://"
 
-INSTALLED_APPS += ["allianceauth_oidc", "oauth2_provider"]  # type: ignore[name-defined] # noqa F405
+INSTALLED_APPS += ["allianceauth_oidc", "oauth2_provider"]  # type: ignore[name-defined] # noqa: F405
 
 ROOT_URLCONF = "tests.urls"
 

@@ -159,7 +159,7 @@ class ClaimsBuilder:
         email = getattr(self.user, "email", None)
         if isinstance(email, str):
             email = email.strip() or None
-        return email if email else None
+        return email or None
 
     def _main_character(self) -> object | None:
         profile = getattr(self.user, "profile", None)
@@ -190,7 +190,7 @@ class ClaimsBuilder:
 
     def _name(self) -> str | None:
         name = getattr(self._main_character(), "character_name", None)
-        return name if name else None
+        return name or None
 
     def _groups(self) -> list[str] | None:
         # Sort Django groups so the claim is deterministic across
@@ -214,7 +214,7 @@ class ClaimsBuilder:
             groups_list = groups_list[: self.max_groups]
         if state_name is not None:
             groups_list.append(state_name)
-        return groups_list if groups_list else None
+        return groups_list or None
 
     def _locale(self) -> str | None:
         # ``UserProfile.language`` is a CharField with default="" when
@@ -222,7 +222,7 @@ class ClaimsBuilder:
         # check would leak the empty string as a claim.
         profile = getattr(self.user, "profile", None)
         locale = getattr(profile, "language", None)
-        return locale if locale else None
+        return locale or None
 
     def _eve_claims(self) -> dict[str, Any]:
         # All denormalised on EveCharacter, so a single getattr chain

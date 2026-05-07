@@ -94,6 +94,20 @@ select = [
     "PTH",  # flake8-use-pathlib (os.path → Path)
     "TC",   # flake8-type-checking (typing-only imports under TYPE_CHECKING)
     "TID",  # flake8-tidy-imports (banned/relative imports policy)
+    # Layer 3 hardening — language-level patterns:
+    "A",    # flake8-builtins (no shadowing ``id`` / ``type`` / ``list`` etc.)
+    "FURB", # refurb (modernization patterns complementary to UP)
+    "TRY",  # tryceratops (exception-handling anti-patterns)
+    "PERF", # perflint (try/except in loop, dict.keys()-in-check, etc.)
+    "SLF",  # flake8-self (private-member access from outside class)
+    "ICN",  # flake8-import-conventions (canonical aliases for libs)
+    "PGH",  # pygrep-hooks (blanket-noqa, eval-used safety)
+    # Layer 4 hardening — pylint port + Django framework escape hatches:
+    "ARG",  # flake8-unused-arguments (Django hooks need per-file carve-outs)
+    "PLE",  # pylint errors (genuine bugs)
+    "PLW",  # pylint warnings (suspect patterns)
+    "PLC",  # pylint conventions
+    "PLR",  # pylint refactors (complexity / too-many-X)
 ]
 # D213 (multi-line summary on second line) is the project's chosen
 # docstring shape. It is mutually exclusive with D212 (summary on the
@@ -101,11 +115,31 @@ select = [
 # extend-select D213 and ignore D212.
 extend-select = [ "D213" ]
 ignore = [
-    "B008", # function-call-in-default-argument — common in Django (e.g. timezone.now)
-    "D205", # docformatter and D205 disagree on blank line after summary
-    "D212", # we use D213 (summary on second line); see extend-select above
-    "D401", # imperative mood is subjective for descriptive helpers
+    "B008",    # function-call-in-default-argument — common in Django (e.g. timezone.now)
+    "D205",    # docformatter and D205 disagree on blank line after summary
+    "D212",    # we use D213 (summary on second line); see extend-select above
+    "D401",    # imperative mood is subjective for descriptive helpers
+    "TRY003",  # long ``raise ValueError(...)`` messages are idiomatic in CLI / Django code; a custom exception class per validation site is over-engineering
+    "PLC0415", # function-local imports are intentional: AA-core has heavy import-time side effects, so we lazy-import inside ``ready()`` hooks, signal handlers, and management commands
 ]
+
+[tool.ruff.lint.flake8-self]
+# Django ``Model._meta`` is documented public API despite the leading
+# underscore (historical reasons predating ``__dunder__`` as the
+# convention for "framework-internal but stable"). Without this
+# carve-out, every ``app._meta.app_label`` / ``model._meta.fields``
+# access fires SLF001.
+extend-ignore-names = [ "_meta" ]
+
+[tool.ruff.lint.pylint]
+# ``run_plan`` (conformance orchestrator) carries 11 keyword-only
+# arguments — every CLI flag the runner accepts. Splitting it into a
+# config dataclass would be over-engineering for a single call site;
+# raising ``max-args`` to 12 keeps the genuinely-narrow functions
+# checked while accommodating documented config-heavy entry points.
+# Cap intentionally above ``run_plan``'s 11 — anything wider IS a
+# code smell that should split.
+max-args = 12
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
@@ -123,7 +157,11 @@ convention = "pep257"
 # lists/dicts (RUF012), operations are long lines (E501), and migration
 # modules carry no docstring. ``D107`` (missing __init__ docstring) is not
 # applicable: the auto-generated ``Migration`` class has no ``__init__``.
+# ``ARG001``: ``RunPython(forwards, reverse)`` callbacks have signature
+# ``(apps, schema_editor)`` per Django's contract — ``schema_editor`` is
+# required even when the body only touches the apps registry.
 "allianceauth_oidc/migrations/*" = [
+    "ARG001",
     "D100", "D101", "D102", "D103", "D104", "D106",
     "E501", "N806", "RUF012",
 ]
@@ -132,6 +170,22 @@ convention = "pep257"
 # is a Django convention without docstring.
 "allianceauth_oidc/admin.py" = [ "D106", "RUF012" ]
 "allianceauth_oidc/models.py" = [ "D106", "RUF012" ]
+# Django ``setting_changed`` signal handler must accept
+# ``(sender, **kwargs)`` per the dispatcher contract; the body only
+# branches on ``setting`` extracted from ``kwargs``.
+"allianceauth_oidc/app_settings.py" = [ "ARG001" ]
+# Django signal handler contract: receivers accept
+# ``(sender, **kwargs)`` plus app-specific positional args. The body
+# branches on ``token`` only.
+"allianceauth_oidc/signals.py" = [ "ARG001" ]
+# oauthlib ``RequestValidator`` parent dictates the signature of
+# ``validate_silent_login(self, request)`` and similar; our overrides
+# accept the parameter even when policy decisions don't read it.
+"allianceauth_oidc/auth_provider.py" = [ "ARG002" ]
+# Django ``View.post(self, request, *args, **kwargs)`` framework
+# signature is dispatched via ``method_decorator``; the override must
+# preserve ``*args, **kwargs`` even when the body ignores them.
+"allianceauth_oidc/views.py" = [ "ARG002" ]
 # Management commands: ``Foo = get_foo_model()`` returns a class, and
 # Django convention is to bind it to a PascalCase local — N806 would
 # flag every such call site. ``add_arguments`` / ``handle`` are
@@ -144,9 +198,19 @@ convention = "pep257"
 # D100-D107 family is opted out because a test method's name is its
 # primary documentation — boilerplate single-line docstrings on every
 # ``test_xxx`` would dilute the rare ones that carry real intent.
+# ``SLF001``: tests legitimately exercise leading-underscore helpers
+# (``_enforce_policy``, ``_body_byte_length``) — those names are the
+# documented unit-test seam, just kept under-scored to discourage
+# external imports from production code.
+# ``ARG001/ARG002/ARG005``: Django signal-handler / view / fakeredis
+# stubs must accept the framework-required parameters (sender, request,
+# alias, kwargs) even when the test body branches on only one of them.
+# ``PLR2004``: HTTP status codes (200/302) are well-known constants —
+# pulling them into named locals dilutes test readability.
 "tests/*" = [
+    "ARG001", "ARG002", "ARG005",
     "D100", "D101", "D102", "D103", "D104", "D106", "D107",
-    "E501", "N802", "N806",
+    "E501", "N802", "N806", "PLR2004", "SLF001",
 ]
 # ``tests/*`` glob already grants ``E501 N802 N806 D100-D107`` to this
 # file (per-file-ignores accumulate, not override) — only ``N999``

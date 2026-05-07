@@ -41,14 +41,14 @@ def _collect_results(
     skipped_seen: set[str] = set()
     for path in sorted(results_dir.glob("*.json")):
         data = json.loads(path.read_text())
-        for entry in data.get("results", []):
-            results.append(
-                ModuleResult(
-                    name=entry["name"],
-                    test_id=entry.get("test_id", ""),
-                    result=entry["result"],
-                )
+        results.extend(
+            ModuleResult(
+                name=entry["name"],
+                test_id=entry.get("test_id", ""),
+                result=entry["result"],
             )
+            for entry in data.get("results", [])
+        )
         # Per-module runs only filter at most their own --exclude
         # patterns. Carrying the union across runs preserves any
         # global filter the operator passed via ``-- <runner args>``.
