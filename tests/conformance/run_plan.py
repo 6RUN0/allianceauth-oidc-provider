@@ -25,9 +25,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import logging
 import os
+import pathlib
 import sys
 import time
 from dataclasses import dataclass, field
@@ -103,9 +105,13 @@ PLAN_VARIANT_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 # Result codes the suite emits. See ConformanceTestResult.java.
+# ``ERROR`` is a runner-side pseudo-code emitted when the suite
+# refuses to start a module (typically variant mismatch returning a
+# 500 from POST /api/runner) — bucketed with FAIL so the operator
+# sees it in the denylist and the run exits non-zero.
 PASS_RESULTS: frozenset[str] = frozenset({"PASSED", "REVIEW"})
 WARN_RESULTS: frozenset[str] = frozenset({"WARNING"})
-FAIL_RESULTS: frozenset[str] = frozenset({"FAILED", "SKIPPED"})
+FAIL_RESULTS: frozenset[str] = frozenset({"FAILED", "SKIPPED", "ERROR"})
 
 
 @dataclass
@@ -227,6 +233,128 @@ def build_plan_config() -> dict[str, Any]:
     }
 
 
+def _matches_any(name: str, patterns: set[str]) -> bool:
+    """
+    Return True if ``name`` matches any glob pattern in ``patterns``.
+
+    Patterns without glob metacharacters degrade to exact equality
+    (``fnmatch.fnmatchcase("oidcc-server", "oidcc-server")``), so
+    pre-glob callers keep working unchanged.
+    """
+    return any(fnmatch.fnmatchcase(name, pat) for pat in patterns)
+
+
+def export_plan_html(
+    session: requests.Session,
+    *,
+    plan_id: str,
+    target_dir: pathlib.Path,
+) -> pathlib.Path:
+    """
+    Download the suite's HTML report archive for a finished plan.
+
+    Calls ``GET /api/plan/exporthtml/{plan_id}`` and streams the
+    response to ``{target_dir}/{plan_id}.zip``. The archive contains
+    one HTML file per module with its full event log — useful for
+    archiving a run, sharing with reviewers, or attaching to a
+    certification submission.
+
+    Mirrors the upstream ``conformance.py:exporthtml()`` pattern.
+    """
+    target_dir.mkdir(parents=True, exist_ok=True)
+    archive = target_dir / f"{plan_id}.zip"
+    resp = session.get(
+        f"{SUITE_URL}/api/plan/exporthtml/{plan_id}",
+        verify=False,
+        timeout=120,
+        stream=True,
+    )
+    resp.raise_for_status()
+    with archive.open("wb") as fh:
+        for chunk in resp.iter_content(chunk_size=8192):
+            fh.write(chunk)
+    return archive
+
+
+def load_expected_failures(path: pathlib.Path) -> dict[str, str]:
+    """
+    Parse an expected-failures JSON file: name -> reason.
+
+    Modules listed there are treated as known-acknowledged: a
+    FAILED/TIMEOUT/ERROR does not influence the run's exit code, and
+    a PASSED triggers an UNEXPECTED-PASS alarm so an upstream fix
+    doesn't go unnoticed (the file is then stale and needs editing).
+
+    Format::
+
+        {
+          "oidcc-userinfo-get":
+              "HtmlUnit 4.11.1 NPE in async XHR (upstream issue)",
+          "oidcc-prompt-login":
+              "RFC 6749 prompt= parameter not yet implemented"
+        }
+
+    Mirrors upstream ``run-test-plan.py --expected-failures-file``.
+    """
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{path}: expected JSON object {{module: reason}}, "
+            f"got {type(data).__name__}"
+        )
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def _filter_modules(
+    modules: list[dict[str, Any]],
+    *,
+    include: set[str] | None = None,
+    exclude: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """
+    Apply allow/deny filters to the plan's module list.
+
+    Plans like ``oidcc-basic-certification-test-plan`` ship ~35
+    modules; some hit upstream limitations (HtmlUnit 4.11.1 NPE) that
+    poison the run with TIMEOUTs. ``include`` is a hard allow-set —
+    only listed names (or globs) execute. ``exclude`` removes named
+    modules. Both support ``fnmatch`` glob patterns (``oidcc-userinfo-*``,
+    ``oidcc-id-token-*``); a pattern without glob metacharacters
+    degrades to exact equality.
+
+    Returns ``(selected, skipped, missing)`` where ``selected`` is the
+    subset of plan entries to run, ``skipped`` lists names that were
+    filtered out (for the summary), and ``missing`` lists ``include``
+    entries that did not match any plan module. ``missing`` is
+    surfaced as a warning so a typo (or stale glob) in ``--include``
+    does not silently produce an empty run.
+    """
+    plan_names = {
+        (entry.get("testModule") or entry.get("name", "?"))
+        for entry in modules
+    }
+    selected: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for entry in modules:
+        name = entry.get("testModule") or entry.get("name", "?")
+        if include is not None and not _matches_any(name, include):
+            skipped.append(name)
+            continue
+        if exclude and _matches_any(name, exclude):
+            skipped.append(name)
+            continue
+        selected.append(entry)
+    if include:
+        missing = sorted(
+            pat
+            for pat in include
+            if not any(fnmatch.fnmatchcase(n, pat) for n in plan_names)
+        )
+    else:
+        missing = []
+    return selected, skipped, missing
+
+
 def create_plan(
     session: requests.Session,
     *,
@@ -260,7 +388,7 @@ def poll_module(
     session: requests.Session,
     *,
     module_id: str,
-    timeout_s: int = 90,
+    timeout_s: int = 180,
     poll_interval_s: int = 3,
 ) -> str:
     """
@@ -273,6 +401,14 @@ def poll_module(
     INTERRUPTED) and ``result`` (PASSED / FAILED / WARNING /
     SKIPPED) fields. ``/api/runner/{id}`` returns a different shape
     without these.
+
+    Default ``timeout_s`` is 180s — empirically the browser-driven
+    code-flow happy paths (login form fill + consent click + token
+    exchange + userinfo probe) take ~60-90s on a developer laptop;
+    cold-start under ``--isolated`` can push that further. The cap
+    still bounds the impact of HtmlUnit 4.11.1's NPE — modules that
+    truly hang return TIMEOUT within 3 minutes rather than wedging
+    the whole run.
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -290,40 +426,30 @@ def poll_module(
     return "TIMEOUT"
 
 
-def run_plan(
-    plan_name: str,
+def _run_module(
+    session: requests.Session,
     *,
-    module_variant: dict[str, str] | None = None,
-    plan_variant: dict[str, str] | None = None,
-    strict_warnings: bool = False,
-) -> int:
+    plan_id: str,
+    module_name: str,
+    module_variant: dict[str, str],
+) -> ModuleResult:
     """
-    Run every module in a plan and return a process exit code.
+    Kick off a single module under ``plan_id`` and wait for the verdict.
 
-    ``plan_variant`` (subset, often empty) is passed at plan creation;
-    ``module_variant`` (full set required by each module) is passed at
-    module creation. The two-level split matches the suite's API:
-    plans pre-bake some variants and reject user-supplied duplicates.
-    Returns 0 if every module passed (and warnings are tolerated
-    unless ``strict_warnings``); 1 otherwise.
+    POST /api/runner creates AND starts the test in one step; no
+    separate "start" call needed (the older /api/runner/{id} POST is
+    for resume/interactive use, not initial kickoff). The variant
+    must be the FULL required set — the suite does not auto-merge
+    plan-baked + user-supplied at module-creation time.
+
+    A 500 / 4xx response from the suite (typically variant-mismatch
+    on plan modules whose pre-baked variant differs from the runner
+    default — e.g. ``oidcc-server-client-secret-post`` requires
+    ``client_auth_type=client_secret_post``) is logged and surfaces
+    as ``ERROR`` so a single misconfigured module does not crash the
+    whole run.
     """
-    session = requests.Session()
-    plan = create_plan(session, plan_name=plan_name, plan_variant=plan_variant)
-    plan_id = plan.get("id") or plan["_id"]
-    modules = plan.get("modules", [])
-    logger.info("plan id=%s contains %d modules", plan_id, len(modules))
-
-    module_variant = module_variant or {}
-
-    results: list[ModuleResult] = []
-    for entry in modules:
-        # Plan modules look like {"testModule": "oidcc-server", ...}
-        module_name = entry.get("testModule") or entry.get("name", "?")
-        # Each module needs to be kicked off individually with the
-        # plan_id query param so the suite associates it with the
-        # plan's config. The variant must be the FULL required set —
-        # the suite does not auto-merge plan-baked + user-supplied at
-        # module-creation time.
+    try:
         create_resp = session.post(
             f"{SUITE_URL}/api/runner",
             params={
@@ -335,43 +461,246 @@ def run_plan(
             timeout=30,
         )
         create_resp.raise_for_status()
-        module_id = create_resp.json()["id"]
-        logger.info("started %s -> %s", module_name, module_id)
-        # POST /api/runner creates AND starts the test in one step;
-        # no separate "start" call needed (the older /api/runner/{id}
-        # POST is for resume/interactive use, not initial kickoff).
-        result = poll_module(session, module_id=module_id)
-        results.append(
-            ModuleResult(
-                name=module_name,
-                test_id=module_id,
-                result=result,
-            )
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "?"
+        logger.warning(
+            "could not start %s: HTTP %s (variant mismatch?)",
+            module_name,
+            status,
         )
-        logger.info("  %s -> %s", module_name, result)
+        return ModuleResult(name=module_name, test_id="", result="ERROR")
+    module_id = create_resp.json()["id"]
+    logger.info("started %s -> %s", module_name, module_id)
+    result = poll_module(session, module_id=module_id)
+    return ModuleResult(name=module_name, test_id=module_id, result=result)
 
-    return _emit_summary(results, strict_warnings=strict_warnings)
+
+def run_plan(
+    plan_name: str,
+    *,
+    module_variant: dict[str, str] | None = None,
+    plan_variant: dict[str, str] | None = None,
+    strict_warnings: bool = False,
+    include: set[str] | None = None,
+    exclude: set[str] | None = None,
+    isolated: bool = False,
+    sleep_between_s: float = 5.0,
+    export_dir: pathlib.Path | None = None,
+    expected_failures: dict[str, str] | None = None,
+) -> int:
+    """
+    Run every module in a plan and return a process exit code.
+
+    ``plan_variant`` (subset, often empty) is passed at plan creation;
+    ``module_variant`` (full set required by each module) is passed at
+    module creation. The two-level split matches the suite's API:
+    plans pre-bake some variants and reject user-supplied duplicates.
+    ``include`` / ``exclude`` filter the plan's module list locally
+    (see ``_filter_modules``) — useful for skipping modules that hit
+    upstream limitations (HtmlUnit 4.11.1 NPE).
+
+    ``isolated=True`` creates a fresh plan per module instead of
+    sharing one plan across all modules. Use it for discovery runs
+    where one module's HtmlUnit NPE would otherwise poison subsequent
+    modules' browser state. Costs ~1-2 seconds of plan-creation
+    overhead per module; on a ~30-minute basic-cert run that is
+    negligible.
+
+    ``sleep_between_s`` is a pause inserted between modules to give
+    the suite's WebRunner thread time to fully dispatch before the
+    next module re-acquires the same plan ``alias`` (the field that
+    routes callback URLs). Without the pause, fast back-to-back
+    modules trigger ``TEST-RUNNER: Stopping test due to alias
+    conflict`` on the second module, which then TIMEOUTs without
+    ever running. Default 5 seconds — empirically sufficient on a
+    developer laptop. Set to 0 to disable.
+
+    Returns 0 if every module passed (and warnings are tolerated
+    unless ``strict_warnings``); 1 otherwise. Filtered-out modules
+    are reported in the summary but do NOT influence the exit code —
+    they were never executed.
+    """
+    session = requests.Session()
+    # Always create one plan up front to discover the module list,
+    # even in isolated mode — that is how we learn which modules the
+    # plan ships. In shared mode this same plan is reused for every
+    # module; in isolated mode each module runs against a fresh plan
+    # created inside the loop and this initial plan is only the
+    # "catalogue".
+    catalogue = create_plan(
+        session, plan_name=plan_name, plan_variant=plan_variant
+    )
+    catalogue_id = catalogue.get("id") or catalogue["_id"]
+    modules = catalogue.get("modules", [])
+    logger.info("plan id=%s contains %d modules", catalogue_id, len(modules))
+
+    selected, skipped_filtered, missing = _filter_modules(
+        modules, include=include, exclude=exclude
+    )
+    if missing:
+        # A typo in --include would otherwise silently produce an
+        # empty run with exit 0 ("nothing failed"). Surface it loudly.
+        logger.warning(
+            "--include names not present in plan (typo?): %s",
+            ", ".join(missing),
+        )
+    if skipped_filtered:
+        logger.info(
+            "filter applied: %d module(s) skipped, %d to run",
+            len(skipped_filtered),
+            len(selected),
+        )
+    if isolated:
+        logger.info("isolated mode: each module runs against a fresh plan")
+
+    module_variant = module_variant or {}
+
+    results: list[ModuleResult] = []
+    for index, entry in enumerate(selected):
+        # Plan modules look like
+        # ``{"testModule": "oidcc-server", "variant": {...}, ...}``.
+        # Plans pre-bake the right variant for each module; using
+        # ours globally breaks modules whose plan-variant differs
+        # from the runner default (e.g.
+        # ``oidcc-server-client-secret-post`` needs
+        # ``client_auth_type=client_secret_post``). Prefer the
+        # plan-supplied variant; fall back to the runner default
+        # only if the plan didn't ship one.
+        module_name = entry.get("testModule") or entry.get("name", "?")
+        per_module_variant = entry.get("variant") or module_variant
+        if isolated:
+            fresh = create_plan(
+                session,
+                plan_name=plan_name,
+                plan_variant=plan_variant,
+            )
+            target_plan_id = fresh.get("id") or fresh["_id"]
+        else:
+            target_plan_id = catalogue_id
+        result = _run_module(
+            session,
+            plan_id=target_plan_id,
+            module_name=module_name,
+            module_variant=per_module_variant,
+        )
+        results.append(result)
+        logger.info("  %s -> %s", result.name, result.result)
+        # Avoid alias conflict with the next module: suite's
+        # WebRunner thread can still hold the plan alias for a
+        # second or two after the module reports FINISHED. Skip
+        # the pause after the last module.
+        if sleep_between_s > 0 and index < len(selected) - 1:
+            time.sleep(sleep_between_s)
+
+    # Best-effort HTML archive — failure here logs and continues so
+    # an export hiccup does not mask test outcomes.
+    if export_dir is not None:
+        try:
+            archive = export_plan_html(
+                session, plan_id=catalogue_id, target_dir=export_dir
+            )
+            logger.info("exported plan archive: %s", archive)
+        except requests.RequestException as exc:
+            logger.warning("export to %s failed: %s", export_dir, exc)
+
+    return _emit_summary(
+        results,
+        skipped_filtered=skipped_filtered,
+        strict_warnings=strict_warnings,
+        expected_failures=expected_failures or {},
+    )
 
 
 def _emit_summary(
-    results: list[ModuleResult], *, strict_warnings: bool
+    results: list[ModuleResult],
+    *,
+    skipped_filtered: list[str] | None = None,
+    strict_warnings: bool,
+    expected_failures: dict[str, str] | None = None,
 ) -> int:
-    """Print a one-line-per-module summary and return an exit code."""
+    """
+    Print a one-line-per-module summary and return an exit code.
+
+    ``skipped_filtered`` lists modules removed by ``--include`` /
+    ``--exclude`` before execution. They are reported as ``FILTERED``
+    so a green allowlist run is visibly distinct from a green full
+    run, but do NOT participate in the exit-code calculation: the
+    suite never saw them.
+
+    ``expected_failures`` is a {name: reason} map of modules that are
+    known to fail (e.g. an upstream HtmlUnit NPE, or unimplemented
+    spec feature). A FAILED/TIMEOUT/ERROR module listed there is
+    re-bucketed as ``XFAIL`` and removed from the exit-code denylist;
+    a PASSED module listed there raises ``XPASS`` (unexpected pass)
+    — that means the file is stale and should be edited.
+    """
+    skipped_filtered = skipped_filtered or []
+    expected_failures = expected_failures or {}
+    fail_states = FAIL_RESULTS | {"TIMEOUT"}
     passed = [r for r in results if r.result in PASS_RESULTS]
     warned = [r for r in results if r.result in WARN_RESULTS]
-    failed = [
-        r for r in results if r.result in FAIL_RESULTS or r.result == "TIMEOUT"
+    failed_real = [
+        r
+        for r in results
+        if r.result in fail_states and r.name not in expected_failures
     ]
+    xfail = [
+        r
+        for r in results
+        if r.result in fail_states and r.name in expected_failures
+    ]
+    xpass = [r for r in passed if r.name in expected_failures]
 
     sys.stdout.write("\n=== Conformance summary ===\n")
     for r in results:
-        sys.stdout.write(f"{r.result:<8} {r.name}  ({r.test_id})\n")
+        marker = r.result
+        if r in xfail:
+            marker = "XFAIL"
+        elif r in xpass:
+            marker = "XPASS"
+        sys.stdout.write(f"{marker:<8} {r.name}  ({r.test_id})\n")
+    for name in skipped_filtered:
+        sys.stdout.write(f"{'FILTERED':<8} {name}\n")
     sys.stdout.write(
         f"\npassed={len(passed)} warned={len(warned)} "
-        f"failed={len(failed)} total={len(results)}\n"
+        f"failed={len(failed_real)} xfail={len(xfail)} "
+        f"xpass={len(xpass)} skipped={len(skipped_filtered)} "
+        f"total={len(results) + len(skipped_filtered)}\n"
     )
 
-    if failed:
+    if xpass:
+        sys.stdout.write(
+            "\n!!! UNEXPECTED PASS — these modules are listed in "
+            "--expected-failures but PASSED. Edit the file to drop "
+            "them; they may have been fixed upstream:\n"
+        )
+        for r in xpass:
+            reason = expected_failures.get(r.name, "")
+            sys.stdout.write(f"  {r.name}  ({reason})\n")
+
+    # Copy-pasteable allowlist / denylist blocks. After a discovery
+    # run (e.g. ``--isolated`` against a full plan) the operator wants
+    # to lock subsequent runs to a stable subset; sorted plain-text
+    # blocks make that a one-shot copy. Only emitted when both halves
+    # are non-empty — a fully-green or fully-red run does not need
+    # the bucketing.
+    pass_names = sorted(r.name for r in (passed + warned))
+    fail_names = sorted(r.name for r in (failed_real + xfail))
+    if pass_names and fail_names:
+        sys.stdout.write("\n=== Module groups ===\n")
+        sys.stdout.write(
+            "# Allowlist (PASSED + WARNING) — paste into --include:\n"
+        )
+        for name in pass_names:
+            sys.stdout.write(f"{name}\n")
+        sys.stdout.write(
+            "\n# Denylist (FAILED + TIMEOUT) — paste into "
+            "--exclude or --expected-failures:\n"
+        )
+        for name in fail_names:
+            sys.stdout.write(f"{name}\n")
+
+    if failed_real:
         return 1
     if warned and strict_warnings:
         return 1
@@ -417,6 +746,84 @@ def main(argv: list[str] | None = None) -> int:
         help="Treat WARNING modules as failures.",
     )
     parser.add_argument(
+        "--include",
+        nargs="+",
+        metavar="PATTERN",
+        default=None,
+        help=(
+            "Run only modules matching these patterns (allow-list). "
+            "fnmatch globs supported, e.g. ``--include oidcc-server "
+            "'oidcc-id-token-*'``. Without a glob the pattern is an "
+            "exact name. Filtered modules show as FILTERED in the "
+            "summary and do not influence the exit code."
+        ),
+    )
+    parser.add_argument(
+        "--exclude",
+        nargs="+",
+        metavar="PATTERN",
+        default=None,
+        help=(
+            "Drop modules matching these patterns. fnmatch globs "
+            "supported, e.g. ``--exclude 'oidcc-userinfo-*'`` to "
+            "skip all userinfo modules. Applied after --include if "
+            "both are given."
+        ),
+    )
+    parser.add_argument(
+        "--isolated",
+        action="store_true",
+        help=(
+            "Create a fresh plan instance per module instead of "
+            "sharing one plan across all modules. Use for discovery "
+            "runs where one module's HtmlUnit NPE would otherwise "
+            "poison subsequent modules' browser state. Costs ~1-2 "
+            "seconds of plan-creation overhead per module."
+        ),
+    )
+    parser.add_argument(
+        "--sleep-between",
+        type=float,
+        default=5.0,
+        metavar="SECONDS",
+        help=(
+            "Seconds to wait between modules. Suite's WebRunner "
+            "thread can still hold the plan alias for ~1-2 seconds "
+            "after a module reports FINISHED, causing the next "
+            "module to fail with 'alias conflict'. Default 5; set 0 "
+            "to disable for offline-mode plans that do not exercise "
+            "the browser path."
+        ),
+    )
+    parser.add_argument(
+        "--export-dir",
+        type=pathlib.Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "After the run, download the suite's HTML report archive "
+            "(GET /api/plan/exporthtml/{plan_id}) into this directory "
+            "as ``{plan_id}.zip``. The archive contains one HTML file "
+            "per module with full event log — useful for archiving a "
+            "run or attaching to a certification submission."
+        ),
+    )
+    parser.add_argument(
+        "--expected-failures",
+        type=pathlib.Path,
+        default=None,
+        metavar="FILE",
+        help=(
+            "JSON file mapping ``module-name`` -> reason. Modules "
+            "listed there are treated as known-acknowledged failures: "
+            "FAILED/TIMEOUT/ERROR are re-bucketed as XFAIL and do not "
+            "influence the exit code; PASSED triggers an XPASS alarm "
+            "so a stale entry doesn't go unnoticed. Mirrors the "
+            "upstream run-test-plan.py --expected-failures-file "
+            "pattern."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING"),
@@ -433,11 +840,24 @@ def main(argv: list[str] | None = None) -> int:
         plan_variant = json.loads(args.plan_variant)
     else:
         plan_variant = PLAN_VARIANT_DEFAULTS.get(args.plan)
+    include = set(args.include) if args.include else None
+    exclude = set(args.exclude) if args.exclude else None
+    expected_failures = (
+        load_expected_failures(args.expected_failures)
+        if args.expected_failures is not None
+        else None
+    )
     return run_plan(
         args.plan,
         module_variant=module_variant,
         plan_variant=plan_variant,
         strict_warnings=args.strict_warnings,
+        include=include,
+        exclude=exclude,
+        isolated=args.isolated,
+        sleep_between_s=args.sleep_between,
+        export_dir=args.export_dir,
+        expected_failures=expected_failures,
     )
 
 

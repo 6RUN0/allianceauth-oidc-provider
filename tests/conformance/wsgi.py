@@ -1,4 +1,5 @@
-"""WSGI module for the conformance provider container.
+"""
+WSGI module for the conformance provider container.
 
 Exists solely so ``gunicorn`` (used by the conformance entrypoint to
 serve TLS, since Django's stock ``runserver`` cannot) has a stable

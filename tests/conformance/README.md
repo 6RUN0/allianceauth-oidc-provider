@@ -70,6 +70,125 @@ curl -ks https://localhost.emobix.co.uk:8443/api/plan/available \
 Use `--strict-warnings` to fail the run on WARNING-level results
 (e.g. when preparing a certification submission).
 
+## Run only specific modules
+
+Some plans (notably `oidcc-basic-certification-test-plan`) drive a
+bundled HtmlUnit 4.11.1 instance that hits a `NullPointerException:
+engine is null` in the async XMLHttpRequest path. Roughly half of the
+browser-driven modules can TIMEOUT for that reason — see the
+`Dockerfile.suite` comment for the full context. To run only the
+modules that complete reliably, pass `--include`:
+
+```sh
+uv run nox -s conformance -- \
+  --plan oidcc-basic-certification-test-plan \
+  --include \
+    oidcc-server \
+    oidcc-userinfo-get \
+    oidcc-userinfo-post-header \
+    oidcc-userinfo-post-body \
+    oidcc-ensure-request-without-nonce-succeeds-for-code-flow \
+    oidcc-response-type-missing
+```
+
+The summary distinguishes `FILTERED` modules from real outcomes, and
+filtered modules do not influence the exit code — they were never
+sent to the suite. Use `--exclude MODULE [MODULE ...]` to drop a
+single known-broken module while still running the rest. If you mix
+`--include` with `--exclude`, the include allow-list is applied
+first, then the exclude denylist.
+
+A typo in `--include` (a name no module in the plan carries) is
+logged as `WARNING --include names not present in plan (typo?): …`
+so an empty run does not silently masquerade as success.
+
+`--include` and `--exclude` both accept `fnmatch` glob patterns:
+
+```sh
+# Skip every userinfo-* module (HtmlUnit hangs after the first
+# browser-driven module, this excludes the visibly-affected family):
+uv run nox -s conformance -- \
+  --plan oidcc-basic-certification-test-plan \
+  --exclude 'oidcc-userinfo-*'
+
+# Run only the id_token negative tests:
+uv run nox -s conformance -- \
+  --plan oidcc-basic-certification-test-plan \
+  --include 'oidcc-id-token-*'
+```
+
+A pattern without glob metacharacters degrades to exact equality, so
+plain names keep working unchanged.
+
+## Archive results to HTML
+
+After a discovery run it's often useful to keep the suite's full
+event log per module — for review, attaching to a certification
+submission, or comparing against the next run. Pass `--export-dir`:
+
+```sh
+uv run nox -s conformance -- \
+  --plan oidcc-basic-certification-test-plan \
+  --export-dir tests/conformance/reports
+```
+
+The runner downloads `GET /api/plan/exporthtml/{plan_id}` and writes
+a zip archive `reports/{plan_id}.zip` containing one HTML file per
+module. Mirrors the upstream `conformance.py:exporthtml()` pattern.
+
+## Expected failures (XFAIL / XPASS)
+
+For long-lived green CI you want known-broken modules acknowledged
+without polluting the run with red. Pass `--expected-failures
+FILE.json`:
+
+```json
+{
+  "oidcc-userinfo-get": "HtmlUnit 4.11.1 NPE in async XHR (upstream)",
+  "oidcc-userinfo-post-header": "HtmlUnit 4.11.1 NPE in async XHR (upstream)",
+  "oidcc-prompt-login": "OIDC prompt= parameter not yet implemented",
+  "oidcc-id-token-hint": "id_token_hint not yet implemented"
+}
+```
+
+A FAILED/TIMEOUT/ERROR module listed there is re-bucketed as `XFAIL`
+and does NOT influence the exit code. A PASSED module listed there
+triggers an `XPASS` alarm — that means the entry is stale (the
+upstream issue was likely fixed) and should be edited out. Mirrors
+the upstream `run-test-plan.py --expected-failures-file` pattern.
+
+## Discovery: which modules pass on this machine?
+
+The HtmlUnit NPE is non-deterministic, and a failed module can
+poison the browser state of subsequent modules in the same plan.
+For a clean PASS/FAIL split, run with `--isolated` — each module
+gets a fresh plan instance, so cross-contamination is impossible:
+
+```sh
+uv run nox -s conformance -- \
+  --plan oidcc-basic-certification-test-plan \
+  --isolated
+```
+
+Cost: ~1-2 seconds of plan-creation overhead per module, negligible
+on a ~30-minute basic-cert run. After a mixed run (some PASS, some
+FAIL), the summary prints copy-pasteable groups:
+
+```
+=== Module groups ===
+# Allowlist (PASSED + WARNING) — paste into --include:
+oidcc-server
+oidcc-userinfo-get
+…
+
+# Denylist (FAILED + TIMEOUT) — paste into --exclude:
+oidcc-id-token-bad-sig
+…
+```
+
+The next run can be locked to the discovered allowlist with
+`--include …` (no `--isolated` needed once the set is stable).
+
 ## Configuration
 
 `run_plan.py` reads from environment variables that are pre-set by
