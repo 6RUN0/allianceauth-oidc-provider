@@ -264,6 +264,40 @@ class TestAuthorizeGate(OIDCTestCase):
         )
 
 
+class TestAuthorizePromptNoneAnonymous(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.6: when ``prompt=none`` is sent and the
+    end-user is not authenticated, the authorization server MUST
+    redirect to ``redirect_uri`` with ``error=login_required``
+    instead of displaying a login or consent UI. The behaviour is
+    inherited from DOT's
+    ``BaseAuthorizationView.handle_no_permission``; this test pins
+    it down so a future override here does not silently regress to
+    the generic ``LOGIN_URL`` redirect.
+    """
+
+    def test_anonymous_prompt_none_redirects_with_login_required(self):
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "prompt-none-anon",
+                "nonce": "nonce-anon",
+                "prompt": "none",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(
+            loc.startswith(REDIRECT_URI),
+            f"redirect must point at registered redirect_uri, got {loc!r}",
+        )
+        self.assertEqual(["login_required"], qs.get("error"))
+        self.assertEqual(["prompt-none-anon"], qs.get("state"))
+
+
 class TestAuthorizeCsrfExemption(OIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1 mandates POST support at the authorize
