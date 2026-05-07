@@ -311,6 +311,63 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             )
         return allowed
 
+    def validate_silent_login(self, request):
+        """
+        OIDC Core 1.0 §3.1.2.1 ``prompt=none`` silent-login gate.
+
+        Returns True for any caller that reaches this point.
+        ``oauthlib`` invokes this from inside
+        ``openid_authorization_validator``; by the time we get here
+        ``AuthAuthorizationView.dispatch`` (and DOT's
+        ``LoginRequiredMixin`` underneath it) have already routed
+        anonymous Django sessions through ``handle_no_permission``,
+        which redirects to ``redirect_uri`` with
+        ``error=login_required`` per OIDC §3.1.2.6 — the
+        anonymous case never reaches this validator.
+
+        ``oauthlib`` does not propagate the Django session user onto
+        the authorize-time ``request`` object, so a user-aware
+        implementation is not possible here without first attaching
+        ``request.user`` from the view layer; until then this single
+        fact (``LoginRequiredMixin`` already passed`` => session user
+        exists``) is the correct semantics.
+
+        Without this override the parent abstract raises
+        ``NotImplementedError`` and any ``prompt=none`` request from
+        an authenticated user 500s the authorize endpoint.
+        """
+        return True
+
+    def validate_silent_authorization(self, request):
+        """
+        OIDC Core 1.0 §3.1.2.1 ``prompt=none`` silent-consent gate.
+
+        Returns True iff the client carries
+        ``skip_authorization=True`` (operator-declared "trusted
+        in-house client" — DOT's
+        ``AuthorizationView.get`` auto-approves these without ever
+        rendering a consent screen, so the silent path is consistent
+        with the GET path).
+
+        Returning False causes oauthlib to raise
+        ``ConsentRequired``, which DOT translates into a 302 to
+        ``redirect_uri`` with ``error=consent_required`` — the
+        spec-prescribed answer when consent would otherwise be
+        required but the request forbade UI.
+
+        TODO(prior-grants): a more permissive fallback would also
+        return True when ``request.user`` already holds a non-expired
+        ``AccessToken`` for ``request.client`` covering the requested
+        scopes (mirroring the ``approval_prompt=auto`` branch in
+        ``AuthorizationView.get``). Blocked on attaching the Django
+        user to oauthlib's authorize-time request — out of scope for
+        this fix; the conservative ``skip_authorization``-only path
+        is sufficient for the basic-cert plan, where the seeded
+        conformance client uses ``skip_authorization=True``.
+        """
+        client = getattr(request, "client", None)
+        return bool(getattr(client, "skip_authorization", False))
+
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """
         Ensure app/user policy is enforced during authorization_code

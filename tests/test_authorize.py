@@ -264,6 +264,89 @@ class TestAuthorizeGate(OIDCTestCase):
         )
 
 
+class TestAuthorizePromptNoneAuthenticated(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.1: with ``prompt=none``, the AS MUST NOT
+    display authentication or consent UI. For an authenticated user
+    on an app with ``skip_authorization=True`` (the configuration the
+    conformance suite drives), DOT auto-approves and redirects back
+    to ``redirect_uri`` carrying the authorization ``code`` and the
+    supplied ``state``. Pin this so a future override of ``dispatch``
+    or the consent-skip logic does not silently regress.
+
+    Limitation: the spec also requires returning an
+    ``interaction_required`` / ``consent_required`` error redirect
+    when the user is logged in but the client is NOT pre-approved
+    (``skip_authorization=False`` and no prior grant). DOT renders
+    the consent UI in that case instead of erroring out — a real
+    spec gap that the conformance basic-cert plan does not exercise
+    (the suite's seeded client uses ``skip_authorization=True``).
+    Documented in tests/conformance/README.md and tracked
+    separately; not pinned here.
+    """
+
+    def test_prompt_none_skip_authorization_redirects_with_code(self):
+        self.grant_oidc_access(self.user1)
+        skip_app = make_app(
+            owner=self.user1,
+            skip_authorization=True,
+            pkce_required=False,
+        )
+        self.client.force_login(self.user1)
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": skip_app.client_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "prompt-none-auth",
+                "nonce": "nonce-auth",
+                "prompt": "none",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertIn("code", qs)
+        self.assertEqual(["prompt-none-auth"], qs.get("state"))
+        self.assertNotIn("error", qs)
+
+    def test_prompt_none_consent_required_for_unapproved_client(self):
+        """
+        OIDC Core 1.0 §3.1.2.1 / §3.1.2.6: when ``prompt=none`` is
+        sent and the client is NOT pre-approved
+        (``skip_authorization=False``, no prior grant), the AS MUST
+        return ``error=consent_required`` instead of rendering the
+        consent UI. ``validate_silent_authorization`` returns False
+        for non-skip-auth clients, oauthlib raises ``ConsentRequired``,
+        DOT translates that into a 302 to ``redirect_uri`` carrying
+        the error code and the supplied ``state``.
+        """
+        self.grant_oidc_access(self.user1)
+        creds = make_app(
+            owner=self.user1,
+            skip_authorization=False,
+            pkce_required=False,
+        )
+        self.client.force_login(self.user1)
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": creds.client_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "prompt-none-needs-consent",
+                "nonce": "nonce-needs-consent",
+                "prompt": "none",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertEqual(["consent_required"], qs.get("error"))
+        self.assertEqual(["prompt-none-needs-consent"], qs.get("state"))
+
+
 class TestAuthorizePromptNoneAnonymous(OIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.6: when ``prompt=none`` is sent and the
