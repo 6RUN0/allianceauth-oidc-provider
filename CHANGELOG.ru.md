@@ -14,6 +14,8 @@
 
 ## [Unreleased]
 
+## [0.1.0b5] - 2026-05-08
+
 ### Добавлено
 
 - Per-app override PKCE через новое поле
@@ -31,7 +33,7 @@
   (`per_app_pkce_required`), который живёт в лёгком модуле
   `allianceauth_oidc.pkce`. Adapter делает ORM-резолв через
   `.only("pkce_required")` и делегирует решение в
-  `AccessPolicy.pkce_required(app)` (`security.py`); сам policy-метод
+  `AccessPolicy.requires_pkce(app)` (`security.py`); сам policy-метод
   стал чистой логикой (без ORM, тестируется через `AppLike` Protocol
   DI seam). Неизвестный `client_id` пишется в лог `WARNING` (через
   `%a` — защита от log injection) и сваливается в `True`.
@@ -44,6 +46,19 @@
   считается неоднозначной и сваливается в `pkce_required=True`
   (RFC 9700), поднимая `RuntimeWarning` вместо прежней записи в
   stderr.
+- `AccessDecision` теперь tagged discriminated union
+  (`AllowedDecision | GlobalDeny | AppDeny`) вместо одного
+  `NamedTuple` с тремя nullable-полями. Инвариант
+  «`deny_reason=APP` ⇒ `app is non-None`» теперь живёт в типе;
+  `AuthAuthorizationView.dispatch` использует `match` плюс
+  `typing_extensions.assert_never` для исчерпываемости — это
+  заменило прежний `assert decision.app is not None`-через-комментарий.
+- `AccessPolicy.pkce_required(app)` переименован в
+  `AccessPolicy.requires_pkce(app)`, чтобы метод не коллидировал
+  с атрибутом `AppLike.pkce_required`, который он читает.
+  Переименование внутреннее; продакшн-вызовы идут через
+  `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` и не
+  затронуты.
 
 > ⚠️ **Изменение конфигурации**: семантика `OAUTH2_PROVIDER['PKCE_REQUIRED']`
 > изменилась с boolean на callable. Старые конфиги с `True`/`False`
@@ -62,6 +77,57 @@
 > существующим приложениям принудительно проставится
 > `pkce_required=True` (fail-safe по RFC 9700). Полный рецепт апгрейда —
 > в разделе README «Обновление с предыдущей версии».
+
+### Сборка
+
+- Build-backend переехал с `flit_core` на `uv_build`. `version` и
+  `description` теперь статические `[project]`-поля в
+  `pyproject.toml` (single source of truth); runtime `__version__`
+  резолвится через
+  `importlib.metadata.version("allianceauth-oidc-provider-eveo7")`
+  с фолбэком `0.0.0+local` для editable / source-checkout. Содержимое
+  wheel идентично прежней сборке (тот же `allianceauth_oidc/*` плюс
+  каталоги локализации, без test-артефактов).
+
+### Инструментарий
+
+- Внутренняя типизация ужесточена. Новые Protocol'ы `TokenLike` /
+  `OAuthRequestLike` в `security.py` и локальный `ClaimsUser`
+  в `auth_provider.py` заменили прежние параметры типа `object`
+  у `TokenAudit`, `audit_oidc_token_issued`, `ClaimsBuilder`,
+  `app_log`, `build_oidc_debug_meta`. Опечатки в именах атрибутов
+  у этих хелперов теперь ловятся статически.
+- mypy ramp в strict: подключён плагин `mypy_django_plugin.main`
+  (django-stubs уже был в dev-группе, но не активирован), плюс
+  `check_untyped_defs`, `warn_unused_ignores`, `warn_no_return`,
+  `warn_unreachable`, `strict_equality`, `extra_checks` и error-коды
+  `redundant-expr` / `possibly-undefined` / `truthy-bool` /
+  `unused-awaitable` / `explicit-override`. На последний код
+  понадобилось добавить `@override` декораторы десяти Django
+  command / AppConfig override-методам (через `typing_extensions`,
+  чтобы держать floor 3.10).
+- ruff `select` расширен с 11 групп до 28: добавлены `DJ`, `LOG`, `G`,
+  `RET`, `DTZ`, `ISC`, `BLE`, `PTH`, `TC`, `TID`, `A`, `FURB`,
+  `TRY`, `PERF`, `SLF`, `ICN`, `PGH`, `ARG`, плюс четыре pylint-
+  группы `PLE`, `PLW`, `PLC`, `PLR`. Карвоуты на framework-границах
+  (signal-handler'ы, dispatch view, override-методы oauthlib
+  валидатора, Django-миграции) держат шум локализованным.
+- Новые pre-commit хуки: `vulture` (детект мёртвого кода,
+  `min_confidence=80` плюс `ignore_names` под Django-контракты),
+  `xenon` (циклматическая сложность с порогами `D/B/A`) и
+  `uv lock --check` (drift lock-файла при изменениях
+  `pyproject.toml` / `uv.lock`).
+- `[tool.coverage]` сведён в `pyproject.toml`; легаси `.coveragerc`
+  удалён. Включён `branch = true` плюс `exclude_also`-паттерны
+  под `if TYPE_CHECKING:`, `assert_never(...)`, тела Protocol-
+  методов (`...`), `def __repr__`, `raise AssertionError`. Общее
+  покрытие 96% → 97% на неизменном test-наборе (за счёт честного
+  исключения недостижимых веток).
+- `[tool.ruff.lint.per-file-ignores]` приведён в порядок: убраны
+  избыточные дубли (`tests/test_settingsAA4.py` теперь декларирует
+  только file-specific `N999`), удалён stale-ignore `D107` из
+  миграций, коды отсортированы по алфавиту внутри каждого списка,
+  добавлен docblock про accumulate-not-override-семантику ruff.
 
 ## [0.1.0b4] - 2026-05-06
 

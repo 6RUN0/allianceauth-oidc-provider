@@ -14,6 +14,8 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.1.0b5] - 2026-05-08
+
 ### Added
 
 - Per-app PKCE override via the new `AllianceAuthApplication.pkce_required`
@@ -29,7 +31,7 @@ is preserved in `git log`; this file documents fork-specific changes only.
   (`per_app_pkce_required`) living in the lightweight
   `allianceauth_oidc.pkce` module. The adapter resolves `client_id` to
   an application row via `.only("pkce_required")` and delegates the
-  decision to `AccessPolicy.pkce_required(app)` in `security.py`,
+  decision to `AccessPolicy.requires_pkce(app)` in `security.py`,
   which stays a pure-logic method (no ORM, testable through the
   `AppLike` Protocol DI seam). Unknown `client_id` is logged at
   `WARNING` (with `%a` for log-injection safety) and falls back to
@@ -42,6 +44,19 @@ is preserved in `git log`; this file documents fork-specific changes only.
   any other shape (callable, `None`, missing key, `str`, `int`) is
   ambiguous and falls back to `pkce_required=True` per RFC 9700,
   emitting a `RuntimeWarning` rather than a raw stderr write.
+- `AccessDecision` is now a tagged discriminated union
+  (`AllowedDecision | GlobalDeny | AppDeny`) instead of a single
+  `NamedTuple` with three nullable fields. The invariant
+  "`deny_reason=APP` ⇒ `app is non-None`" now lives in the type;
+  `AuthAuthorizationView.dispatch` uses `match` plus
+  `typing_extensions.assert_never` for exhaustiveness, replacing
+  the previous `assert decision.app is not None`-by-comment.
+- `AccessPolicy.pkce_required(app)` renamed to
+  `AccessPolicy.requires_pkce(app)` so the policy method does not
+  collide with the `AppLike.pkce_required` attribute it reads. The
+  rename is internal API; production callers wire through
+  `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` and
+  are unaffected.
 
 > ⚠️ **Configuration change**: `OAUTH2_PROVIDER['PKCE_REQUIRED']` semantics
 > changed from a boolean to a callable. Existing operator settings that
@@ -59,6 +74,57 @@ is preserved in `git log`; this file documents fork-specific changes only.
 > app to be force-flipped to `pkce_required=True` (RFC 9700 fail-safe).
 > The full upgrade recipe is in the `Upgrading from a previous release`
 > section of the README.
+
+### Build
+
+- Build backend switched from `flit_core` to `uv_build`. `version` and
+  `description` are now static `[project]` fields in `pyproject.toml`
+  (single source of truth); runtime `__version__` resolves via
+  `importlib.metadata.version("allianceauth-oidc-provider-eveo7")`
+  with a `0.0.0+local` fallback for editable / source checkouts.
+  Wheel contents are bit-equivalent to the previous build (same
+  `allianceauth_oidc/*` + locale catalogues, no test artefacts).
+
+### Tooling
+
+- Internal typing tightened. New `TokenLike` / `OAuthRequestLike`
+  Protocols in `security.py` and a local `ClaimsUser` Protocol in
+  `auth_provider.py` replace the previous `object`-typed parameters
+  on `TokenAudit`, `audit_oidc_token_issued`, `ClaimsBuilder`,
+  `app_log`, and `build_oidc_debug_meta`. Opaque attribute access on
+  these helpers is now statically typo-checked.
+- mypy strict ramp: `mypy_django_plugin.main` is enabled (django-stubs
+  was already in the dev group but never wired in), plus
+  `check_untyped_defs`, `warn_unused_ignores`, `warn_no_return`,
+  `warn_unreachable`, `strict_equality`, `extra_checks`, and the
+  `redundant-expr` / `possibly-undefined` / `truthy-bool` /
+  `unused-awaitable` / `explicit-override` error codes. Ten
+  Django command / AppConfig overrides gained `@override` decorators
+  (via `typing_extensions` to keep the 3.10 floor) as a result of
+  `explicit-override`.
+- ruff `select` expanded from 11 groups to 28: added `DJ`, `LOG`, `G`,
+  `RET`, `DTZ`, `ISC`, `BLE`, `PTH`, `TC`, `TID`, `A`, `FURB`,
+  `TRY`, `PERF`, `SLF`, `ICN`, `PGH`, `ARG`, plus the four pylint
+  groups `PLE`, `PLW`, `PLC`, `PLR`. Carve-outs at framework-contract
+  boundaries (signal handlers, view dispatch, oauthlib validator
+  overrides, Django migrations) keep the noise focused on real
+  signals.
+- New pre-commit hooks: `vulture` (dead-code detection,
+  `min_confidence=80` with Django-contract `ignore_names`),
+  `xenon` (cyclomatic complexity at `D/B/A` thresholds), and
+  `uv lock --check` (locks-file drift on `pyproject.toml` /
+  `uv.lock` changes).
+- `[tool.coverage]` consolidated into `pyproject.toml`; the legacy
+  `.coveragerc` was deleted. New `branch = true`, plus `exclude_also`
+  patterns for `if TYPE_CHECKING:`, `assert_never(...)`, Protocol
+  method-body stubs (`...`), `def __repr__`, and
+  `raise AssertionError`. Total coverage 96% → 97% on the unchanged
+  suite, mostly from honest exclusion of unreachable branches.
+- `[tool.ruff.lint.per-file-ignores]` cleaned up: redundant
+  duplicates removed (`tests/test_settingsAA4.py` now declares only
+  the file-specific `N999`), stale `D107` ignore dropped from
+  migrations, codes alphabetised within each list, and a docblock
+  added explaining ruff's accumulate-not-override semantics.
 
 ## [0.1.0b4] - 2026-05-06
 
