@@ -95,39 +95,45 @@ convention = "pep257"
 # for code where docstrings would be boilerplate (tests, migrations, Django
 # nested Meta classes).
 [tool.ruff.lint.per-file-ignores]
+# Per-file-ignores accumulate across matching globs (NOT override) — a
+# narrower block sees the union of its codes plus every parent glob's
+# codes. Codes are sorted alphabetically within each list for readable
+# diffs when the set evolves.
+#
 # Django migrations are auto-generated; class attrs intentionally use literal
 # lists/dicts (RUF012), operations are long lines (E501), and migration
-# modules carry no docstring.
+# modules carry no docstring. ``D107`` (missing __init__ docstring) is not
+# applicable: the auto-generated ``Migration`` class has no ``__init__``.
 "allianceauth_oidc/migrations/*" = [
-    "E501", "RUF012", "N806",
-    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
+    "D100", "D101", "D102", "D103", "D104", "D106",
+    "E501", "N806", "RUF012",
 ]
 # Django ModelAdmin and Model.Meta use class-level mutable attributes by
 # design (admin lists, Meta.permissions, etc.) and the nested Meta class
 # is a Django convention without docstring.
-"allianceauth_oidc/admin.py" = [ "RUF012", "D106" ]
-"allianceauth_oidc/models.py" = [ "RUF012", "D106" ]
+"allianceauth_oidc/admin.py" = [ "D106", "RUF012" ]
+"allianceauth_oidc/models.py" = [ "D106", "RUF012" ]
 # Management commands: ``Foo = get_foo_model()`` returns a class, and
 # Django convention is to bind it to a PascalCase local — N806 would
 # flag every such call site. ``add_arguments`` / ``handle`` are
 # framework hooks whose contract is documented on ``BaseCommand``,
 # not on each subclass — D102 docstring requirements there are noise.
-"allianceauth_oidc/management/commands/*" = [ "N806", "D102" ]
-# Test docstrings and assertions are routinely long; custom assertXxx methods
-# follow unittest.TestCase camelCase convention (N802); some test files use
-# hardcoded "secrets" intentionally (covered by `# nosec`/inline noqa).
-# N806: factory functions like get_access_token_model() return classes and
-# are conventionally bound to PascalCase locals.
-# D1xx: a test method's name is its primary documentation.
+"allianceauth_oidc/management/commands/*" = [ "D102", "N806" ]
+# Test docstrings and assertions are routinely long; custom ``assertXxx``
+# methods follow unittest.TestCase's camelCase convention (N802). Test
+# helpers commonly bind ``Foo = get_foo_model()`` (N806). The full
+# D100-D107 family is opted out because a test method's name is its
+# primary documentation — boilerplate single-line docstrings on every
+# ``test_xxx`` would dilute the rare ones that carry real intent.
 "tests/*" = [
+    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
     "E501", "N802", "N806",
-    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
 ]
-# Django test settings module name has a legacy uppercase suffix (AA4).
-"tests/test_settingsAA4.py" = [
-    "E501", "N802", "N999",
-    "D100", "D101", "D102", "D103", "D104", "D106", "D107",
-]
+# ``tests/*`` glob already grants ``E501 N802 N806 D100-D107`` to this
+# file (per-file-ignores accumulate, not override) — only ``N999``
+# (legacy uppercase ``AA4`` suffix in the module name) is genuinely
+# file-specific.
+"tests/test_settingsAA4.py" = [ "N999" ]
 
 [tool.ruff.lint.isort]
 known-first-party = [ "allianceauth_oidc" ]
