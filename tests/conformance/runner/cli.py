@@ -12,7 +12,11 @@ import argparse
 import json
 import logging
 import pathlib
+import sys
 
+import requests
+
+from .client import create_plan
 from .config import DEFAULT_VARIANT, PLAN_VARIANT_DEFAULTS
 from .filtering import load_expected_failures
 from .orchestrator import run_plan
@@ -144,6 +148,29 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--summary-json",
+        type=pathlib.Path,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Write a machine-readable summary as JSON to FILE for "
+            "later aggregation by a per-module orchestrator (see "
+            "``run_per_module.sh`` + ``aggregate_summaries.py``). "
+            "Schema: {plan_name, plan_id, summary{...}, results[], "
+            "skipped_filtered[], expected_failures{}}."
+        ),
+    )
+    parser.add_argument(
+        "--list-modules",
+        action="store_true",
+        help=(
+            "Create a plan, print one module name per line and exit. "
+            "Does not run any modules. Used by the per-module "
+            "orchestrator to enumerate the plan before tearing the "
+            "stack down for the per-module loop."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING"),
@@ -167,6 +194,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.expected_failures is not None
         else None
     )
+    if args.list_modules:
+        # Discovery-only mode: create a plan, print module names,
+        # exit. No modules are kicked off, so the suite stack can be
+        # torn down right after.
+        session = requests.Session()
+        catalogue = create_plan(
+            session, plan_name=args.plan, plan_variant=plan_variant
+        )
+        for entry in catalogue.get("modules", []):
+            name = entry.get("testModule") or entry.get("name", "?")
+            sys.stdout.write(f"{name}\n")
+        return 0
     return run_plan(
         args.plan,
         module_variant=module_variant,
@@ -178,4 +217,5 @@ def main(argv: list[str] | None = None) -> int:
         sleep_between_s=args.sleep_between,
         export_dir=args.export_dir,
         expected_failures=expected_failures,
+        summary_json=args.summary_json,
     )

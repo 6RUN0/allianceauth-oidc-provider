@@ -24,7 +24,7 @@ from typing import Any
 import requests
 import urllib3
 
-from .config import ModuleResult, SUITE_URL
+from .config import SUITE_URL, ModuleResult
 from .plan_config import build_plan_config
 
 # The suite's TLS cert is self-signed for localhost.emobix.co.uk; we

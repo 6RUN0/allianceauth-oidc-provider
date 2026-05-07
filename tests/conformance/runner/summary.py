@@ -9,9 +9,43 @@ spinning up the suite stack.
 
 from __future__ import annotations
 
+import json
+import pathlib
 import sys
 
 from .config import FAIL_RESULTS, PASS_RESULTS, WARN_RESULTS, ModuleResult
+
+
+def _bucket_results(
+    results: list[ModuleResult],
+    expected_failures: dict[str, str],
+) -> tuple[
+    list[ModuleResult],  # passed
+    list[ModuleResult],  # warned
+    list[ModuleResult],  # failed_real
+    list[ModuleResult],  # xfail
+    list[ModuleResult],  # xpass
+]:
+    """
+    Split a result list into the five buckets the summary cares
+    about. Single source of truth so ``emit_summary`` and
+    ``write_summary_json`` count identically.
+    """
+    fail_states = FAIL_RESULTS | {"TIMEOUT"}
+    passed = [r for r in results if r.result in PASS_RESULTS]
+    warned = [r for r in results if r.result in WARN_RESULTS]
+    failed_real = [
+        r
+        for r in results
+        if r.result in fail_states and r.name not in expected_failures
+    ]
+    xfail = [
+        r
+        for r in results
+        if r.result in fail_states and r.name in expected_failures
+    ]
+    xpass = [r for r in passed if r.name in expected_failures]
+    return passed, warned, failed_real, xfail, xpass
 
 
 def emit_summary(
@@ -39,20 +73,9 @@ def emit_summary(
     """
     skipped_filtered = skipped_filtered or []
     expected_failures = expected_failures or {}
-    fail_states = FAIL_RESULTS | {"TIMEOUT"}
-    passed = [r for r in results if r.result in PASS_RESULTS]
-    warned = [r for r in results if r.result in WARN_RESULTS]
-    failed_real = [
-        r
-        for r in results
-        if r.result in fail_states and r.name not in expected_failures
-    ]
-    xfail = [
-        r
-        for r in results
-        if r.result in fail_states and r.name in expected_failures
-    ]
-    xpass = [r for r in passed if r.name in expected_failures]
+    passed, warned, failed_real, xfail, xpass = _bucket_results(
+        results, expected_failures
+    )
 
     sys.stdout.write("\n=== Conformance summary ===\n")
     for r in results:
@@ -108,3 +131,50 @@ def emit_summary(
     if warned and strict_warnings:
         return 1
     return 0
+
+
+def write_summary_json(
+    path: pathlib.Path,
+    *,
+    results: list[ModuleResult],
+    skipped_filtered: list[str],
+    expected_failures: dict[str, str],
+    plan_name: str,
+    plan_id: str,
+) -> None:
+    """
+    Serialise a single run's outcome as JSON for offline aggregation.
+
+    The schema is intentionally flat so a downstream aggregator
+    (``aggregate_summaries.py``) can concatenate per-module files
+    from a per-module restart loop into one combined view. Counts
+    use the same five-bucket breakdown as ``emit_summary``.
+    """
+    passed, warned, failed_real, xfail, xpass = _bucket_results(
+        results, expected_failures
+    )
+    payload = {
+        "plan_name": plan_name,
+        "plan_id": plan_id,
+        "summary": {
+            "passed": len(passed),
+            "warned": len(warned),
+            "failed": len(failed_real),
+            "xfail": len(xfail),
+            "xpass": len(xpass),
+            "skipped_filtered": len(skipped_filtered),
+            "total": len(results) + len(skipped_filtered),
+        },
+        "results": [
+            {
+                "name": r.name,
+                "test_id": r.test_id,
+                "result": r.result,
+            }
+            for r in results
+        ],
+        "skipped_filtered": list(skipped_filtered),
+        "expected_failures": dict(expected_failures),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))

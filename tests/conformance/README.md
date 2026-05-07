@@ -157,6 +157,40 @@ triggers an `XPASS` alarm — that means the entry is stale (the
 upstream issue was likely fixed) and should be edited out. Mirrors
 the upstream `run-test-plan.py --expected-failures-file` pattern.
 
+## Per-module restart loop
+
+The HtmlUnit one-shot bug means a single shared-stack run cannot
+honestly distinguish "real spec failure" from "HtmlUnit gave up".
+For a clean `PASSED` / `FAILED` partition use the per-module
+orchestrator, which tears the suite stack down between every module
+so each one gets a fresh JVM:
+
+```sh
+tests/conformance/run_per_module.sh \
+  --plan oidcc-basic-certification-test-plan \
+  --results-dir tests/conformance/results \
+  -- --exclude 'oidcc-userinfo-*'
+```
+
+How it works:
+
+1. Brings the stack up once and calls `run_plan.py --list-modules`
+   to enumerate the plan; tears down.
+2. For each module: `compose up` → `run_plan.py --include MODULE
+   --summary-json results/MODULE.json` → `compose down -v`.
+3. Runs `aggregate_summaries.py results/` to produce the combined
+   summary in the same format `emit_summary` prints for a single
+   run.
+
+Anything after `--` is forwarded verbatim to `run_plan.py`, so
+filters, `--strict-warnings`, `--expected-failures` and the like all
+work the same way.
+
+**Cost**: ~30s of compose lifecycle × N modules. For the basic-cert
+plan (~35 modules) the run is ~70-80 minutes versus ~30-50 minutes
+for shared-stack. Use this only when you need a clean partition;
+day-to-day iteration should stay on `nox -s conformance`.
+
 ## Discovery: which modules pass on this machine?
 
 The HtmlUnit NPE is non-deterministic, and a failed module can

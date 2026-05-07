@@ -18,7 +18,7 @@ import requests
 from .client import create_plan, export_plan_html, run_module
 from .config import ModuleResult
 from .filtering import filter_modules
-from .summary import emit_summary
+from .summary import emit_summary, write_summary_json
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ def run_plan(
     sleep_between_s: float = 5.0,
     export_dir: pathlib.Path | None = None,
     expected_failures: dict[str, str] | None = None,
+    summary_json: pathlib.Path | None = None,
 ) -> int:
     """
     Run every module in a plan and return a process exit code.
@@ -150,6 +151,17 @@ def run_plan(
             logger.info("exported plan archive: %s", archive)
         except requests.RequestException as exc:
             logger.warning("export to %s failed: %s", export_dir, exc)
+
+    if summary_json is not None:
+        write_summary_json(
+            summary_json,
+            results=results,
+            skipped_filtered=skipped_filtered,
+            expected_failures=expected_failures or {},
+            plan_name=plan_name,
+            plan_id=str(catalogue_id),
+        )
+        logger.info("wrote summary json: %s", summary_json)
 
     return emit_summary(
         results,

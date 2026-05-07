@@ -41,10 +41,10 @@ from .summary import emit_summary
 __all__ = [
     "DEFAULT_VARIANT",
     "FAIL_RESULTS",
-    "ModuleResult",
     "PASS_RESULTS",
     "PLAN_VARIANT_DEFAULTS",
     "WARN_RESULTS",
+    "ModuleResult",
     "emit_summary",
     "main",
     "run_plan",
