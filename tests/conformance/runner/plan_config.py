@@ -121,6 +121,59 @@ def build_plan_config() -> dict[str, Any]:
         #    admin form's input element.
         "browser": [
             {
+                # ``oidcc-ensure-registered-redirect-uri`` appends a
+                # random suffix to the registered callback path; the
+                # resulting redirect_uri ends in ``/callback/<random>``.
+                # Spring's ``simpleMatch("*/callback/*", url)``
+                # consequently distinguishes this test from the
+                # happy-path flow (whose redirect_uri ends in plain
+                # ``/callback``, with no trailing slash). Order matters
+                # — most-specific match first; the generic
+                # ``/o/authorize*`` entry below would otherwise win.
+                "match": "*/callback/*",
+                "tasks": [
+                    {
+                        "task": "Login",
+                        "match": f"{host_root}/admin/login*",
+                        "optional": True,
+                        "commands": [
+                            ["text", "id", "id_username", USERNAME],
+                            ["text", "id", "id_password", PASSWORD],
+                            ["click", "css", "[type=submit]"],
+                        ],
+                    },
+                    {
+                        # Provider rejects the unregistered
+                        # redirect_uri and renders
+                        # ``allianceauth_oidc/authorize.html`` with
+                        # the DOT ``error`` context, surfacing
+                        # ``<h2>Error: invalid_request</h2>``. The
+                        # ``wait`` command finds that ``h2`` and
+                        # triggers ``update-image-placeholder``,
+                        # filling the ``redirect_uri_error``
+                        # placeholder the test created via
+                        # ``ExpectRedirectUriErrorPage`` so
+                        # ``waitForPlaceholders`` can transition the
+                        # test from ``WAITING`` to ``FINISHED``
+                        # without invoking ``processCallback`` (which
+                        # would throw ``TestFailureException``
+                        # because the bad URI must never be called).
+                        "task": "Verify redirect_uri error page",
+                        "match": f"{host_root}/o/authorize*",
+                        "commands": [
+                            [
+                                "wait",
+                                "css",
+                                "h2",
+                                20,
+                                "Error: invalid_request",
+                                "update-image-placeholder",
+                            ],
+                        ],
+                    },
+                ],
+            },
+            {
                 "match": f"{host_root}/o/authorize*",
                 "tasks": [
                     {

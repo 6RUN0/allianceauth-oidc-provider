@@ -197,11 +197,10 @@ day-to-day iteration should stay on `nox -s conformance`.
 of every basic-cert module that does NOT pass cleanly today, with
 short reasons grouped into three classes:
 
-1. **Real provider gaps** (~4 modules) — features we have not yet
-   implemented (`prompt=`, `id_token_hint`, redirect_uri exact-match
-   validation). Each is a roadmap entry; remove the line when you
-   implement the feature and the next run will produce an `XPASS`
-   alarm to confirm.
+1. **Real provider gaps** (~3 modules) — features we have not yet
+   implemented (`prompt=`, `id_token_hint`). Each is a roadmap
+   entry; remove the line when you implement the feature and the
+   next run will produce an `XPASS` alarm to confirm.
 2. **HtmlUnit upstream issues** (~16 modules) — TIMEOUT in the
    suite-side browser even with per-module restart. These come back
    only when the suite ships a newer HtmlUnit (4.13+).

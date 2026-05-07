@@ -2,7 +2,6 @@
   "oidcc-id-token-hint": "id_token_hint parameter not yet implemented (OIDC Core 1.0 §3.1.2.4). Provider must accept id_token_hint at /authorize and use its sub claim to skip the authentication step.",
   "oidcc-prompt-none-logged-in": "prompt=none for an already-authenticated user not yet implemented (OIDC Core 1.0 §3.1.2.1). Provider must skip login UI and return code immediately when the existing session matches.",
   "oidcc-prompt-none-not-logged-in": "prompt=none for an unauthenticated user not yet implemented. Provider must return login_required error per OIDC Core 1.0 §3.1.2.6 instead of redirecting to login.",
-  "oidcc-ensure-registered-redirect-uri": "redirect_uri validation against registered list — needs review. The Application model stores redirect_uris but suite reports a mismatch; verify exact-match semantics in oauth2_provider.",
 
   "oidcc-server": "TIMEOUT — happy-path code-flow does not finish in 180s on a fresh JVM. Suspect HtmlUnit cold-start + first browser-driven module timing edge.",
   "oidcc-alternate-happy-flow": "TIMEOUT — alternate ordering of code-flow steps; HtmlUnit 4.11.1 upstream issue.",
