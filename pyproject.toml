@@ -1,9 +1,11 @@
 [build-system]
-build-backend = "flit_core.buildapi"
-requires = [ "flit-core>=3.2,<4" ]
+build-backend = "uv_build"
+requires = [ "uv_build>=0.5,<0.20" ]
 
 [project]
 name = "allianceauth-oidc-provider-eveo7"
+version = "0.1.0b4"
+description = "OpenID Connect / OAuth2 provider for Alliance Auth, layered on django-oauth-toolkit."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [ { name = "AaronKable", email = "aaronkable@gmail.com" } ]
@@ -22,7 +24,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dynamic = [ "description", "version" ]
+# No `dynamic = [...]` field. ``version`` and ``description`` are static
+# here (single source of truth — pyproject.toml). Runtime access to
+# ``__version__`` goes through ``importlib.metadata.version`` in
+# ``allianceauth_oidc/__init__.py`` so the value never drifts from the
+# wheel that's actually deployed.
 
 dependencies = [ "allianceauth>=4,<5", "django-oauth-toolkit>=3.2,<4" ]
 
@@ -48,8 +54,14 @@ dev = [
     "ruff>=0.15",
 ]
 
-[tool.flit.module]
-name = "allianceauth_oidc"
+[tool.uv.build-backend]
+# Flat layout: the importable module ``allianceauth_oidc`` sits at
+# the repo root, not under ``src/``. Default uv-build module-name
+# normalization would derive ``allianceauth_oidc_provider_eveo7``
+# from the project name; ``module-name`` here pins the actual
+# importable name back to the historical ``allianceauth_oidc``.
+module-root = ""
+module-name = "allianceauth_oidc"
 
 [tool.ruff]
 line-length = 79
