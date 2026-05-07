@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Final, NamedTuple, Protocol, runtime_checkable
+from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 from django.core.exceptions import PermissionDenied
 
@@ -70,6 +70,47 @@ class AppLike(Protocol):
     pkce_required: Any
 
 
+@runtime_checkable
+class TokenLike(Protocol):
+    """
+    Smallest shape ``TokenAudit`` and ``audit_oidc_token_issued``
+    require for an issued ``AccessToken``.
+
+    Fields are typed ``Any`` for the same reason ``AppLike`` does:
+    django-stubs renders FK descriptors and model managers as opaque
+    objects that fail Protocol invariance against concrete types.
+    ``Any`` keeps the Protocol as a typo-catching contract — a
+    consumer accidentally reading ``token.applicaiton`` is rejected
+    statically — without forcing casts on the producer side.
+    """
+
+    application: Any
+    user: Any
+    id: Any
+    scope: Any
+
+
+@runtime_checkable
+class OAuthRequestLike(Protocol):
+    """
+    Shape of the oauthlib ``Request`` as DOT mutates it before
+    handing it to validator methods.
+
+    ``oauthlib`` does not ship type stubs; DOT adds ``application``
+    dynamically on top of oauthlib's ``Request`` (the attribute is
+    not declared on oauthlib's class). Capturing the four attrs we
+    actually read (``user`` / ``client`` / ``application`` / ``POST``)
+    here means a typo on the validator side surfaces as a Protocol
+    mismatch at type-check time rather than ``AttributeError`` at
+    request time.
+    """
+
+    user: Any
+    client: Any
+    application: Any
+    POST: Any
+
+
 class DenyReason(str, Enum):
     """
     Structured reason for an authorize-request denial.
@@ -85,19 +126,63 @@ class DenyReason(str, Enum):
     APP = "app"  # state/group restriction failed for the chosen app
 
 
-class AccessDecision(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class AllowedDecision:
     """
-    Outcome of ``AccessPolicy.decide`` — three-way (allowed,
-    denied-global, denied-app) folded into a typed record.
+    The "request passes" branch of :data:`AccessDecision`.
 
-    ``app`` is echoed back so the caller can render it without a second
-    lookup; for an allowed request with no ``client_id`` the field is
-    ``None``.
+    ``app`` is echoed back so the caller can render it without a
+    second lookup; ``None`` when the request carried no
+    ``client_id`` (DOT's ``AuthorizationView`` then surfaces the
+    missing-client error itself).
     """
 
-    allowed: bool
-    deny_reason: DenyReason | None
     app: AppLike | None
+    allowed: Literal[True] = field(default=True, init=False)
+    deny_reason: None = field(default=None, init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalDeny:
+    """
+    Denial at the global ``access_oidc`` permission gate.
+
+    ``app`` is intentionally pinned to ``None`` — anti-enumeration
+    invariant: a global denial must NOT leak which application
+    triggered the lookup back to the renderer (otherwise a malicious
+    actor probing ``client_id``s could distinguish "client exists,
+    you lack perm" from "client does not exist").
+    """
+
+    allowed: Literal[False] = field(default=False, init=False)
+    deny_reason: Literal[DenyReason.GLOBAL] = field(
+        default=DenyReason.GLOBAL, init=False
+    )
+    app: None = field(default=None, init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AppDeny:
+    """
+    Denial at the per-app state/group gate; ``app`` is non-None by
+    construction so the renderer can show the app name.
+    """
+
+    app: AppLike
+    allowed: Literal[False] = field(default=False, init=False)
+    deny_reason: Literal[DenyReason.APP] = field(
+        default=DenyReason.APP, init=False
+    )
+
+
+# Discriminated union: callers narrow either via ``decision.allowed``
+# (boolean discriminator → AllowedDecision vs the two deny variants)
+# or ``decision.deny_reason`` (Literal discriminator → GlobalDeny vs
+# AppDeny). The invariant "deny_reason is APP ⇒ app is non-None" is
+# now in the type, not in the logic — :func:`typing.assert_never` in
+# ``AuthAuthorizationView.dispatch`` makes a future fourth variant a
+# type-checker error rather than a silent fall-through.
+AccessDecision = AllowedDecision | GlobalDeny | AppDeny
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,18 +233,14 @@ class AccessPolicy:
         try:
             self._check_global(user)
         except PermissionDenied:
-            return AccessDecision(
-                allowed=False, deny_reason=DenyReason.GLOBAL, app=None
-            )
+            return GlobalDeny()
         if app is None:
-            return AccessDecision(allowed=True, deny_reason=None, app=None)
+            return AllowedDecision(app=None)
         try:
             self._check_app(user, app)
         except PermissionDenied:
-            return AccessDecision(
-                allowed=False, deny_reason=DenyReason.APP, app=app
-            )
-        return AccessDecision(allowed=True, deny_reason=None, app=app)
+            return AppDeny(app=app)
+        return AllowedDecision(app=app)
 
     def is_allowed(self, user: UserLike | None, app: AppLike | None) -> bool:
         """Convenience: ``decide(...).allowed``."""
@@ -179,7 +260,7 @@ class AccessPolicy:
             f"OIDC access denied (reason={decision.deny_reason})"
         )
 
-    def pkce_required(self, app: AppLike | None) -> bool:
+    def requires_pkce(self, app: AppLike | None) -> bool:
         """
         Return whether PKCE is required for ``app``.
 
@@ -190,6 +271,12 @@ class AccessPolicy:
         ``client_id`` lives in :mod:`allianceauth_oidc.pkce` (the DOT
         adapter) so the policy stays DI-testable with synthetic
         ``AppLike`` doubles.
+
+        Verb-form name (``requires_pkce``) keeps the method out of
+        identifier collision with ``AppLike.pkce_required`` — the
+        attribute the method reads. ``policy.pkce_required`` would be
+        ambiguous between "method on the policy" and "attribute on a
+        captured app".
         """
         return bool(getattr(app, "pkce_required", True))
 

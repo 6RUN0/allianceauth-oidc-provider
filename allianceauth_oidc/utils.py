@@ -7,9 +7,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, NewType, TypedDict
 
+from django.http import HttpRequest
 from typing_extensions import Self
 
 from .app_settings import OIDCSettings
+from .security import AppLike
 
 __all__ = [
     "OIDCDebugMeta",
@@ -57,7 +59,7 @@ class OIDCDebugMeta(TypedDict):
 
 def app_log(
     logger: logging.Logger,
-    app: object,
+    app: AppLike | None,
     msg: str,
     *args: object,
     **kwargs: Any,
@@ -168,7 +170,7 @@ class SecretRedactor:
 
 
 def build_oidc_debug_meta(
-    request: object,
+    request: HttpRequest | None,
     payload: Mapping[str, Any] | None,
     *,
     redactor: SecretRedactor | None = None,

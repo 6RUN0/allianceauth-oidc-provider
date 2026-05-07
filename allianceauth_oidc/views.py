@@ -20,9 +20,17 @@ from oauth2_provider.models import (
 )
 from oauth2_provider.views.base import AuthorizationView
 from oauth2_provider.views.mixins import OAuthLibMixin
+from typing_extensions import assert_never
 
 from .models import AllianceAuthApplication
-from .security import DEFAULT_POLICY, DenyReason, UserLike
+from .security import (
+    DEFAULT_POLICY,
+    AllowedDecision,
+    AppDeny,
+    GlobalDeny,
+    TokenLike,
+    UserLike,
+)
 from .signals import OIDCAuditBody, oidc_token_issued
 from .utils import app_log, build_oidc_debug_meta
 
@@ -60,7 +68,7 @@ class TokenAudit:
     # successful ``_find_token`` lookup.
     request: HttpRequest | None
     body: str | bytes | None
-    sender: type
+    sender: type[View]
     max_body_bytes: int = _DEFAULT_MAX_BODY_BYTES_FOR_AUDIT_PARSE
     log: logging.Logger = field(default=logger)
 
@@ -121,7 +129,7 @@ class TokenAudit:
             return len(body)
         return None
 
-    def _find_token(self, access_token_str: str) -> object | None:
+    def _find_token(self, access_token_str: str) -> TokenLike | None:
         """Look up the persisted ``AccessToken`` by raw token value."""
         access_token_model = get_access_token_model()
         try:
@@ -137,7 +145,7 @@ class TokenAudit:
             )
             return None
 
-    def _log_debug(self, token: object, payload: dict[str, Any]) -> None:
+    def _log_debug(self, token: TokenLike, payload: dict[str, Any]) -> None:
         """Emit the per-app debug-mode log line, if applicable."""
         if self.request is None:
             return
@@ -156,7 +164,7 @@ class TokenAudit:
             build_oidc_debug_meta(self.request, payload),
         )
 
-    def _dispatch_signal(self, token: object) -> None:
+    def _dispatch_signal(self, token: TokenLike) -> None:
         """Fan out to ``oidc_token_issued`` receivers, logging failures."""
         if self.request is None:
             return
@@ -371,44 +379,54 @@ class AuthAuthorizationView(AuthorizationView):
         app = self._get_app(request)
         decision = DEFAULT_POLICY.decide(user, app)
 
-        if decision.allowed:
-            app_log(
-                logger,
-                decision.app,
-                "OIDC ALLOWED: user=%s app=%s path=%s method=%s",
-                user,
-                decision.app,
-                getattr(request, "path", None),
-                getattr(request, "method", None),
-            )
-            return super().dispatch(request, *args, **kwargs)
+        # Discriminated union via ``match``: each ``case`` narrows the
+        # union to one variant; ``case _`` with ``assert_never`` makes a
+        # future fourth variant a type-check error rather than a silent
+        # fall-through. ``decision.app`` collapses from
+        # ``AppLike | None`` to ``AppLike`` on the ``AppDeny`` branch
+        # via the same narrowing, with no runtime ``assert`` required.
+        match decision:
+            case AllowedDecision():
+                app_log(
+                    logger,
+                    decision.app,
+                    "OIDC ALLOWED: user=%s app=%s path=%s method=%s",
+                    user,
+                    decision.app,
+                    getattr(request, "path", None),
+                    getattr(request, "method", None),
+                )
+                return super().dispatch(request, *args, **kwargs)
 
-        if decision.deny_reason is DenyReason.GLOBAL:
-            logger.warning(
-                "OIDC DENIED: global access user=%s path=%s method=%s",
-                user,
-                getattr(request, "path", None),
-                getattr(request, "method", None),
-            )
-            return self._access_denied_response(
-                request,
-                username=str(user),
-                error_message=_("User not allowed global OIDC access"),
-            )
+            case GlobalDeny():
+                logger.warning(
+                    "OIDC DENIED: global access user=%s path=%s method=%s",
+                    user,
+                    getattr(request, "path", None),
+                    getattr(request, "method", None),
+                )
+                return self._access_denied_response(
+                    request,
+                    username=str(user),
+                    error_message=_("User not allowed global OIDC access"),
+                )
 
-        # DenyReason.APP — decision.app is non-None when reason is APP.
-        denied_app = decision.app
-        logger.warning(
-            "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501
-            user,
-            denied_app,
-            getattr(denied_app, "client_id", None),
-            getattr(request, "path", None),
-            getattr(request, "method", None),
-        )
-        return self._access_denied_response(
-            request,
-            username=str(user),
-            app_name=str(denied_app),
-            error_message=_("User not allowed for this application"),
-        )
+            case AppDeny():
+                denied_app = decision.app  # AppLike (non-None)
+                logger.warning(
+                    "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501
+                    user,
+                    denied_app,
+                    getattr(denied_app, "client_id", None),
+                    getattr(request, "path", None),
+                    getattr(request, "method", None),
+                )
+                return self._access_denied_response(
+                    request,
+                    username=str(user),
+                    app_name=str(denied_app),
+                    error_message=_("User not allowed for this application"),
+                )
+
+            case _:
+                assert_never(decision)

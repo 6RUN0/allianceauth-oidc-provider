@@ -1,12 +1,16 @@
 """``oidc_token_issued`` audit signal and the default audit receiver."""
 
+from __future__ import annotations
+
 import logging
 from typing import Any, TypedDict
 
 from django.dispatch import Signal
+from django.http import HttpRequest
 from typing_extensions import NotRequired
 
 from .constants import AUDIT_DISPATCH_UID
+from .security import TokenLike
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
@@ -46,8 +50,8 @@ oidc_token_issued = Signal(use_caching=True)
 
 def audit_oidc_token_issued(
     sender: object,
-    request: object,
-    token: object,
+    request: HttpRequest | None,
+    token: TokenLike,
     body: OIDCAuditBody | None = None,
     *args: Any,
     **kwargs: Any,

@@ -28,7 +28,7 @@ def per_app_pkce_required(client_id: str | None) -> bool:
     ``OAUTH2_PROVIDER['PKCE_REQUIRED']``.
 
     Resolves ``client_id`` to an ``AllianceAuthApplication`` row and
-    delegates to :meth:`security.AccessPolicy.pkce_required` for the
+    delegates to :meth:`security.AccessPolicy.requires_pkce` for the
     decision. Unknown / ``None`` / empty ``client_id`` falls back to
     ``True`` per RFC 9700 (an unknown client must always take the
     strict path) with a log line at ``WARNING`` so anomalous traffic
@@ -58,4 +58,4 @@ def per_app_pkce_required(client_id: str | None) -> bool:
             "OIDC PKCE: unknown client_id=%a -> fail-safe True", client_id
         )
         return True
-    return DEFAULT_POLICY.pkce_required(app)
+    return DEFAULT_POLICY.requires_pkce(app)

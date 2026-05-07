@@ -5,14 +5,40 @@ from __future__ import annotations
 import functools
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Protocol, runtime_checkable
 
 from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
 from .app_settings import OIDCSettings
-from .security import DEFAULT_POLICY, AppLike, UserLike
+from .security import DEFAULT_POLICY, AppLike, OAuthRequestLike, UserLike
+
+
+@runtime_checkable
+class ClaimsUser(Protocol):
+    """
+    Smallest shape ``ClaimsBuilder`` reads to assemble OIDC claims.
+
+    Distinct from ``security.UserLike`` (security gate): claims need
+    ``profile`` / ``groups`` / ``email`` / ``id``; the security gate
+    needs ``is_authenticated`` / ``is_superuser`` / ``has_perm`` —
+    Django's ``AnonymousUser`` carries the latter set but not the
+    former. Splitting the two protocols keeps each contract minimal
+    and documents which call sites depend on which attrs.
+
+    Fields are typed ``Any`` for the same reason ``AppLike`` does:
+    django-stubs renders FK descriptors as opaque types incompatible
+    with Protocol invariance against ``str`` / ``int``. The runtime
+    contract — ``ClaimsBuilder`` only ``getattr``-reads each field —
+    is unaffected.
+    """
+
+    email: Any
+    profile: Any
+    groups: Any
+    id: Any
+
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
@@ -104,7 +130,7 @@ class ClaimsBuilder:
     with hand-crafted settings and skip ``@override_settings``.
     """
 
-    user: object
+    user: ClaimsUser
     settings: OIDCSettings
     max_groups: int = _DEFAULT_MAX_GROUPS_IN_CLAIM
     log: logging.Logger = field(default=logger)
@@ -254,7 +280,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
     @staticmethod
     def _resolve_user_and_client(
-        request, client_arg: AppLike | None = None
+        request: OAuthRequestLike, client_arg: AppLike | None = None
     ) -> tuple[UserLike | None, AppLike | None]:
         """
         Pull (user, client) out of the validator's request shape.
@@ -285,7 +311,9 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             return None, None
         return user, client
 
-    def _enforce_policy(self, request, client) -> bool:
+    def _enforce_policy(
+        self, request: OAuthRequestLike, client: AppLike | None
+    ) -> bool:
         """
         Run the per-app state/groups gate against ``request.user``.
 
@@ -368,6 +396,18 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         client = getattr(request, "client", None)
         return bool(getattr(client, "skip_authorization", False))
 
+    # NOTE: ``validate_code`` / ``validate_refresh_token`` /
+    # ``save_bearer_token`` / ``get_additional_claims`` keep their
+    # parameters un-annotated. ``oauth2_provider.oauth2_validators``
+    # ships type stubs (basedpyright resolves ``Client`` / ``Request``
+    # / ``_BearerToken`` from them) and our local ``AppLike`` /
+    # ``OAuthRequestLike`` Protocols are structurally narrower than
+    # those concrete types, so an explicit annotation here trips
+    # ``reportArgumentType`` at every ``super().method(...)`` call.
+    # Internal helpers (``_resolve_user_and_client`` / ``_enforce_policy``)
+    # do carry the Protocol annotations — they don't cross the parent
+    # boundary, so Liskov compatibility doesn't bite there.
+
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """
         Ensure app/user policy is enforced during authorization_code
@@ -417,7 +457,12 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
     def get_additional_claims(self, request):
         """Augment DOT's id_token/userinfo claims with AA-specific values."""
-        out = super().get_additional_claims(request)
+        # Pin the local to ``dict[str, Any]`` so the AA-specific
+        # ``out.update(builder.build())`` is checked against the
+        # documented dict contract — DOT's stub of this method
+        # returns a plain ``dict``, but our internal usage adds
+        # type-checked claim merging on top.
+        out: dict[str, Any] = super().get_additional_claims(request)
         user = getattr(request, "user", None)
         if user is None:
             return out

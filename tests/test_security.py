@@ -18,9 +18,10 @@ from django.test import SimpleTestCase
 from django.test.utils import CaptureQueriesContext
 
 from allianceauth_oidc.security import (
-    AccessDecision,
     AccessPolicy,
+    AllowedDecision,
     DenyReason,
+    GlobalDeny,
 )
 
 from ._factories import make_app
@@ -38,21 +39,13 @@ class TestEvaluateAccessPure(SimpleTestCase):
         # this in production-adjacent code paths.
         user = SimpleNamespace(is_superuser=False)  # no has_perm attr
         decision = policy.decide(user, app=None)
-        self.assertEqual(
-            AccessDecision(
-                allowed=False, deny_reason=DenyReason.GLOBAL, app=None
-            ),
-            decision,
-        )
+        self.assertEqual(GlobalDeny(), decision)
 
     def test_superuser_with_no_app_is_allowed(self):
         # Superusers bypass both checks; no app means no app-level gate.
         user = SimpleNamespace(is_superuser=True)
         decision = policy.decide(user, app=None)
-        self.assertEqual(
-            AccessDecision(allowed=True, deny_reason=None, app=None),
-            decision,
-        )
+        self.assertEqual(AllowedDecision(app=None), decision)
 
     def test_app_none_returns_allowed_when_global_passes(self):
         # Regression: ``app=None`` (no client_id in the request, or
@@ -82,10 +75,7 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
         # so any user with the global perm passes the app check.
         self.grant_oidc_access(self.user1)
         decision = policy.decide(self.user1, self.oauth_app)
-        self.assertEqual(
-            AccessDecision(allowed=True, deny_reason=None, app=self.oauth_app),
-            decision,
-        )
+        self.assertEqual(AllowedDecision(app=self.oauth_app), decision)
 
     def test_app_restriction_failure_echoes_app_back(self):
         # App constrained to "Blue" state; user1 is "Member" → denied
@@ -103,7 +93,7 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
 
 class TestPkceRequiredPolicy(SimpleTestCase):
     """
-    ``AccessPolicy.pkce_required(app)`` — the pure-logic decision.
+    ``AccessPolicy.requires_pkce(app)`` — the pure-logic decision.
 
     The DI seam: synthetic ``SimpleNamespace`` doubles satisfy the
     ``AppLike`` Protocol so the policy method stays testable without
@@ -115,24 +105,24 @@ class TestPkceRequiredPolicy(SimpleTestCase):
         app = SimpleNamespace(
             pkce_required=True, debug_mode=False, states=None, groups=None
         )
-        self.assertTrue(policy.pkce_required(app))
+        self.assertTrue(policy.requires_pkce(app))
 
     def test_app_with_required_false(self):
         app = SimpleNamespace(
             pkce_required=False, debug_mode=False, states=None, groups=None
         )
-        self.assertFalse(policy.pkce_required(app))
+        self.assertFalse(policy.requires_pkce(app))
 
     def test_app_missing_attr_falls_back_to_true(self):
         # An object that doesn't expose ``pkce_required`` at all
         # (a partial mock or a future shape change) must take the
         # strict path — RFC 9700 secure-by-default.
         app = SimpleNamespace(debug_mode=False, states=None, groups=None)
-        self.assertTrue(policy.pkce_required(app))
+        self.assertTrue(policy.requires_pkce(app))
 
     def test_app_none_falls_back_to_true(self):
         # ``None`` means "no app resolved" — strict path.
-        self.assertTrue(policy.pkce_required(None))
+        self.assertTrue(policy.requires_pkce(None))
 
 
 class TestPkceRequiredAdapter(OIDCTestCase):
