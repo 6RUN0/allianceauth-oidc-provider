@@ -191,6 +191,31 @@ plan (~35 modules) the run is ~70-80 minutes versus ~30-50 minutes
 for shared-stack. Use this only when you need a clean partition;
 day-to-day iteration should stay on `nox -s conformance`.
 
+## Baseline expected_failures.json
+
+`tests/conformance/expected_failures.json` records the known status
+of every basic-cert module that does NOT pass cleanly today, with
+short reasons grouped into three classes:
+
+1. **Real provider gaps** (~6 modules) — features we have not yet
+   implemented (`prompt=`, `id_token_hint`, POST `/o/authorize/`,
+   `client_secret_post`, redirect_uri exact-match validation). Each
+   is a roadmap entry; remove the line when you implement the feature
+   and the next run will produce an `XPASS` alarm to confirm.
+2. **HtmlUnit upstream issues** (~16 modules) — TIMEOUT in the
+   suite-side browser even with per-module restart. These come back
+   only when the suite ships a newer HtmlUnit (4.13+).
+3. **Suite-side SKIP** (3 modules) — `oidcc-scope-{address,phone,all}`
+   the suite skips because we do not advertise these scopes in
+   discovery. Listed so they don't tilt the exit code.
+
+`run_per_module.sh` automatically passes
+`--expected-failures tests/conformance/expected_failures.json` if
+the file exists and the operator did not override it. With the
+baseline in place, a default per-module run prints `xfail=N
+xpass=0` and exits 0 — green CI baseline, while any `XPASS` line is
+a loud alarm that an entry has gone stale and should be removed.
+
 ## Discovery: which modules pass on this machine?
 
 The HtmlUnit NPE is non-deterministic, and a failed module can

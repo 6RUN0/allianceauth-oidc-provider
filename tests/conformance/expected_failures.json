@@ -1,0 +1,29 @@
+{
+  "oidcc-id-token-hint": "id_token_hint parameter not yet implemented (OIDC Core 1.0 §3.1.2.4). Provider must accept id_token_hint at /authorize and use its sub claim to skip the authentication step.",
+  "oidcc-prompt-none-logged-in": "prompt=none for an already-authenticated user not yet implemented (OIDC Core 1.0 §3.1.2.1). Provider must skip login UI and return code immediately when the existing session matches.",
+  "oidcc-prompt-none-not-logged-in": "prompt=none for an unauthenticated user not yet implemented. Provider must return login_required error per OIDC Core 1.0 §3.1.2.6 instead of redirecting to login.",
+  "oidcc-ensure-post-request-succeeds": "POST to /o/authorize/ not yet supported (only GET). Provider must accept POST with form-encoded params per OIDC Core 1.0 §3.1.2.1.",
+  "oidcc-ensure-registered-redirect-uri": "redirect_uri validation against registered list — needs review. The Application model stores redirect_uris but suite reports a mismatch; verify exact-match semantics in oauth2_provider.",
+  "oidcc-server-client-secret-post": "client_secret_post auth method not enabled. Provider's discovery currently advertises only client_secret_basic; need to add 'client_secret_post' to token_endpoint_auth_methods_supported and accept credentials in the POST body.",
+
+  "oidcc-server": "TIMEOUT — happy-path code-flow does not finish in 180s on a fresh JVM. Suspect HtmlUnit cold-start + first browser-driven module timing edge.",
+  "oidcc-alternate-happy-flow": "TIMEOUT — alternate ordering of code-flow steps; HtmlUnit 4.11.1 upstream issue.",
+  "oidcc-display-page": "TIMEOUT — display=page parameter; HtmlUnit 4.11.1 upstream.",
+  "oidcc-prompt-login": "TIMEOUT — prompt=login flow; suite browser thread stalls before token exchange.",
+  "oidcc-max-age-1": "TIMEOUT — max_age=1 forces re-auth; HtmlUnit 4.11.1 upstream.",
+  "oidcc-login-hint": "TIMEOUT — login_hint parameter; HtmlUnit 4.11.1 upstream.",
+  "oidcc-claims-essential": "TIMEOUT — essential claims request via 'claims' parameter; HtmlUnit 4.11.1 upstream.",
+  "oidcc-ensure-request-with-acr-values-succeeds": "TIMEOUT — acr_values parameter; HtmlUnit 4.11.1 upstream.",
+  "oidcc-codereuse": "TIMEOUT — code-reuse rejection check; HtmlUnit 4.11.1 upstream.",
+  "oidcc-codereuse-30seconds": "TIMEOUT — code-reuse-after-30s check; HtmlUnit 4.11.1 upstream.",
+  "oidcc-ensure-request-object-with-redirect-uri": "TIMEOUT — request object containing redirect_uri; HtmlUnit 4.11.1 upstream.",
+  "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported": "TIMEOUT — unsigned request object handling; HtmlUnit 4.11.1 upstream.",
+  "oidcc-refresh-token": "TIMEOUT — refresh_token grant; suite never reaches token exchange after the browser flow.",
+  "oidcc-scope-email": "TIMEOUT — email scope claims probe; HtmlUnit 4.11.1 upstream.",
+  "oidcc-scope-profile": "TIMEOUT — profile scope claims probe; HtmlUnit 4.11.1 upstream.",
+  "oidcc-userinfo-post-body": "TIMEOUT — POST /userinfo with credentials in body; HtmlUnit 4.11.1 upstream (sibling oidcc-userinfo-post-header passes).",
+
+  "oidcc-scope-address": "Suite SKIPPED — address scope not advertised in discovery; provider does not return address claims.",
+  "oidcc-scope-phone": "Suite SKIPPED — phone scope not advertised in discovery; provider does not return phone claims.",
+  "oidcc-scope-all": "Suite SKIPPED — depends on address/phone scopes which the provider does not implement."
+}

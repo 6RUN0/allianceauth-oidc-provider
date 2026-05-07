@@ -15,7 +15,12 @@ import time
 
 import requests
 
-from .client import create_plan, export_plan_html, run_module
+from .client import (
+    create_plan,
+    export_plan_html,
+    run_module,
+    wait_for_suite_ready,
+)
 from .config import ModuleResult
 from .filtering import filter_modules
 from .summary import emit_summary, write_summary_json
@@ -70,6 +75,11 @@ def run_plan(
     they were never executed.
     """
     session = requests.Session()
+    # Wait for Spring Boot to finish warming up — docker-compose's
+    # --wait can return before /api/runner/available answers 200.
+    # Without this, the initial POST /api/plan races startup and
+    # leaves first-module diagnostics ambiguous.
+    wait_for_suite_ready(session)
     # Always create one plan up front to discover the module list,
     # even in isolated mode — that is how we learn which modules the
     # plan ships. In shared mode this same plan is reused for every

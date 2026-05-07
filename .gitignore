@@ -138,3 +138,7 @@ desktop.ini
 # the project's vocab tracked, ignore the rest.
 styles/*
 !styles/config/
+
+# Conformance: per-module summary JSON artifacts produced by
+# ``run_per_module.sh``. Ephemeral results — review and discard.
+tests/conformance/results/

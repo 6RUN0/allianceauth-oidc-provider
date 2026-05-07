@@ -16,7 +16,7 @@ import sys
 
 import requests
 
-from .client import create_plan
+from .client import create_plan, wait_for_suite_ready
 from .config import DEFAULT_VARIANT, PLAN_VARIANT_DEFAULTS
 from .filtering import load_expected_failures
 from .orchestrator import run_plan
@@ -197,8 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_modules:
         # Discovery-only mode: create a plan, print module names,
         # exit. No modules are kicked off, so the suite stack can be
-        # torn down right after.
+        # torn down right after. Wait for Spring Boot first — same
+        # reason as in run_plan().
         session = requests.Session()
+        wait_for_suite_ready(session)
         catalogue = create_plan(
             session, plan_name=args.plan, plan_variant=plan_variant
         )

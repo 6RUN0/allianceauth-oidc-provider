@@ -28,6 +28,7 @@ set -euo pipefail
 PLAN="oidcc-basic-certification-test-plan"
 RESULTS_DIR="tests/conformance/results"
 COMPOSE_FILE="tests/conformance/docker-compose.yml"
+EXPECTED_FAILURES="tests/conformance/expected_failures.json"
 RUNNER_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -42,6 +43,18 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Auto-inject the baseline expected-failures file so default
+# invocation produces a green CI run (XFAIL on known issues, XPASS
+# alarm if anything was fixed upstream). Operator can override by
+# passing their own ``--expected-failures`` after ``--``.
+expected_failures_seen=0
+for arg in "${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}"; do
+    [[ "$arg" == "--expected-failures" ]] && expected_failures_seen=1
+done
+if [[ -f "$EXPECTED_FAILURES" && "$expected_failures_seen" -eq 0 ]]; then
+    RUNNER_ARGS+=("--expected-failures" "$EXPECTED_FAILURES")
+fi
 
 mkdir -p "$RESULTS_DIR"
 
@@ -76,14 +89,21 @@ for module in "${MODULES[@]}"; do
     docker compose -f "$COMPOSE_FILE" up -d --wait
     # ``|| true`` so a single module's non-zero exit (FAILED) does
     # not break the loop; the JSON file captures the verdict anyway.
+    # ``${RUNNER_ARGS[@]+...}`` guards against ``set -u`` tripping
+    # on an empty array.
     uv run python tests/conformance/run_plan.py \
         --plan "$PLAN" \
         --include "$module" \
         --summary-json "$RESULTS_DIR/$module.json" \
-        "${RUNNER_ARGS[@]}" || true
+        "${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}" || true
     docker compose -f "$COMPOSE_FILE" down -v >/dev/null
 done
 
 echo
 echo "==> [aggregate] combining ${total} per-module summaries"
-uv run python tests/conformance/aggregate_summaries.py "$RESULTS_DIR"
+aggregate_args=("$RESULTS_DIR")
+if [[ -f "$EXPECTED_FAILURES" ]]; then
+    aggregate_args+=("--expected-failures" "$EXPECTED_FAILURES")
+fi
+uv run python tests/conformance/aggregate_summaries.py \
+    "${aggregate_args[@]}"

@@ -35,6 +35,53 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
+def wait_for_suite_ready(
+    session: requests.Session,
+    *,
+    timeout_s: int = 360,
+    poll_interval_s: int = 5,
+) -> None:
+    """
+    Block until the conformance suite's API replies 200.
+
+    Mirrors upstream ``conformance.py:wait_for_server_ready``: polls
+    ``GET /api/runner/available`` until HTTP 200 or ``timeout_s``
+    elapses. Required because docker-compose's ``--wait`` only
+    blocks on containers that declare a ``healthcheck`` — the suite
+    server image has none, so a bare ``compose up`` returns while
+    Spring Boot is still warming up. Without this gate the first
+    ``POST /api/plan`` can race the boot and produce mysterious
+    TIMEOUTs on otherwise-fast modules.
+
+    Raises ``RuntimeError`` on timeout.
+    """
+    deadline = time.monotonic() + timeout_s
+    attempts = 0
+    last_status: int | str = "no-response"
+    while time.monotonic() < deadline:
+        attempts += 1
+        try:
+            resp = session.get(
+                f"{SUITE_URL}/api/runner/available",
+                verify=False,
+                timeout=10,
+            )
+            last_status = resp.status_code
+            if resp.status_code == 200:
+                logger.info(
+                    "suite ready (HTTP 200) after %d attempt(s)",
+                    attempts,
+                )
+                return
+        except requests.RequestException as exc:
+            last_status = type(exc).__name__
+        time.sleep(poll_interval_s)
+    raise RuntimeError(
+        f"suite did not become ready in {timeout_s}s "
+        f"(last status: {last_status})"
+    )
+
+
 def create_plan(
     session: requests.Session,
     *,
