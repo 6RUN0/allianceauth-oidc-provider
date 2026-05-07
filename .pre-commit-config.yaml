@@ -100,6 +100,42 @@ repos:
         pass_filenames: false
         args: ["run", "basedpyright", "--project", "pyproject.toml"]
 
+      - id: vulture
+        name: vulture (dead-code detection)
+        entry: uv
+        language: system
+        pass_filenames: false
+        types: [python]
+        args: ["run", "vulture"]
+
+      - id: xenon
+        name: xenon (cyclomatic complexity)
+        entry: uv
+        language: system
+        pass_filenames: false
+        types: [python]
+        # Thresholds documented above [tool.vulture] in pyproject.toml.
+        args: [
+          "run", "xenon",
+          "--max-absolute", "D",
+          "--max-modules", "B",
+          "--max-average", "A",
+          "allianceauth_oidc/",
+        ]
+
+  # uv lock drift detection. Runs on every commit that touches
+  # pyproject.toml — a forgotten `uv lock` is a common cause of
+  # CI-only failures.
+  - repo: local
+    hooks:
+      - id: uv-lock-check
+        name: uv lock --check
+        entry: uv
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+        args: ["lock", "--check"]
+
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4
     hooks:

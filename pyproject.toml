@@ -52,6 +52,13 @@ dev = [
     "pre-commit>=4.5.1",
     "requests>=2.32",
     "ruff>=0.15",
+    # Dead-code detector. Complements ruff F401 (unused imports) by also
+    # finding unused functions, classes, and class attributes. ``min_confidence``
+    # and Django ignore_names live in [tool.vulture].
+    "vulture>=2.16",
+    # Cyclomatic-complexity guard. Pre-commit thresholds documented in
+    # [tool.vulture] adjacent comments — xenon has no pyproject.toml schema.
+    "xenon>=0.9",
 ]
 
 [tool.uv.build-backend]
@@ -250,6 +257,51 @@ reportUnannotatedClassAttribute = "none"
 # They are inline-suppressed with `# nosec` where needed; this just trims the
 # scan to the production code.
 exclude_dirs = [ "tests", "allianceauth_oidc/migrations" ]
+
+# xenon (cyclomatic complexity guard) — invoked from pre-commit / nox /
+# CI as: ``xenon --max-absolute D --max-modules B --max-average A
+# allianceauth_oidc/``. Xenon has no pyproject.toml schema, so the
+# thresholds live as inline doc:
+# - max-absolute D (≤ 30 per block): per-function ceiling. Catches a
+#   single explosively-complex helper (e.g. an authorize-view dispatch
+#   that grew an extra 8-branch state machine on top of the existing
+#   policy gate) before it lands.
+# - max-modules B (≤ 10 module average): every module stays
+#   well-structured even if it carries one complex function.
+# - max-average A (≤ 5 overall): keeps the codebase as a whole simple.
+# Adding a function with complexity > 30 or letting a module's average
+# drift past 10 is a regression that pre-commit will catch.
+
+[tool.vulture]
+# 80% strikes the right balance for this codebase: 60% drowns in Django
+# framework boilerplate (ModelAdmin attrs, has_*_permission hooks); 100%
+# misses anything ruff isn't already catching. 80% surfaces only items
+# vulture is highly sure are unused.
+min_confidence = 80
+paths = [ "allianceauth_oidc" ]
+exclude = [ "allianceauth_oidc/migrations/*" ]
+ignore_names = [
+    # Django signal handler dispatch contract: post_save / post_delete
+    # / oidc_token_issued invoke handlers as
+    # ``handler(sender, instance, **kwargs)``. ``sender`` is required
+    # by the dispatcher even when the body uses only ``instance``.
+    "sender",
+    # Django ModelAdmin and command framework hooks accept ``request``
+    # / ``obj`` / ``args`` / ``options`` per the framework contract;
+    # subclasses keep the parameter list even when they only branch on
+    # one argument.
+    "request",
+    "obj",
+    # Django ``RunPython(forwards, reverse)`` calls each callback with
+    # ``(apps, schema_editor)``. ``schema_editor`` is required by the
+    # framework even when the body only touches the apps registry.
+    "schema_editor",
+    # ``UserLike.has_perm(self, perm: str) -> bool`` is a Protocol
+    # method body of ``...`` (the contract IS the implementation), so
+    # ``perm`` is "unused" by definition — implementations satisfy the
+    # Protocol structurally without referencing the stub.
+    "perm",
+]
 
 [tool.coverage.run]
 # Branch coverage catches half-covered ``if`` arms even when the
