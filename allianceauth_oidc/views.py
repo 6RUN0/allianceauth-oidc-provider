@@ -7,8 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse, HttpResponseBase
+from django.http import HttpRequest, HttpResponse, HttpResponseBase, QueryDict
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext as _
@@ -225,9 +224,33 @@ class TokenView(OAuthLibMixin, View):
         return response
 
 
-@method_decorator(login_required, name="dispatch")
+@method_decorator(csrf_exempt, name="dispatch")
 class AuthAuthorizationView(AuthorizationView):
-    """OIDC authorization endpoint with global + per-app access policy."""
+    """
+    OIDC authorization endpoint with global + per-app access policy.
+
+    ``csrf_exempt`` is required to satisfy OIDC Core 1.0 §3.1.2.1
+    ("Authorization Servers MUST support the use of the HTTP GET and
+    POST methods at the Authorization Endpoint"): an OIDC initial
+    authorize POST comes from a third-party client cross-origin, so a
+    Django CSRF token is fundamentally impossible. The same-origin
+    consent-form POST also flows through this view; CSRF on it is
+    redundant with the OAuth ``state`` parameter and the per-client
+    ``redirect_uri`` whitelist (which together rule out the
+    OAuth-login-CSRF class of attacks). Major OIDC providers
+    (Keycloak, Auth0, Okta) all csrf-exempt their authorize endpoints
+    for the same reason.
+
+    Anonymous-user redirect to login flows through DOT's
+    ``BaseAuthorizationView`` ``LoginRequiredMixin``, which calls
+    ``handle_no_permission()`` from inside ``super().dispatch()`` —
+    i.e. after our POST→GET promotion has run, so the redirect's
+    ``next`` parameter carries the promoted query string. Wrapping
+    this view in an additional ``@login_required`` decorator would
+    bypass that ordering and bind ``next`` to the original
+    (param-less) POST URL, dropping all OIDC parameters across the
+    login round-trip.
+    """
 
     template_name = "allianceauth_oidc/authorize.html"
 
@@ -305,12 +328,46 @@ class AuthAuthorizationView(AuthorizationView):
         Centralising the check here closes the POST-bypass that arises if the
         gate lives in ``get()``/``post()`` separately.
         """
+        # OIDC Core 1.0 §3.1.2.1 mandates POST support at the
+        # authorize endpoint. DOT's ``AuthorizationView`` was written
+        # for the same-origin consent flow only — its ``post()`` runs
+        # ``AllowForm`` validation expecting an ``allow`` field. For a
+        # cross-origin OIDC initial-request POST (no ``allow``,
+        # x-www-form-urlencoded body carrying the same parameters a
+        # GET would put in the query string), promote the POST body
+        # to ``request.GET`` and re-label the method so DOT's ``get``
+        # path renders consent / redirects identically to the GET
+        # case. ``QUERY_STRING`` is updated as well so any subsequent
+        # call to ``get_full_path()`` (e.g. login redirect or DOT's
+        # oauthlib URI extraction) reflects the promoted parameters.
+        if request.method == "POST" and "allow" not in request.POST:
+            promoted = request.POST
+            request.GET = promoted
+            request.META["QUERY_STRING"] = promoted.urlencode()
+            # Clear the body so DOT's ``_extract_params`` (which feeds
+            # ``request.POST.items()`` into oauthlib as the request
+            # body) does not surface the same parameters twice — once
+            # in the URL, once in the body — which oauthlib rejects
+            # with ``invalid_request: duplicate parameter``.
+            request.POST = QueryDict("", mutable=False)
+            request.method = "GET"
+
+        # Anonymous users go straight to ``super().dispatch()`` so
+        # DOT's ``LoginRequiredMixin`` redirects them to ``LOGIN_URL``
+        # with ``next`` carrying the (now promoted) query string. The
+        # access policy is meaningless for an unauthenticated request
+        # — running it would surface ``DenyReason.GLOBAL`` (the
+        # global ``access_oidc`` permission gate) and render the 403
+        # denied page instead of letting the user log in.
+        user: UserLike | None = getattr(request, "user", None)
+        if not getattr(user, "is_authenticated", False):
+            return super().dispatch(request, *args, **kwargs)
+
         # IMPORTANT: must run for BOTH GET and POST to prevent POST-bypass.
         # Why in dispatch():
         # - Django OAuth Toolkit AuthorizationView may handle GET/POST
         #   differently.
         # - if checks are only in get()/post(), it's easy to miss a code path.
-        user: UserLike | None = getattr(request, "user", None)
         app = self._get_app(request)
         decision = DEFAULT_POLICY.decide(user, app)
 

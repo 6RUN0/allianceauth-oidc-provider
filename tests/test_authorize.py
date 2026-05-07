@@ -88,6 +88,52 @@ class TestAuthorizeGate(OIDCTestCase):
         response = self.authorize_post(self.user1, data=data)
         self.assertDeniedGlobal(response, self.user1)
 
+    def test_oidc_initial_post_renders_consent(self):
+        """
+        OIDC Core 1.0 §3.1.2.1: a cross-origin POST authorize from a
+        third-party client (no ``allow`` field, parameters in the
+        x-www-form-urlencoded body) must reach the consent page just
+        like the equivalent GET would.
+        """
+        self.grant_oidc_access(self.user1)
+        data = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": "oidc-post",
+            "nonce": "nonce-post",
+        }
+        response = self.authorize_post(self.user1, data=data)
+        self.assertAuthorizePage(response, self.oauth_app, scopes=["openid"])
+
+    def test_oidc_initial_post_with_skip_authorization_redirects(self):
+        """
+        OIDC Core 1.0 §3.1.2.1 + ``skip_authorization=True``: POST
+        authorize without ``allow`` on a pre-approved app skips the
+        consent screen and redirects to ``redirect_uri`` carrying the
+        authorization ``code`` and the supplied ``state``.
+        """
+        self.grant_oidc_access(self.user1)
+        skip_app = make_app(
+            owner=self.user1,
+            skip_authorization=True,
+            pkce_required=False,
+        )
+        data = {
+            "response_type": "code",
+            "client_id": skip_app.client_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": "skipped-consent",
+            "nonce": "nonce-skip",
+        }
+        response = self.authorize_post(self.user1, data=data)
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertIn("code", qs)
+        self.assertEqual("skipped-consent", qs["state"][0])
+
     def test_global_denial_with_valid_client_id_does_not_leak_app_name(self):
         """
         Anti-enumeration: when a logged-in user lacks ``access_oidc`` and hits
@@ -215,6 +261,47 @@ class TestAuthorizeGate(OIDCTestCase):
         )
         self.assertAuthorizePage(
             response, self.oauth_app, ["openid", "profile"]
+        )
+
+
+class TestAuthorizeCsrfExemption(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.1 mandates POST support at the authorize
+    endpoint. The cross-origin caller cannot supply a Django CSRF
+    token, so the view must be exempt from ``CsrfViewMiddleware``.
+
+    The default Django test client runs with
+    ``enforce_csrf_checks=False``, which silently masks CSRF
+    regressions; these tests opt into CSRF enforcement explicitly.
+    """
+
+    def test_post_authorize_passes_csrf_middleware(self):
+        """
+        With ``enforce_csrf_checks=True`` the test client applies
+        ``CsrfViewMiddleware``; without ``csrf_exempt`` on the view
+        the POST returns ``403`` ahead of any application logic. We
+        only assert that the response is not the CSRF rejection,
+        leaving downstream rendering / redirect contracts to the
+        functional tests above.
+        """
+        self.grant_oidc_access(self.user1)
+        client = self.client_class(enforce_csrf_checks=True)
+        client.force_login(self.user1)
+        response = client.post(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "csrf-exempt",
+                "nonce": "nonce-csrf",
+            },
+        )
+        self.assertNotEqual(
+            403,
+            response.status_code,
+            "POST authorize must not be rejected by CsrfViewMiddleware",
         )
 
 
