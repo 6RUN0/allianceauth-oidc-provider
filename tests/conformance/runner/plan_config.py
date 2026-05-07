@@ -66,6 +66,21 @@ def build_plan_config() -> dict[str, Any]:
             "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
         },
+        # ``oidcc-server-client-secret-post`` runs
+        # ``OIDCCServerTestClientSecretPost.configureClient()`` which
+        # copies ``config.client_secret_post`` into ``config.client``
+        # before the happy-path starts. The suite assumes "many/most
+        # servers restrict each client to using only one auth method"
+        # and lets the operator point each variant at a separate
+        # pre-registered client; DOT/oauthlib accepts both
+        # ``client_secret_basic`` and ``client_secret_post`` on the
+        # same client_id, so we mirror the regular block. Without
+        # this entry the swap nulls out ``client`` and the module
+        # interrupts at GetStaticClientConfiguration.
+        "client_secret_post": {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+        },
         "client2": {
             "client_id": CLIENT2_ID,
             "client_secret": CLIENT2_SECRET,
