@@ -8,7 +8,13 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
 
-from django.http import HttpRequest, HttpResponse, HttpResponseBase, QueryDict
+from django.http import (
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBase,
+    JsonResponse,
+    QueryDict,
+)
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext as _
@@ -21,6 +27,7 @@ from oauth2_provider.models import (
 )
 from oauth2_provider.views.base import AuthorizationView
 from oauth2_provider.views.mixins import OAuthLibMixin
+from oauth2_provider.views.oidc import ConnectDiscoveryInfoView
 from typing_extensions import assert_never
 
 from .security import (
@@ -433,3 +440,54 @@ class AuthAuthorizationView(AuthorizationView):
 
             case _:
                 assert_never(decision)
+
+
+# OIDC Discovery 1.0 §3 RECOMMENDED fields. ``grant_types_supported``
+# defaults to ``["authorization_code", "implicit"]`` per spec — we
+# advertise the actual subset DOT routes plus ``refresh_token``, since
+# the provider issues refresh tokens. The conformance suite
+# (``oidcc-refresh-token``) flags missing
+# ``grant_types_supported`` via
+# ``EnsureServerConfigurationSupportsRefreshToken`` even though we do
+# emit refresh tokens. Note: spec uses RFC 6749 grant-type names
+# (underscore) — DOT's *internal* model constants use kebab-case for
+# different purposes, do not confuse the two.
+_GRANT_TYPES_SUPPORTED: Final[list[str]] = [
+    "authorization_code",
+    "refresh_token",
+    "client_credentials",
+    "password",
+    "implicit",
+]
+
+
+# OIDC Core 1.0 §5.6 defines three claim types: ``normal``,
+# ``aggregated``, ``distributed``. We only emit normal claims — the
+# aggregated / distributed forms involve external claim providers
+# this provider does not implement.
+_CLAIM_TYPES_SUPPORTED: Final[list[str]] = ["normal"]
+
+
+class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
+    """
+    DOT discovery view augmented with OIDC Discovery 1.0 §3 RECOMMENDED
+    fields the upstream view omits: ``grant_types_supported`` and
+    ``claim_types_supported``. The conformance suite warns about both
+    when missing; downstream client libraries also feature-detect via
+    ``grant_types_supported`` to decide whether refresh-token rotation
+    is offered.
+    """
+
+    def get(
+        self, request: HttpRequest, *args: Any, **kwargs: Any
+    ) -> HttpResponse:
+        """Decorate the upstream JSON body with our extra fields."""
+        upstream = super().get(request, *args, **kwargs)
+        # Re-decode upstream JSON rather than reach into DOT internals
+        # so a future field rename in DOT doesn't silently desync.
+        data = json.loads(upstream.content)
+        data["grant_types_supported"] = list(_GRANT_TYPES_SUPPORTED)
+        data["claim_types_supported"] = list(_CLAIM_TYPES_SUPPORTED)
+        response = JsonResponse(data)
+        response["Access-Control-Allow-Origin"] = "*"
+        return response

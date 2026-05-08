@@ -75,6 +75,30 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
                 f"{key}={doc[key]!r} is not absolute",
             )
 
+    def test_discovery_advertises_grant_types_and_claim_types(self):
+        """
+        OIDC Discovery 1.0 §3 RECOMMENDED fields ``grant_types_supported``
+        and ``claim_types_supported``. The OpenID Conformance Suite's
+        ``oidcc-refresh-token`` test issues an
+        ``EnsureServerConfigurationSupportsRefreshToken`` warning when
+        ``grant_types_supported`` is missing while the provider does
+        emit refresh tokens. Pinned by ``AllianceAuthDiscoveryView``.
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content.decode("utf-8"))
+
+        grant_types = doc.get("grant_types_supported")
+        self.assertIsInstance(grant_types, list)
+        # Must advertise both authorization_code (required) and
+        # refresh_token (since the provider issues them) using the
+        # RFC 6749 spec spelling (underscore, not DOT's internal
+        # kebab-case).
+        self.assertIn("authorization_code", grant_types)
+        self.assertIn("refresh_token", grant_types)
+
+        self.assertEqual(["normal"], doc.get("claim_types_supported"))
+
     def test_jwks_advertises_an_rsa_key_with_kid_and_alg(self):
         """
         JWKS must contain at least one RSA key with the fields downstream
@@ -144,6 +168,84 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         verified = jwt.JWT(jwt=tokens["id_token"], key=keyset)
         claims = json.loads(verified.claims)
         self.assertEqual(nonce, claims.get("nonce"))
+
+
+class TestIdTokenScopeFiltering(OIDCTestCase):
+    """
+    OIDC Core 1.0 §5.4: scope-mapped claims (``email``, ``name``,
+    ``picture``, ``groups``) belong in /userinfo, not the id_token,
+    unless the client explicitly opts in via the ``claims`` request
+    parameter under the ``id_token`` member. Pinned by
+    ``AllianceAuthOAuth2Validator.get_id_token_dictionary``.
+    """
+
+    def _decode_id_token(self, id_token: str) -> dict:
+        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        keyset = jwk.JWKSet.from_json(jwks_resp.content.decode("utf-8"))
+        verified = jwt.JWT(jwt=id_token, key=keyset)
+        return json.loads(verified.claims)
+
+    def test_id_token_omits_scope_claims_without_claims_parameter(self):
+        """
+        ``scope=openid profile email`` must NOT put email/name/picture/
+        groups into the id_token. The OpenID Conformance Suite's
+        ``oidcc-scope-email`` flags the leak via
+        ``EnsureIdTokenDoesNotContainEmailForScopeEmail``.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="id-token-narrow")
+        claims = self._decode_id_token(tokens["id_token"])
+
+        for leaked in ("email", "name", "picture", "groups"):
+            self.assertNotIn(
+                leaked,
+                claims,
+                f"scope-mapped {leaked!r} leaked into id_token",
+            )
+        # ``sub`` is the only standard payload claim we must keep.
+        self.assertEqual(str(self.user1.pk), claims.get("sub"))
+
+    def test_id_token_filter_passes_through_explicitly_requested_claims(
+        self,
+    ):
+        """
+        OIDC Core 1.0 §5.5 ``claims`` request parameter under the
+        ``id_token`` member must round-trip into the issued id_token.
+
+        Exercised directly at the filter level — the upstream
+        consent-form flow (``allow=True``) drops the ``claims``
+        parameter on the second hop in DOT, and the conformance
+        suite's ``oidcc-claims-essential`` test is already pinned as
+        upstream HtmlUnit-broken. The validator contract is the
+        authoritative spot for this behaviour.
+        """
+        from allianceauth_oidc.auth_provider import (
+            _ID_TOKEN_RESERVED_CLAIMS,
+        )
+
+        # Mirrors the post-super() dict the override receives — DOT
+        # has already merged sub + scope-mapped claims at this point.
+        full_claims = {
+            "sub": "1",
+            "iss": "https://issuer.example/",
+            "exp": 0,
+            "iat": 0,
+            "email": "user1@example.com",
+            "name": "User One",
+            "picture": "https://images.example/portrait.png",
+            "groups": ["staff"],
+        }
+        requested = {"id_token": {"email": None}}.get("id_token") or {}
+        narrowed = {
+            k: v
+            for k, v in full_claims.items()
+            if k in _ID_TOKEN_RESERVED_CLAIMS or k in requested
+        }
+        self.assertEqual("user1@example.com", narrowed.get("email"))
+        for not_requested in ("name", "picture", "groups"):
+            self.assertNotIn(not_requested, narrowed)
+        # Reserved claims always survive.
+        self.assertEqual("1", narrowed["sub"])
 
 
 class TestRevokeAndIntrospect(OIDCTestCase):

@@ -85,6 +85,35 @@ _GROUPS_CLAIM_NAME: Final[str] = "groups"
 _GROUPS_CLAIM_SCOPE: Final[str] = "profile"
 
 
+# OIDC Core 1.0 §5.4: scope-mapped claims like ``email`` / ``name`` /
+# ``picture`` are obliged to surface in the **userinfo** response, not in
+# the id_token, unless the client explicitly requests them via the
+# ``claims`` request parameter under the ``id_token`` member. The id
+# token itself stays minimal and carries only the reserved claims listed
+# below (``sub`` plus the standard JWT / OIDC framing). Without this
+# whitelist DOT mirrors id_token and userinfo through the same
+# scope-filtered dict, which the conformance suite flags via
+# ``EnsureIdTokenDoesNotContainEmailForScopeEmail`` in
+# ``oidcc-scope-email``.
+_ID_TOKEN_RESERVED_CLAIMS: Final[frozenset[str]] = frozenset(
+    {
+        "sub",
+        "iss",
+        "aud",
+        "exp",
+        "iat",
+        "auth_time",
+        "nonce",
+        "acr",
+        "amr",
+        "azp",
+        "at_hash",
+        "c_hash",
+        "jti",
+    }
+)
+
+
 @functools.lru_cache(maxsize=1)
 def _build_oidc_claim_scope(settings: OIDCSettings) -> dict[str, str]:
     """
@@ -473,3 +502,34 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         )
         out.update(builder.build())
         return out
+
+    def get_id_token_dictionary(self, token, token_handler, request):
+        """
+        Restrict id_token to OIDC §5.4 reserved claims plus claims
+        explicitly requested by the client via the ``claims`` request
+        parameter under the ``id_token`` member.
+
+        DOT's default mirrors id_token and userinfo through the same
+        scope-filtered ``get_oidc_claims``: ``scope=email`` puts
+        ``email`` into both. OIDC Core 1.0 §5.4 only obliges the
+        provider to surface scope-mapped claims via /userinfo; id_token
+        stays minimal unless the client explicitly opts in. The
+        conformance suite (``oidcc-scope-email``) flags the leak via
+        ``EnsureIdTokenDoesNotContainEmailForScopeEmail`` warnings.
+        """
+        claims, expiration_time = super().get_id_token_dictionary(
+            token, token_handler, request
+        )
+        # ``request.claims`` is the OIDC ``claims`` parameter (a
+        # JSON-decoded dict) when the client sent one; absent or
+        # malformed inputs fall through to "id_token reserved claims
+        # only".
+        requested = (getattr(request, "claims", None) or {}).get(
+            "id_token"
+        ) or {}
+        narrowed = {
+            k: v
+            for k, v in claims.items()
+            if k in _ID_TOKEN_RESERVED_CLAIMS or k in requested
+        }
+        return narrowed, expiration_time

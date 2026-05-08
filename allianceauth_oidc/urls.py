@@ -3,7 +3,11 @@
 from django.urls import path, re_path
 from oauth2_provider import views
 
-from .views import AuthAuthorizationView, TokenView
+from .views import (
+    AllianceAuthDiscoveryView,
+    AuthAuthorizationView,
+    TokenView,
+)
 
 app_name = "oauth2_provider"
 
@@ -44,7 +48,7 @@ oidc_urlpatterns = [
     # express the optional trailing slash — re_path is required.
     re_path(
         r"^\.well-known/openid-configuration/?$",
-        views.ConnectDiscoveryInfoView.as_view(),
+        AllianceAuthDiscoveryView.as_view(),
         name="oidc-connect-discovery-info",
     ),
     path(
