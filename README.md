@@ -221,6 +221,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE` | `"profile"` | OIDC scope that gates the EVE claims. **Class-level binding** — changing it requires an Auth restart. |
 | `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE` | `"https://images.evetech.net/characters/{character_id}/portrait?size={size}"` | URL template for the `picture` claim. Both `{character_id}` and `{size}` placeholders are required; a malformed template skips the claim with a warning. |
 | `ALLIANCEAUTH_OIDC_PORTRAIT_SIZE` | `128` | Pixel size requested from the portrait service. EVE supports 32 / 64 / 128 / 256 / 512 / 1024. |
+| `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` | `None` | Tri-state operator override for the `email_verified` claim. `True` always emits `true` (e.g. trust signal originates outside AA — users imported from an already-verifying external IdP). `False` always emits `false`. `None` (default) falls through to the auto decision tree: synthetic placeholder addresses from the optional `aa-skip-email` plugin → `false`; otherwise mirrors AA's `REGISTRATION_VERIFY_EMAIL` setting. |
 
 ### Periodic cleanup of expired tokens (Celery Beat)
 
@@ -265,6 +266,8 @@ already request `openid profile` get them without extra setup.
 |---|---|---|
 | `sub` | `User.pk` (DOT default) | `openid` |
 | `email` | `user.email` | `email` |
+| `email_verified` | Auto: `false` for synthetic placeholders (when `aa-skip-email` is installed); otherwise mirrors AA's `REGISTRATION_VERIFY_EMAIL`. Override via `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`. | `email` (paired with `email`) |
+| `acr` | `"0"` (RFC 6711 "no specific level") when the client sent `acr_values`; absent otherwise. | id_token only |
 | `name` | `user.profile.main_character.character_name` | `profile` |
 | `picture` | Portrait URL for the main character (see `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE`) | `profile` |
 | `groups` | `user.groups[*].name`, with `user.profile.state.name` appended | `profile` |
@@ -280,6 +283,15 @@ The `groups` claim is capped at **256 entries** to keep id_tokens under the typi
 header / cookie limit. The state name is appended **after** truncation so consumers that rely on
 the state being present don't lose it silently. Override the cap by subclassing
 `AllianceAuthOAuth2Validator` and overriding the `MAX_GROUPS_IN_CLAIM` class attribute.
+
+#### id_token vs /userinfo
+
+Per OIDC Core 1.0 §5.4, scope-bound claims (everything in the table above except `sub`, `iss`,
+`aud`, standard JWT timestamps, `auth_time`, `nonce`, `acr`, `amr`, `azp`, `at_hash`, `c_hash`,
+`jti`) live in `/userinfo` by default — they do **not** travel inside the id_token. An RP that
+needs them in the id_token specifically must opt in via the OIDC `claims` request parameter, e.g.
+`claims={"id_token": {"email": null, "groups": null}}`. This keeps id_tokens lean and avoids the
+"every claim everywhere" anti-pattern that breaks header / cookie size budgets.
 
 ### Audit signal
 

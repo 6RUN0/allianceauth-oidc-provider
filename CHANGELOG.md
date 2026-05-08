@@ -14,6 +14,76 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.1.0b6] - 2026-05-08
+
+### Added
+
+- `email_verified` claim emitted alongside `email` in both `/userinfo`
+  and `id_token` per OIDC Core 1.0 §5.1. The value reflects AA's
+  email-confirmation state via a four-tier decision tree:
+  `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` (operator override) →
+  synthetic placeholder detection (`aa_skip_email`, soft dependency) →
+  AA's `REGISTRATION_VERIFY_EMAIL` setting → emit. `email` and
+  `email_verified` are emitted as a coupled pair so neither appears
+  without the other.
+- `acr=0` claim emitted in the id_token when the client supplies
+  `acr_values` per OIDC Core 1.0 §3.1.2.6. The provider does not
+  implement Authentication Context Class Reference levels, so RFC 6711
+  "no specific level" is the honest answer instead of silently
+  dropping the claim.
+- New tri-state setting `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`:
+  `True` — always emit `email_verified=true` (e.g. trust signal
+  originates outside AA: users imported from an already-verifying
+  external IdP); `False` — always emit `false`; `None` / unset
+  (default) — fall through to the auto decision tree.
+- OIDC Discovery (`/o/.well-known/openid-configuration`) now advertises
+  `grant_types_supported` and `claim_types_supported` per OIDC
+  Discovery 1.0 §3. Closes the
+  `EnsureServerConfigurationSupportsRefreshToken` warning the OpenID
+  Conformance Suite raised on the `oidcc-refresh-token` plan.
+- Soft dependency on the `aa-skip-email` companion plugin: synthetic
+  placeholder addresses stamped by it are flagged
+  `email_verified=false` regardless of the global setting — those
+  addresses exist precisely because the user skipped verification.
+
+### Changed
+
+- The id_token no longer carries scope-bound claims (`email`, `name`,
+  `picture`, `groups`, `locale`, `eve_*`) by default per OIDC Core 1.0
+  §5.4. DOT mirrored id_token and `/userinfo` through one
+  scope-filtered dict, leaking these claims into the id_token at
+  `scope=email`. They now remain in `/userinfo` unless the client
+  explicitly opts in via the OIDC `claims` request parameter — the
+  override `get_id_token_dictionary` filters against a reserved-claims
+  whitelist (`sub`, `iss`, `aud`, `exp`, `iat`, `auth_time`, `nonce`,
+  `acr`, `amr`, `azp`, `at_hash`, `c_hash`, `jti`) plus
+  client-requested id_token claims. Closes the
+  `EnsureIdTokenDoesNotContainEmailForScopeEmail` finding from the
+  `oidcc-scope-email` conformance plan.
+
+### Tooling
+
+- Conformance harness per-module poll timeout raised from 180s to
+  360s. Empirically moved four browser-driven modules
+  (`oidcc-max-age-10000`, `oidcc-ui-locales`, `oidcc-claims-locales`,
+  `oidcc-scope-email`) from TIMEOUT to stable PASSED without masking
+  real hangs — modules that truly wedge still surface within six
+  minutes.
+- `tests/conformance/diagnostic_export/` added to `.gitignore`:
+  per-plan HTML report archives downloaded via the suite's
+  `GET /api/plan/exporthtml/{id}` are ephemeral artefacts,
+  regeneratable from any rerun.
+
+### Tests
+
+- `signals.py` reaches 100% line and branch coverage. Three direct
+  unit tests now exercise the previously-unreached defensive
+  `except (AttributeError, TypeError, ValueError, KeyError)` block in
+  `audit_oidc_token_issued`: an `AttributeError` swallow path, a
+  `body=None` happy-path branch, and a negative case asserting that
+  unrelated exceptions (`RuntimeError`) still propagate — guarding
+  against accidental widening of the except into `Exception:`.
+
 ## [0.1.0b5] - 2026-05-08
 
 ### Added

@@ -220,6 +220,7 @@ data-шаг видит non-boolean значение, переключается 
 | `ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE` | `"profile"` | OIDC-scope, который гейтит EVE-claim'ы. **Привязка class-level** — после смены настройки нужен перезапуск Auth. |
 | `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE` | `"https://images.evetech.net/characters/{character_id}/portrait?size={size}"` | Шаблон URL для claim'а `picture`. Обязательны плейсхолдеры `{character_id}` и `{size}`; битый шаблон просто пропускает claim с warning'ом. |
 | `ALLIANCEAUTH_OIDC_PORTRAIT_SIZE` | `128` | Какой размер запрашивать у image-сервера. EVE поддерживает 32 / 64 / 128 / 256 / 512 / 1024. |
+| `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` | `None` | Тройственный force-override для claim'а `email_verified`. `True` — всегда отдавать `true` (например, доверие приходит извне AA: пользователи импортированы из IdP, который сам верифицирует адреса). `False` — всегда `false`. `None` (по умолчанию) — auto-режим: синтетические плейсхолдер-адреса от опционального плагина `aa-skip-email` → `false`; иначе зеркалит настройку AA `REGISTRATION_VERIFY_EMAIL`. |
 
 ### Периодическая чистка истёкших токенов (Celery Beat)
 
@@ -264,6 +265,8 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 |---|---|---|
 | `sub` | `User.pk` (DOT default) | `openid` |
 | `email` | `user.email` | `email` |
+| `email_verified` | Auto: `false` для синтетических плейсхолдеров (если установлен `aa-skip-email`); иначе зеркалит AA `REGISTRATION_VERIFY_EMAIL`. Force-override через `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`. | `email` (отдаётся в паре с `email`) |
+| `acr` | `"0"` (RFC 6711 «no specific level»), когда клиент прислал `acr_values`; иначе отсутствует. | только id_token |
 | `name` | `user.profile.main_character.character_name` | `profile` |
 | `picture` | URL аватарки главного персонажа (см. `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE`) | `profile` |
 | `groups` | `user.groups[*].name`, плюс в конец дописывается `user.profile.state.name` | `profile` |
@@ -279,6 +282,15 @@ Claim `groups` ограничен **256 элементами** — это что
 для заголовков и cookie. Имя state дописывается **после** обрезки, так что потребители, которые
 рассчитывают на наличие state, не теряют его молча. Если 256 мало — наследуйтесь от
 `AllianceAuthOAuth2Validator` и переопределите атрибут класса `MAX_GROUPS_IN_CLAIM`.
+
+#### id_token vs /userinfo
+
+По OIDC Core 1.0 §5.4 scope-привязанные claim'ы (всё из таблицы выше, кроме `sub`, `iss`, `aud`,
+стандартных JWT-таймстампов, `auth_time`, `nonce`, `acr`, `amr`, `azp`, `at_hash`, `c_hash`,
+`jti`) живут в `/userinfo` по умолчанию — внутри id_token они **не** едут. RP, которому они
+нужны именно в id_token, должен явно запросить их через OIDC-параметр `claims`, например:
+`claims={"id_token": {"email": null, "groups": null}}`. Так id_token остаётся компактным, и не
+проявляется анти-паттерн «каждый claim везде», который ломает бюджеты заголовков и cookie.
 
 ### Audit-сигнал
 

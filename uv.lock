@@ -81,7 +81,7 @@ wheels = [
 
 [[package]]
 name = "allianceauth-oidc-provider-eveo7"
-version = "0.1.0b5"
+version = "0.1.0b6"
 source = { editable = "." }
 dependencies = [
     { name = "allianceauth" },

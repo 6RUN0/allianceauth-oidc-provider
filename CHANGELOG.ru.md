@@ -14,6 +14,77 @@
 
 ## [Unreleased]
 
+## [0.1.0b6] - 2026-05-08
+
+### Добавлено
+
+- В `/userinfo` и `id_token` теперь рядом с `email` отдаётся claim
+  `email_verified` (OIDC Core 1.0 §5.1). Значение отражает состояние
+  email-подтверждения в Alliance Auth по четырёх-уровневому дереву
+  решений: `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` (force-override
+  оператора) → проверка плейсхолдеров (soft-зависимость на
+  `aa_skip_email`) → настройка AA `REGISTRATION_VERIFY_EMAIL` →
+  выдача. `email` и `email_verified` отдаются связанной парой —
+  один без другого не появится никогда.
+- Если клиент указывает `acr_values`, в id_token отдаётся claim
+  `acr=0` (OIDC Core 1.0 §3.1.2.6). Уровни Authentication Context
+  Class Reference провайдер не реализует, поэтому RFC 6711
+  «no specific level» — честный ответ вместо тихого отбрасывания
+  claim'а.
+- Новая тройственная настройка `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`:
+  `True` — всегда отдавать `email_verified=true` (например, доверие
+  приходит извне AA: пользователи импортированы из IdP, который сам
+  верифицирует адреса); `False` — всегда `false`; `None` / не задано
+  (по умолчанию) — auto-режим через дерево решений выше.
+- В OIDC Discovery (`/o/.well-known/openid-configuration`) теперь
+  объявлены `grant_types_supported` и `claim_types_supported` (OIDC
+  Discovery 1.0 §3). Закрывает warning
+  `EnsureServerConfigurationSupportsRefreshToken`, который OpenID
+  Conformance Suite поднимал на плане `oidcc-refresh-token`.
+- Soft-зависимость на сопутствующий плагин `aa-skip-email`:
+  синтетические плейсхолдер-адреса, проставленные им, помечаются
+  `email_verified=false` независимо от глобальной настройки — такие
+  адреса появляются именно потому, что пользователь пропустил
+  верификацию.
+
+### Изменено
+
+- В id_token больше не уезжают scope-привязанные claims (`email`,
+  `name`, `picture`, `groups`, `locale`, `eve_*`) по умолчанию (OIDC
+  Core 1.0 §5.4). DOT зеркалит id_token и `/userinfo` через один
+  scope-filtered dict — это приводило к утечке таких claims в
+  id_token при `scope=email`. Теперь они остаются в `/userinfo`,
+  если клиент явно не запросил их через OIDC-параметр `claims` —
+  override `get_id_token_dictionary` фильтрует словарь по whitelist
+  reserved-claims (`sub`, `iss`, `aud`, `exp`, `iat`, `auth_time`,
+  `nonce`, `acr`, `amr`, `azp`, `at_hash`, `c_hash`, `jti`) плюс
+  явно запрошенные клиентом id_token claims. Закрывает проверку
+  `EnsureIdTokenDoesNotContainEmailForScopeEmail` плана
+  `oidcc-scope-email` conformance suite.
+
+### Инструментарий
+
+- В conformance-harness'е per-module poll timeout поднят с 180s до
+  360s. Эмпирически четыре browser-driven модуля
+  (`oidcc-max-age-10000`, `oidcc-ui-locales`, `oidcc-claims-locales`,
+  `oidcc-scope-email`) перешли из TIMEOUT в стабильный PASSED, при
+  этом модули, которые реально зависают, всё ещё всплывают как
+  TIMEOUT в пределах шести минут.
+- `tests/conformance/diagnostic_export/` добавлен в `.gitignore`:
+  per-plan HTML-архивы отчётов, которые скачиваются через
+  `GET /api/plan/exporthtml/{id}` — эфемерные артефакты,
+  регенерируются с любого прогона.
+
+### Тесты
+
+- `signals.py` достиг 100% покрытия по строкам и веткам. Три unit-теста
+  теперь покрывают ранее недостижимый оборонительный блок
+  `except (AttributeError, TypeError, ValueError, KeyError)` в
+  `audit_oidc_token_issued`: путь swallow-`AttributeError`, ветка
+  `body=None` (happy-path), и негативный кейс — посторонние
+  исключения (`RuntimeError`) должны пробрасываться наружу,
+  предохраняя от случайного расширения except'а до `Exception:`.
+
 ## [0.1.0b5] - 2026-05-08
 
 ### Добавлено
