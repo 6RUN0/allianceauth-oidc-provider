@@ -2,7 +2,7 @@
 
 help:
 	@echo "Available targets (all run via uv):"
-	@echo "  dev              sync dev dependencies (uv sync --all-groups + pre-commit install)"
+	@echo "  dev              sync dev dependencies (uv sync + pre-commit install)"
 	@echo "  test             run Django test suite (nox -s tests)"
 	@echo "  test-all         run tests on every supported Python (nox -s tests_matrix)"
 	@echo "  lint             run pre-commit on all files (nox -s lint)"
@@ -20,7 +20,7 @@ help:
 	@echo "  deploy           upload distributions to PyPI (uv publish)"
 
 dev:
-	uv sync --all-groups
+	uv sync
 	uv run pre-commit install
 
 test:

@@ -14,6 +14,17 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Changed
+
+- AA-version test stacks declared as PEP 735 dependency groups
+  (`aa4`, `aa5`) in `pyproject.toml` instead of being hard-coded inside
+  the `tests_aa4` nox session body. The session now installs via
+  `uv pip install -e . --group aa4`, letting uv intersect the package's
+  `allianceauth>=4,<6` contract with the group's `<5` narrowing. No
+  user-visible changes; the matrix runs the same combinations.
+  `uv tree --group aaN` now enumerates each supported stack from
+  `pyproject.toml` directly.
+
 ## [0.2.0b1] - 2026-05-08
 
 Minor bump (0.1 → 0.2) marks a widened dependency contract: this is the

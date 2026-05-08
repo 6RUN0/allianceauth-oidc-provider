@@ -59,7 +59,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-groups --python ${{ matrix.python-version }}
+        run: uv sync --python ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run nox -s ${{ matrix.aa-version == '4' && 'tests_aa4' || 'tests' }}
@@ -89,7 +89,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync
 
       - name: Run linters (pre-commit)
         run: uv run nox -s lint
@@ -111,7 +111,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync
 
       - name: Run mypy + basedpyright
         run: uv run nox -s typecheck
@@ -141,7 +141,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync
 
       - name: Compile message catalogues
         run: uv run nox -s compilemessages

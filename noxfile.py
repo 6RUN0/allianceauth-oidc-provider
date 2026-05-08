@@ -36,6 +36,16 @@ nox.options.sessions = ["lint", "tests"]
 # definition in pyproject.toml + uv.lock.
 nox.options.default_venv_backend = "none"
 
+# `dev` is uv's only default dependency group; ``aa4`` / ``aa5`` are
+# declared in ``pyproject.toml`` for matrix sessions and are mutually
+# exclusive (``[tool.uv].conflicts``). Bare ``uv sync`` therefore
+# installs project deps + ``dev`` only — equivalent to the older
+# ``uv sync --all-groups`` semantics from before the AA-stack groups
+# existed. ``--all-groups`` would now pull both incompatible groups
+# and fail resolution; the matrix sessions instead select stacks
+# explicitly via ``--group aa4`` (off-lock) or by leaving ``aa5`` to
+# the lock's default resolution.
+
 # Test runner config:
 # - tests.test_settingsAA4 boots Alliance Auth and (via tests/_fakeredis.py)
 #   monkey-patches django_redis with a fakeredis shim. Set AA_USE_FAKE_REDIS=0
@@ -153,16 +163,15 @@ def tests_matrix(session: nox.Session) -> None:
     Run the Django test suite against every supported Python version.
 
     Spawns a per-interpreter uv-managed venv (vs the default ``none``
-    backend that re-uses the active venv) and ``uv sync --all-groups``s
-    into it before running ``django test``. Slower than ``tests`` but
-    catches version-specific regressions — typing-extension semantics,
+    backend that re-uses the active venv) and ``uv sync``s into it
+    before running ``django test``. Slower than ``tests`` but catches
+    version-specific regressions — typing-extension semantics,
     deprecated stdlib modules, native wheel availability gaps. Pass
     extra args to ``django test`` after ``--`` like with ``tests``.
     """
     session.run_install(
         "uv",
         "sync",
-        "--all-groups",
         f"--python={session.python}",
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
@@ -194,7 +203,9 @@ def tests_aa4(session: nox.Session) -> None:
     from this matrix dimension.
 
     Off-lock by design: ``uv pip install`` (not ``uv sync``) is used so
-    the AA-version constraint can override what the lock says. Test
+    the AA-version constraint from ``[dependency-groups].aa4`` (PEP 735,
+    declared in ``pyproject.toml``) can intersect with the package's
+    ``allianceauth>=4,<6`` contract and resolve to AA 4.x. Test
     dependencies that aren't imported transitively via AA are listed in
     ``TEST_RUNTIME_DEPS`` so they don't have to be discovered via
     ``[dependency-groups].dev``.
@@ -205,9 +216,8 @@ def tests_aa4(session: nox.Session) -> None:
         "install",
         "-e",
         ".",
-        "allianceauth<5",
-        "django<5",
-        "django-oauth-toolkit>=3.2,<4",
+        "--group",
+        "aa4",
         *TEST_RUNTIME_DEPS,
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )

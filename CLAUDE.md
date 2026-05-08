@@ -23,7 +23,7 @@ required.
 
 ```sh
 # install dev environment (uv-managed venv + pre-commit)
-make dev                              # == uv sync --all-groups && uv run pre-commit install
+make dev                              # == uv sync && uv run pre-commit install
 
 # default sessions: lint + tests
 make test                             # == uv run nox -s tests

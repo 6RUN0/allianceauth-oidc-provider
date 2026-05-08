@@ -88,7 +88,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync
 
       # The single most common foot-gun for tag-driven releases is
       # ``git tag v0.1.0`` against a commit whose ``__version__`` still

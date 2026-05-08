@@ -38,7 +38,24 @@ urls.Source = "https://github.com/6RUN0/allianceauth-oidc-provider"
 urls.Tracker = "https://github.com/6RUN0/allianceauth-oidc-provider/issues"
 urls.Upstream = "https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider"
 
+# AA-stack dependency groups (PEP 735). Each group narrows the
+# top-level ``allianceauth>=4,<6`` contract to a single major line so
+# the matrix sessions in ``noxfile.py`` (``tests_aa4``, future
+# ``tests_aaN``) can pin a stack via ``uv pip install -e . --group aaN``
+# instead of hard-coding constraints in the session body. The default
+# ``tests`` / ``tests_matrix`` sessions stay lock-driven (which today
+# resolves to AA 5.x); the explicit ``aa5`` group exists for symmetry
+# and lets ``uv tree --group aa5`` enumerate the AA 5.x dependency tree
+# without consulting the lock.
 [dependency-groups]
+aa4 = [
+    "allianceauth>=4,<5",
+    "django<5",
+]
+aa5 = [
+    "allianceauth>=5,<6",
+    "django>=5.2,<6",
+]
 dev = [
     "bandit[toml]>=1.9",
     "coverage>=7.6",
@@ -60,6 +77,18 @@ dev = [
     # Cyclomatic-complexity guard. Pre-commit thresholds documented in
     # [tool.vulture] adjacent comments — xenon has no pyproject.toml schema.
     "xenon>=0.9",
+]
+
+[tool.uv]
+# AA-stack groups (``aa4`` / ``aa5``) are mutually exclusive — they
+# pin Django to non-overlapping ranges (``<5`` vs ``>=5.2``). PEP 735
+# dependency groups by default all participate in a single lock
+# resolution; without this conflict declaration ``uv lock`` (and the
+# ``uv lock --check`` pre-commit hook) would fail with
+# "your project's requirements are unsatisfiable". Declaring the pair
+# as conflicting tells uv to lock each group independently.
+conflicts = [
+    [{ group = "aa4" }, { group = "aa5" }],
 ]
 
 [tool.uv.build-backend]
