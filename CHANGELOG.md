@@ -14,6 +14,26 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Documentation
+
+- README `OAUTH2_PROVIDER` example and key reference now recommend
+  `ACCESS_TOKEN_EXPIRE_SECONDS = 3600` instead of `60`. The test-suite
+  literal `60` (used by `tests/test_settingsAA4.py` to exercise expiry
+  paths without sleeps) was inappropriate as a production starter:
+  `passport-openidconnect`-based RPs (Wiki.js, Outline, etc.) reject
+  sub-minute access-token lifetimes outright, and even tolerant clients
+  race the user's /userinfo round-trip against the TTL when network
+  latency creeps up. New value matches the production defaults of
+  Auth0 / Keycloak / Google.
+- WikiJS integration section expanded: full URL set (authorization /
+  token / `userinfo` / issuer / logout), explicit warning that
+  `Skip User Profile` must stay off — otherwise WikiJS reads claims
+  out of `id_token` only and fails with "Missing or invalid email
+  address from profile" because we now follow OIDC Core 1.0 §5.4
+  strictly (scope-bound claims live at `/userinfo`, not in `id_token`).
+  Strategy choice (Generic OpenID Connect / OAuth 2.0 vs. Generic
+  OAuth 2.0) documented with the trade-off.
+
 ### Changed
 
 - AA-version test stacks declared as PEP 735 dependency groups

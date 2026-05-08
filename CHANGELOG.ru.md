@@ -14,6 +14,30 @@
 
 ## [Unreleased]
 
+### Документация
+
+- В README — и в примере `OAUTH2_PROVIDER`, и в таблице ключей —
+  рекомендованное значение `ACCESS_TOKEN_EXPIRE_SECONDS` поднято с
+  `60` до `3600`. Прежнее `60` приехало из тестового сеттинга
+  `tests/test_settingsAA4.py`, где маленький TTL нужен для того,
+  чтобы expiry-сценарии прогонялись без `sleep`-ов. В качестве
+  стартового значения для production оно не годилось: RP на
+  `passport-openidconnect` (Wiki.js, Outline и подобные) отвергают
+  токены со сроком жизни меньше минуты сразу, а более терпимые
+  клиенты при чуть выросшей сетевой задержке просто не успевают
+  сделать второй запрос на `/userinfo` до истечения TTL. `3600`
+  совпадает со значением по умолчанию Auth0 / Keycloak / Google.
+- Расширен раздел про интеграцию с WikiJS: полный набор URL
+  (authorization / token / userinfo / issuer / logout), явно
+  предупреждение, что тоггл `Skip User Profile` должен быть
+  выключен — иначе WikiJS читает данные профиля только из
+  `id_token` и падает с *«Missing or invalid email address from
+  profile»*, поскольку провайдер строго следует OIDC Core 1.0 §5.4
+  (claim'ы из scope `email` / `profile` отдаются только через
+  `/userinfo`, в `id_token` их нет). Описан выбор стратегии
+  аутентификации в WikiJS (Generic OpenID Connect / OAuth 2.0
+  против Generic OAuth 2.0) с компромиссом для каждой.
+
 ### Изменено
 
 - Стеки AA-версий объявлены как PEP 735 dependency groups (`aa4`,

@@ -131,7 +131,7 @@ myauth/
            "PKCE_REQUIRED": per_app_pkce_required,
            "ROTATE_REFRESH_TOKEN": True,
            "REFRESH_TOKEN_REUSE_PROTECTION": True,
-           "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
+           "ACCESS_TOKEN_EXPIRE_SECONDS": 3600,
            "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
        }
    ```
@@ -220,7 +220,7 @@ data-шаг видит non-boolean значение, переключается 
 | `PKCE_REQUIRED` | `per_app_pkce_required` (callable, импорт из `allianceauth_oidc.pkce`) | Per-app override, читается из `AllianceAuthApplication.pkce_required`. Новые приложения получают `True` (RFC 9700); существующие — то значение, что было в глобальной настройке на момент миграции. Неизвестный `client_id` сваливается в `True` и пишется в лог как `WARNING`. Конфигурируется через Django admin. **Внимание: значение должно быть ссылкой на функцию, а не dotted-path строкой — DOT не импортирует это значение автоматически.** |
 | `ROTATE_REFRESH_TOKEN` | `True` | Рекомендуется. На каждом использовании выпускает свежий refresh-токен; старый аннулируется. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Рекомендуется. Защита от replay'я по RFC 6819 §5.2.2.3 — refresh-токен, предъявленный дважды, отзывает всё семейство токенов. |
-| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: короче TTL access-токена ⇒ RP вынуждены чаще ходить за refresh (быстрее реагирует на отзыв, больше нагрузки на token endpoint); длиннее ⇒ медленнее распространение отзыва, но трафика меньше. |
+| `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Компромисс: чем короче срок жизни access-токена, тем чаще RP вынуждены ходить за refresh — быстрее реакция на отзыв, но больше запросов к token endpoint; чем длиннее — тем медленнее распространяется отзыв, зато трафик легче. **Не берите за основу тестовое `60`** — это значение из `tests/test_settingsAA4.py`, нужно лишь для того, чтобы expiry-сценарии в тестах гонялись без `sleep`-ов. В реальном логине RP токен должен прожить как минимум один запрос на `/userinfo` плюс запас на `clockTolerance` клиента (~5 секунд); `passport-openidconnect` (Wiki.js, Outline и им подобные) отвергает токены со сроком жизни меньше минуты сразу же. `3600` (1 час) — то же значение по умолчанию, что в Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | На вкус деплоя — какая толерантность к риску. |
 
 ### Свои настройки (ALLIANCEAUTH_OIDC_*)
@@ -516,17 +516,46 @@ api_url = https://<your.auth.url>/o/userinfo/
 
 ### WikiJS
 
-Заранее заведите в auth те группы, которые WikiJS должен подхватывать при логине. (Заведите
-группу `Administrators`, чтобы дать кому-то полный доступ к admin-разделу wiki.)
+В WikiJS два совместимых способа подключения: **Generic OpenID Connect / OAuth 2.0** (строгий OIDC,
+проверяет подпись `id_token` через JWKS) и **Generic OAuth 2.0** (без проверки `id_token`, всё
+из `/userinfo`). Оба работают с этим провайдером; OIDC-режим предпочтительнее — берите его, если
+у вас нет редких ситуаций вроде нестандартного `iss`, ротации JWKS или расхождения часов между
+серверами.
+
+В auth заранее заведите группы, в которые WikiJS будет распределять пользователей при логине
+(например, `Administrators` — чтобы выдать кому-то полный доступ к админке wiki).
 
 | Поле WikiJS | Значение |
 |---|---|
-| Skip User Profile | off |
+| Authorization Endpoint URL | `https://auth.example.com/o/authorize/` |
+| Token Endpoint URL | `https://auth.example.com/o/token/` |
+| User Info Endpoint URL | `https://auth.example.com/o/userinfo/` |
+| Issuer | то, что отдаёт поле `issuer` из `https://auth.example.com/o/.well-known/openid-configuration` — копируйте дословно, включая или исключая слэш в конце; строгие валидаторы рубят запрос на любом расхождении |
+| Skip User Profile | **off** — см. предупреждение ниже |
+| Logout URL *(опционально)* | `https://auth.example.com/o/logout/` |
+| Client ID | `<client_id>` из админки `AllianceAuthApplication` |
+| Client Secret | `<client_secret>` из админки `AllianceAuthApplication` |
+| Scopes | `openid profile email` |
+| User ID Claim | `sub` |
 | Email claim | `email` |
 | Display Name Claim | `name` |
+| Avatar Claim | `picture` |
 | Map Groups | on |
 | Groups Claim | `groups` |
 | Allow Self Registration | on |
+
+> **Тоггл «Skip User Profile» оставляйте выключенным.** Если его включить, WikiJS читает данные
+> профиля только из `id_token` и не ходит на `/userinfo`. Этот провайдер реализует OIDC Core
+> 1.0 §5.4 буква в букву: `email`, `name`, `picture`, `groups`, `locale` отдаются **только**
+> через `/userinfo` и никогда не попадают в `id_token`. С включённым «Skip User Profile» WikiJS
+> упадёт на этапе создания пользователя с ошибкой *«Missing or invalid email address from
+> profile»*.
+>
+> **Не задавайте `ACCESS_TOKEN_EXPIRE_SECONDS` слишком маленьким.** WikiJS после обмена кода
+> на токен делает ещё один запрос — на `/userinfo`. С `clockTolerance` ~5 секунд и реальной
+> сетевой задержкой токен короче ~30 секунд на практике уже не успевает дожить до второго
+> запроса, и `/userinfo` отвечает 401. Держите рекомендованные `3600` (см. таблицу
+> [ключей `OAUTH2_PROVIDER`](#ключи-oauth2_provider)).
 
 ## Разработка
 

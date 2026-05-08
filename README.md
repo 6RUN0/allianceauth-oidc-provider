@@ -133,7 +133,7 @@ edits below to those.
            "PKCE_REQUIRED": per_app_pkce_required,
            "ROTATE_REFRESH_TOKEN": True,
            "REFRESH_TOKEN_REUSE_PROTECTION": True,
-           "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
+           "ACCESS_TOKEN_EXPIRE_SECONDS": 3600,
            "REFRESH_TOKEN_EXPIRE_SECONDS": 24 * 60 * 60,
        }
    ```
@@ -221,7 +221,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `PKCE_REQUIRED` | `per_app_pkce_required` (callable, imported from `allianceauth_oidc.pkce`) | Per-app override resolved from `AllianceAuthApplication.pkce_required`. New apps default to `True` (RFC 9700); existing apps land at the previous global value at migration time. Unknown `client_id` falls back to `True` and is logged at `WARNING`. Configurable through Django admin. **Note: must be assigned as a function reference, not a dotted-path string — DOT does not auto-import this setting.** |
 | `ROTATE_REFRESH_TOKEN` | `True` | Recommended. Mints a fresh refresh token on every use; old one is invalidated. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
-| `ACCESS_TOKEN_EXPIRE_SECONDS` | `60` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. |
+| `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. **Do not copy the test-suite literal `60`** — that value is test-only (used by `tests/test_settingsAA4.py` to exercise expiry paths without sleeps) and races against real RP login flows that need at least one /userinfo round-trip plus client-side `clockTolerance` (~5 s). The `passport-openidconnect` strategy used by Wiki.js, Outline, and similar reject sub-minute lifetimes outright. `3600` (1 hour) matches the production defaults of Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
 
 ### Custom settings (ALLIANCEAUTH_OIDC_*)
@@ -515,17 +515,43 @@ api_url = https://<your.auth.url>/o/userinfo/
 
 ### WikiJS
 
+WikiJS ships two compatible strategies: **Generic OpenID Connect / OAuth 2.0** (strict OIDC,
+validates `id_token` against JWKS) and **Generic OAuth 2.0** (no `id_token` validation, just
+`/userinfo`). Either works against this provider; the OIDC strategy is recommended unless your
+deployment hits cryptographic edge cases (custom `iss`, JWKS rotation, clock skew).
+
 Pre-create the groups you want WikiJS users to land in on the AA side; WikiJS will map them at
 login. (Create an `Administrators` group to grant the wiki admin pages.)
 
 | WikiJS field | Value |
 |---|---|
-| Skip User Profile | off |
+| Authorization Endpoint URL | `https://auth.example.com/o/authorize/` |
+| Token Endpoint URL | `https://auth.example.com/o/token/` |
+| User Info Endpoint URL | `https://auth.example.com/o/userinfo/` |
+| Issuer | exact value of `issuer` from `https://auth.example.com/o/.well-known/openid-configuration` (mind the trailing slash — strict validators reject mismatched issuers) |
+| Skip User Profile | **off** — see warning below |
+| Logout URL *(optional)* | `https://auth.example.com/o/logout/` |
+| Client ID | `<client_id>` from `AllianceAuthApplication` admin |
+| Client Secret | `<client_secret>` from `AllianceAuthApplication` admin |
+| Scopes | `openid profile email` |
+| User ID Claim | `sub` |
 | Email claim | `email` |
 | Display Name Claim | `name` |
+| Avatar Claim | `picture` |
 | Map Groups | on |
 | Groups Claim | `groups` |
 | Allow Self Registration | on |
+
+> **Do not enable «Skip User Profile».** The flag tells WikiJS to read profile claims out of the
+> `id_token` only, skipping the call to `/userinfo`. This provider follows OIDC Core 1.0 §5.4
+> strictly — `email`, `name`, `picture`, `groups`, `locale` are emitted **only** at `/userinfo`,
+> never inside `id_token`. WikiJS with `Skip User Profile = on` lands at the
+> *"Missing or invalid email address from profile"* error during user creation.
+>
+> **Mind `ACCESS_TOKEN_EXPIRE_SECONDS`.** WikiJS goes through the token endpoint then makes one
+> further call to `/userinfo`; with `clockTolerance` defaults around 5 s plus network latency, an
+> access token shorter than ~30 s is unsafe in practice. Stick to the recommended `3600` (see
+> [`OAUTH2_PROVIDER` keys](#oauth2_provider-keys)).
 
 ## Development
 
