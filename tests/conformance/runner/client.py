@@ -117,7 +117,7 @@ def poll_module(
     session: requests.Session,
     *,
     module_id: str,
-    timeout_s: int = 180,
+    timeout_s: int = 360,
     poll_interval_s: int = 3,
 ) -> str:
     """
@@ -131,13 +131,16 @@ def poll_module(
     SKIPPED) fields. ``/api/runner/{id}`` returns a different shape
     without these.
 
-    Default ``timeout_s`` is 180s — empirically the browser-driven
-    code-flow happy paths (login form fill + consent click + token
-    exchange + userinfo probe) take ~60-90s on a developer laptop;
-    cold-start under ``--isolated`` can push that further. The cap
-    still bounds the impact of HtmlUnit 4.11.1's NPE — modules that
-    truly hang return TIMEOUT within 3 minutes rather than wedging
-    the whole run.
+    Default ``timeout_s`` is 360s — empirically the browser-driven
+    happy paths (login form fill + consent click + token exchange +
+    userinfo probe) take ~60-90s on a developer laptop; HtmlUnit
+    4.11.1 timing edges on parameter-heavy modules
+    (``oidcc-max-age-10000``, ``oidcc-ui-locales``,
+    ``oidcc-claims-locales``) push that to 3-5 minutes per module.
+    Step-up from the earlier 180→240→360 progression empirically
+    moved 4 modules from TIMEOUT to PASSED without masking real
+    regressions — modules that truly wedge still return TIMEOUT
+    within 6 minutes.
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
