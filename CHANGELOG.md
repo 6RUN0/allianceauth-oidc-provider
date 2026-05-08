@@ -14,6 +14,23 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.2.0b2] - 2026-05-09
+
+### Fixed
+
+- `manage.py oidc_audit_tokens --help` (and the three sibling commands
+  `oidc_create_app`, `oidc_revoke_user_tokens`, `oidc_rotate_secret`)
+  raised `TypeError: expected string or bytes-like object, got
+  '__proxy__'` on Python 3.12+. argparse's `HelpFormatter._fill_text`
+  now passes the description / argument-help straight into `re.sub`,
+  which refuses to coerce the `gettext_lazy` proxy object that the
+  commands had been using. The four commands switched to non-lazy
+  `gettext`; the active language is fixed at process start for
+  short-lived management commands, so lazy evaluation bought nothing.
+  `# type: ignore[assignment]` casts that papered over the
+  `BaseCommand.help: str` mismatch are no longer needed and were
+  removed.
+
 ### Documentation
 
 - README `OAUTH2_PROVIDER` example and key reference now recommend

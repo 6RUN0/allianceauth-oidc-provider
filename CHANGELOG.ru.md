@@ -14,6 +14,23 @@
 
 ## [Unreleased]
 
+## [0.2.0b2] - 2026-05-09
+
+### Исправлено
+
+- `manage.py oidc_audit_tokens --help` (и три соседние команды —
+  `oidc_create_app`, `oidc_revoke_user_tokens`, `oidc_rotate_secret`)
+  падали с `TypeError: expected string or bytes-like object, got
+  '__proxy__'` на Python 3.12+. `HelpFormatter._fill_text` в новом
+  argparse прогоняет описание парсера и `help` аргументов прямо через
+  `re.sub`, а тот отказывается приводить к строке прокси-объект из
+  `gettext_lazy`, который команды использовали. Все четыре команды
+  переведены на не-ленивый `gettext`: management-команды живут в
+  short-lived процессе, активный язык фиксируется на старте, и lazy
+  не давала никакого выигрыша. Заодно убраны
+  `# type: ignore[assignment]` поверх `BaseCommand.help: str` —
+  без lazy они стали ложью.
+
 ### Документация
 
 - В README — и в примере `OAUTH2_PROVIDER`, и в таблице ключей —

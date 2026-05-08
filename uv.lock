@@ -96,35 +96,35 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 dependencies = [
-    { name = "bcrypt" },
-    { name = "beautifulsoup4" },
-    { name = "celery" },
-    { name = "celery-once" },
-    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" } },
-    { name = "django-bootstrap5" },
-    { name = "django-celery-beat" },
-    { name = "django-esi", version = "9.2.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "django-redis" },
-    { name = "django-registration", version = "5.2.1", source = { registry = "https://pypi.org/simple" } },
-    { name = "django-solo" },
-    { name = "django-sortedm2m" },
-    { name = "django-sri" },
-    { name = "dnspython" },
-    { name = "mysqlclient" },
-    { name = "openfire-restapi" },
-    { name = "packaging" },
-    { name = "passlib" },
-    { name = "pydiscourse" },
-    { name = "python-slugify" },
-    { name = "pyyaml" },
-    { name = "redis" },
-    { name = "requests" },
-    { name = "requests-oauthlib" },
-    { name = "semantic-version" },
-    { name = "slixmpp" },
-    { name = "telnetlib3" },
-    { name = "ua-parser" },
-    { name = "user-agents" },
+    { name = "bcrypt", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "beautifulsoup4", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "celery", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "celery-once", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-bootstrap5", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-celery-beat", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-esi", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-redis", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-registration", version = "5.2.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-solo", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-sortedm2m", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-sri", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "dnspython", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "mysqlclient", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "openfire-restapi", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "packaging", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "passlib", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "pydiscourse", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "python-slugify", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "pyyaml", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "redis", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "requests", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "requests-oauthlib", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "semantic-version", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "slixmpp", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "telnetlib3", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "ua-parser", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "user-agents", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/56/0d/12b5a231d514841eda93d7c0ee52dcba2d86553d6e451b2ccce0e2801174/allianceauth-5.0.1.tar.gz", hash = "sha256:33c4edf32914975c543ff7fae45cab83827b486a95b41da7799894b41199e083", size = 1582862, upload-time = "2026-05-08T12:23:26.029Z" }
 wheels = [
@@ -133,7 +133,7 @@ wheels = [
 
 [[package]]
 name = "allianceauth-oidc-provider-eveo7"
-version = "0.2.0b1"
+version = "0.2.0b2"
 source = { editable = "." }
 dependencies = [
     { name = "allianceauth", version = "4.13.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
@@ -402,7 +402,7 @@ version = "1.39.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinxed", marker = "(sys_platform == 'win32' and extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4') or (extra == 'group-32-allianceauth-oidc-provider-eveo7-aa4' and extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5')" },
-    { name = "wcwidth" },
+    { name = "wcwidth", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/94/ca/47457ccbfeac62002079ebc47509e1eccd5c8ec764c78975c7afd81c6b4a/blessed-1.39.0.tar.gz", hash = "sha256:b04fc7141a20a3b2ade6cad741051f1e3ac59cc1e7e90915ed1f9e521332bea4", size = 14011417, upload-time = "2026-05-04T17:50:02.55Z" }
 wheels = [
@@ -1103,15 +1103,15 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 dependencies = [
-    { name = "aiopenapi3" },
-    { name = "celery" },
-    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" } },
-    { name = "django-redis" },
+    { name = "aiopenapi3", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "celery", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django-redis", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
     { name = "httpx", extra = ["brotli", "http2", "zstd"], marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
-    { name = "python-jose" },
-    { name = "requests" },
-    { name = "requests-oauthlib" },
-    { name = "tenacity" },
+    { name = "python-jose", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "requests", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "requests-oauthlib", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "tenacity", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e9/fc/9a6fd41dae5c855a9d21d348b9daa50847ebabf3f011447b60234b12aaf6/django_esi-9.2.0.tar.gz", hash = "sha256:89e90b8ba61c8ca2a60d4b16e153d9b56ae52cf5169011ffc53987afca32812e", size = 129970, upload-time = "2026-04-08T04:49:47.503Z" }
 wheels = [
@@ -1174,8 +1174,8 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 dependencies = [
-    { name = "confusable-homoglyphs" },
-    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" } },
+    { name = "confusable-homoglyphs", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9a/a0/f6e6d0a59b94eb4ab14983853334cb25401d677c5a3799aaca6819acf2eb/django_registration-5.2.1.tar.gz", hash = "sha256:06864f9da0bc4d7b073fb2da98d95d12428357ab0bc46e33f79c26707ec06bbe", size = 94187, upload-time = "2025-04-07T05:54:48.558Z" }
 wheels = [
@@ -2891,7 +2891,7 @@ version = "4.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "blessed", marker = "(sys_platform == 'win32' and extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4') or (extra == 'group-32-allianceauth-oidc-provider-eveo7-aa4' and extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5')" },
-    { name = "wcwidth" },
+    { name = "wcwidth", marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2c/1f/a5de9f0f86976d299a439619417019a9674fa8662377659734dd6e067235/telnetlib3-4.0.2.tar.gz", hash = "sha256:76726d7a7a34163b5dbef461e9cbf8fb4bda8f4fe7fcb225f56cbb4dcf5fd16e", size = 355495, upload-time = "2026-04-10T19:16:46.939Z" }
 wheels = [
