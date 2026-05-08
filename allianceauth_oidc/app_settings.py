@@ -36,6 +36,26 @@ _KEY_PORTRAIT_URL_TEMPLATE: Final[str] = (
 _KEY_PORTRAIT_SIZE: Final[str] = "ALLIANCEAUTH_OIDC_PORTRAIT_SIZE"
 _KEY_EVE_CLAIM_PREFIX: Final[str] = "ALLIANCEAUTH_OIDC_EVE_CLAIM_PREFIX"
 _KEY_EVE_CLAIM_SCOPE: Final[str] = "ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE"
+# Source of truth for the OIDC ``email_verified`` claim: when
+# Alliance Auth is configured to require email confirmation at
+# registration (``REGISTRATION_VERIFY_EMAIL=True``, the AA default),
+# every user that reaches us has already proven control of their
+# email address; we forward that as ``email_verified=True``. When
+# the operator disabled the confirmation step
+# (``REGISTRATION_VERIFY_EMAIL=False``) we fall back to ``False`` —
+# claiming verification AA never performed would mislead RPs about
+# the trust level of the address.
+_KEY_REGISTRATION_VERIFY_EMAIL: Final[str] = "REGISTRATION_VERIFY_EMAIL"
+# Operator escape hatch for the OIDC ``email_verified`` claim. Tri-state:
+# ``True`` / ``False`` force the claim regardless of placeholder
+# detection or AA's ``REGISTRATION_VERIFY_EMAIL``; ``None`` (default)
+# defers to the auto decision tree (placeholder → False; otherwise the
+# AA setting). Use with care — forcing ``True`` while AA does not
+# actually verify enables address-spoofing attacks downstream (the
+# account-takeover scenario described in the security model).
+_KEY_FORCE_EMAIL_VERIFIED: Final[str] = (
+    "ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED"
+)
 
 
 # Defaults — Django setting absent → these values land in the snapshot.
@@ -59,6 +79,13 @@ _DEFAULT_EVE_CLAIM_PREFIX: Final[str] = "eve_"
 # operator changes pick it up at the next ``setting_changed`` cache
 # invalidation.
 _DEFAULT_EVE_CLAIM_SCOPE: Final[str] = "profile"
+# Mirrors AA's own ``REGISTRATION_VERIFY_EMAIL`` default — see
+# allianceauth/authentication/views.py:RegistrationView. AA itself
+# treats absent setting as "verification required".
+_DEFAULT_REGISTRATION_VERIFY_EMAIL: Final[bool] = True
+# ``None`` keeps the auto decision tree authoritative; operators opt
+# into forcing by setting True or False explicitly.
+_DEFAULT_FORCE_EMAIL_VERIFIED: Final[bool | None] = None
 
 
 # EVE Online's image server only serves portraits at fixed sizes;
@@ -94,6 +121,22 @@ class OIDCSettings:
     portrait_size: int
     eve_claim_prefix: str
     eve_claim_scope: str
+    # Default value emitted in the OIDC ``email_verified`` claim. Read
+    # from AA's ``REGISTRATION_VERIFY_EMAIL`` rather than a separate
+    # OIDC-side setting so a single source of truth governs the trust
+    # level: if AA actually validated the address, we report it; if
+    # AA did not, we cannot honestly claim verification. Per-user
+    # state (e.g. a future "this specific user is unverified" flag)
+    # would override at the ``ClaimsBuilder`` layer.
+    email_verified_default: bool
+    # Operator override for the ``email_verified`` claim. ``None``
+    # means "auto" (the decision tree in ``ClaimsBuilder.build``);
+    # ``True`` / ``False`` force the claim regardless of placeholder
+    # detection or REGISTRATION_VERIFY_EMAIL. Reserved for deployments
+    # where the AA workflow is not the source of truth — e.g. users
+    # imported from an external IdP that already verified addresses,
+    # or sites that knowingly accept the trade-off.
+    force_email_verified: bool | None
 
     def __post_init__(self) -> None:
         """
@@ -178,7 +221,34 @@ def _cached_snapshot() -> OIDCSettings:
         eve_claim_scope=str(
             getattr(settings, _KEY_EVE_CLAIM_SCOPE, _DEFAULT_EVE_CLAIM_SCOPE)
         ),
+        email_verified_default=bool(
+            getattr(
+                settings,
+                _KEY_REGISTRATION_VERIFY_EMAIL,
+                _DEFAULT_REGISTRATION_VERIFY_EMAIL,
+            )
+        ),
+        force_email_verified=_resolve_force_email_verified(),
     )
+
+
+def _resolve_force_email_verified() -> bool | None:
+    """
+    Read the tri-state ``ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED``.
+
+    Returns ``None`` when the setting is absent or explicitly ``None``;
+    coerces any other value to ``bool`` so an operator who set
+    ``"true"`` (string) or ``1`` (int) gets a normalised flag instead
+    of a confusing partial pass-through.
+    """
+    value = getattr(
+        settings,
+        _KEY_FORCE_EMAIL_VERIFIED,
+        _DEFAULT_FORCE_EMAIL_VERIFIED,
+    )
+    if value is None:
+        return None
+    return bool(value)
 
 
 # ``dispatch_uid`` for the ``setting_changed`` receiver. Tests that
@@ -193,7 +263,10 @@ def _invalidate_cached_snapshot(
     sender: object, setting: str, **kwargs: Any
 ) -> None:
     """Drop the cached snapshot on any AA-OIDC setting flip."""
-    if setting.startswith("ALLIANCEAUTH_OIDC_"):
+    if (
+        setting.startswith("ALLIANCEAUTH_OIDC_")
+        or setting == _KEY_REGISTRATION_VERIFY_EMAIL
+    ):
         _cached_snapshot.cache_clear()
 
 

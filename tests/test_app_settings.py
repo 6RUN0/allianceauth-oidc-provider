@@ -31,6 +31,8 @@ def _good_kwargs(**overrides: object) -> dict:
         "portrait_size": 128,
         "eve_claim_prefix": "eve_",
         "eve_claim_scope": "profile",
+        "email_verified_default": True,
+        "force_email_verified": None,
     }
     base.update(overrides)
     return base
@@ -85,6 +87,37 @@ class TestOIDCSettingsFromDjango(SimpleTestCase):
         self.assertEqual(128, snap.portrait_size)
         self.assertEqual("eve_", snap.eve_claim_prefix)
         self.assertEqual("profile", snap.eve_claim_scope)
+        # AA's REGISTRATION_VERIFY_EMAIL defaults to True; mirrors here.
+        self.assertTrue(snap.email_verified_default)
+
+    @override_settings(REGISTRATION_VERIFY_EMAIL=False)
+    def test_email_verified_default_follows_aa_setting(self):
+        # When the operator disabled AA's email confirmation step,
+        # we must NOT claim verification — emit ``False``.
+        snap = OIDCSettings.from_django()
+        self.assertFalse(snap.email_verified_default)
+
+    def test_force_email_verified_default_is_none(self):
+        # Absent setting → None → auto decision tree authoritative.
+        snap = OIDCSettings.from_django()
+        self.assertIsNone(snap.force_email_verified)
+
+    @override_settings(ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED=True)
+    def test_force_email_verified_true_normalised(self):
+        snap = OIDCSettings.from_django()
+        self.assertIs(True, snap.force_email_verified)
+
+    @override_settings(ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED=False)
+    def test_force_email_verified_false_normalised(self):
+        snap = OIDCSettings.from_django()
+        self.assertIs(False, snap.force_email_verified)
+
+    @override_settings(ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED=1)
+    def test_force_email_verified_truthy_int_coerced_to_bool(self):
+        # Operators occasionally write ``1`` instead of ``True`` in
+        # settings.py; accept it as the obvious intent.
+        snap = OIDCSettings.from_django()
+        self.assertIs(True, snap.force_email_verified)
 
     @override_settings(
         ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True,

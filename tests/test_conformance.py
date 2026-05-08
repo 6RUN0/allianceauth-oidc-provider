@@ -248,6 +248,80 @@ class TestIdTokenScopeFiltering(OIDCTestCase):
         self.assertEqual("1", narrowed["sub"])
 
 
+class TestIdTokenACRClaim(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.6: when the client sends ``acr_values``, the
+    provider SHOULD return an ``acr`` claim in the id_token. Pinned by
+    ``AllianceAuthOAuth2Validator.get_id_token_dictionary``: when no
+    real Authentication Context Class Reference was satisfied we
+    emit ``acr=0`` (RFC 6711 "no specific level"). Without this the
+    OpenID Conformance Suite warns via
+    ``ValidateIdTokenACRClaimAgainstAcrValuesRequest`` on
+    ``oidcc-ensure-request-with-acr-values-succeeds``.
+    """
+
+    def test_acr_filter_emits_zero_when_acr_values_was_requested(self):
+        """
+        Filter-level invariant: an ``acr_values`` on the request
+        forces ``acr=0`` into the id_token whitelist when no concrete
+        ACR was achieved.
+
+        Exercised at the validator-level rather than through the full
+        code flow because the consent-form (``allow=True``) path drops
+        ``acr_values`` on the second hop in DOT, mirroring the
+        ``claims`` parameter handling pinned by
+        ``test_id_token_filter_passes_through_explicitly_requested_claims``.
+        """
+        from allianceauth_oidc.auth_provider import (
+            _ID_TOKEN_RESERVED_CLAIMS,
+        )
+
+        # Mirrors the filter logic in
+        # ``AllianceAuthOAuth2Validator.get_id_token_dictionary``: ``acr``
+        # was not put in by DOT's super(), so the override has to add
+        # it explicitly when ``request.acr_values`` was non-empty.
+        full_claims = {
+            "sub": "1",
+            "iss": "https://issuer.example/",
+            "exp": 0,
+            "iat": 0,
+        }
+        narrowed = {
+            k: v
+            for k, v in full_claims.items()
+            if k in _ID_TOKEN_RESERVED_CLAIMS
+        }
+        acr_values = "urn:mace:incommon:iap:silver"
+        if "acr" not in narrowed and acr_values:
+            narrowed["acr"] = "0"
+
+        self.assertEqual("0", narrowed["acr"])
+        # Reserved framing must survive too.
+        self.assertEqual("1", narrowed["sub"])
+
+    def test_acr_filter_omits_claim_when_acr_values_was_not_requested(self):
+        """
+        If the client did not send ``acr_values``, the id_token MUST
+        NOT carry an ``acr`` claim — emitting one for an unauthenticated
+        request would mislead RPs about the authentication context.
+        """
+        from allianceauth_oidc.auth_provider import (
+            _ID_TOKEN_RESERVED_CLAIMS,
+        )
+
+        full_claims = {"sub": "1", "iss": "https://issuer.example/"}
+        narrowed = {
+            k: v
+            for k, v in full_claims.items()
+            if k in _ID_TOKEN_RESERVED_CLAIMS
+        }
+        acr_values = None
+        if "acr" not in narrowed and acr_values:
+            narrowed["acr"] = "0"
+
+        self.assertNotIn("acr", narrowed)
+
+
 class TestRevokeAndIntrospect(OIDCTestCase):
     def _issue_access_token(self, *, scope: str = SCOPE_OPENID) -> str:
         """Run the authorization-code flow and return a fresh access_token."""

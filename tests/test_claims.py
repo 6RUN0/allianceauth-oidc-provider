@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -35,6 +36,8 @@ def _settings(**overrides: object) -> OIDCSettings:
         "portrait_size": 128,
         "eve_claim_prefix": "eve_",
         "eve_claim_scope": "profile",
+        "email_verified_default": True,
+        "force_email_verified": None,
     }
     base.update(overrides)
     return OIDCSettings(**base)
@@ -105,11 +108,18 @@ def _main(
 class TestEmailClaim(SimpleTestCase):
     def test_omitted_when_none(self):
         builder = ClaimsBuilder(user=_user(email=None), settings=_settings())
-        self.assertNotIn("email", builder.build())
+        out = builder.build()
+        # Both ``email`` and ``email_verified`` must stay out — the
+        # latter is only meaningful when an address is actually
+        # present, and OIDC §5.1 ties them together as a pair.
+        self.assertNotIn("email", out)
+        self.assertNotIn("email_verified", out)
 
     def test_omitted_when_blank(self):
         builder = ClaimsBuilder(user=_user(email=""), settings=_settings())
-        self.assertNotIn("email", builder.build())
+        out = builder.build()
+        self.assertNotIn("email", out)
+        self.assertNotIn("email_verified", out)
 
     def test_omitted_when_only_whitespace(self):
         # Defensive: copy-paste / buggy admin imports occasionally
@@ -128,6 +138,149 @@ class TestEmailClaim(SimpleTestCase):
             user=_user(email="  bob@example.test  "), settings=_settings()
         )
         self.assertEqual("bob@example.test", builder.build()["email"])
+
+    def test_email_verified_true_when_aa_verifies_at_registration(self):
+        # Default settings mirror AA's REGISTRATION_VERIFY_EMAIL=True;
+        # any user with a populated email completed AA's confirmation
+        # workflow, so we forward verification truthfully.
+        builder = ClaimsBuilder(
+            user=_user(email="alice@example.test"),
+            settings=_settings(email_verified_default=True),
+        )
+        out = builder.build()
+        self.assertEqual("alice@example.test", out["email"])
+        self.assertIs(True, out["email_verified"])
+
+    def test_email_verified_false_when_aa_skips_verification(self):
+        # When the operator sets REGISTRATION_VERIFY_EMAIL=False, AA
+        # never validated the address; we MUST NOT claim verification.
+        builder = ClaimsBuilder(
+            user=_user(email="alice@example.test"),
+            settings=_settings(email_verified_default=False),
+        )
+        out = builder.build()
+        self.assertEqual("alice@example.test", out["email"])
+        self.assertIs(False, out["email_verified"])
+
+    def test_aa_skip_email_placeholder_forces_email_verified_false(self):
+        # The companion ``aa_skip_email`` plugin stamps users without a
+        # real address with a synthetic placeholder; those addresses
+        # are by definition unverified, so ``email_verified`` MUST be
+        # ``False`` regardless of REGISTRATION_VERIFY_EMAIL.
+        with patch(
+            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            return_value=True,
+        ):
+            builder = ClaimsBuilder(
+                user=_user(email="bob_42@noreply.example"),
+                settings=_settings(email_verified_default=True),
+            )
+            out = builder.build()
+        self.assertEqual("bob_42@noreply.example", out["email"])
+        self.assertIs(False, out["email_verified"])
+
+    def test_aa_skip_email_placeholder_overrides_verify_email_true(self):
+        # Even on a stricter site (REGISTRATION_VERIFY_EMAIL=True) a
+        # placeholder must report ``email_verified=False``: the
+        # placeholder is the marker that the user skipped verification.
+        with patch(
+            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            return_value=True,
+        ):
+            builder = ClaimsBuilder(
+                user=_user(email="bob_42@noreply.example"),
+                settings=_settings(email_verified_default=False),
+            )
+            out = builder.build()
+        self.assertIs(False, out["email_verified"])
+
+    def test_real_email_after_placeholder_uses_settings_default(self):
+        # When the user later replaced the placeholder with a real
+        # address, the detector returns False and we fall back to the
+        # global verification policy.
+        with patch(
+            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            return_value=False,
+        ):
+            builder = ClaimsBuilder(
+                user=_user(email="alice@example.test"),
+                settings=_settings(email_verified_default=True),
+            )
+            out = builder.build()
+        self.assertIs(True, out["email_verified"])
+
+    def test_email_verified_false_when_aa_skip_email_not_installed(self):
+        # The detector is None when the optional plugin is absent; we
+        # then trust the global setting and do not flag the email as
+        # placeholder. This is the production path on installations
+        # without aa_skip_email.
+        with patch(
+            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            None,
+        ):
+            builder = ClaimsBuilder(
+                user=_user(email="alice@example.test"),
+                settings=_settings(email_verified_default=True),
+            )
+            out = builder.build()
+        self.assertIs(True, out["email_verified"])
+
+    def test_force_true_overrides_settings_default_false(self):
+        # Escape hatch: operator forces verified=True even though AA's
+        # default would emit False. Use case: users imported from a
+        # trusted external IdP that already verified addresses.
+        builder = ClaimsBuilder(
+            user=_user(email="alice@example.test"),
+            settings=_settings(
+                email_verified_default=False,
+                force_email_verified=True,
+            ),
+        )
+        self.assertIs(True, builder.build()["email_verified"])
+
+    def test_force_true_overrides_placeholder_detection(self):
+        # Force takes precedence over the placeholder check too — that
+        # is the whole point of an escape hatch. Operator who flips
+        # this on accepts the trade-off described in the security
+        # model.
+        with patch(
+            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            return_value=True,
+        ):
+            builder = ClaimsBuilder(
+                user=_user(email="bob_42@noreply.example"),
+                settings=_settings(force_email_verified=True),
+            )
+            out = builder.build()
+        self.assertIs(True, out["email_verified"])
+
+    def test_force_false_overrides_settings_default_true(self):
+        # Mirror direction: force=False on a strict site that AA does
+        # verify. Use case: site policy that distrusts AA's
+        # confirmation workflow (e.g. self-service email reset is too
+        # easy) and wants every RP to re-verify on its own.
+        builder = ClaimsBuilder(
+            user=_user(email="alice@example.test"),
+            settings=_settings(
+                email_verified_default=True,
+                force_email_verified=False,
+            ),
+        )
+        self.assertIs(False, builder.build()["email_verified"])
+
+    def test_force_none_falls_through_to_auto_decision_tree(self):
+        # Sanity: ``force_email_verified=None`` is the default and
+        # leaves the placeholder + REGISTRATION_VERIFY_EMAIL pipeline
+        # in charge. The other tests in this class already exercise
+        # both branches; this one pins ``None`` itself as the no-op.
+        builder = ClaimsBuilder(
+            user=_user(email="alice@example.test"),
+            settings=_settings(
+                email_verified_default=True,
+                force_email_verified=None,
+            ),
+        )
+        self.assertIs(True, builder.build()["email_verified"])
 
 
 class TestPictureClaim(SimpleTestCase):

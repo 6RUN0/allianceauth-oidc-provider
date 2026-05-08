@@ -114,6 +114,49 @@ _ID_TOKEN_RESERVED_CLAIMS: Final[frozenset[str]] = frozenset(
 )
 
 
+# Soft dependency on the ``aa_skip_email`` companion plugin: when it
+# is installed it stamps users without a real email with a
+# deterministic synthetic address (``username_42@noreply.example``).
+# Such placeholders are never verified — they exist precisely
+# because the user skipped the verification step — so OIDC
+# ``email_verified`` MUST be ``False`` for them regardless of the
+# ``REGISTRATION_VERIFY_EMAIL`` setting. The plugin's own helpers
+# documentation calls out this consumer explicitly.
+#
+# Imported at module load and bound to a module-level name so tests
+# can ``patch.object(auth_provider, "_aa_skip_email_is_placeholder", …)``
+# to exercise both branches without installing the optional package.
+try:  # pragma: no cover - import resolved at module load
+    # ``aa_skip_email`` is an optional sibling plugin without bundled
+    # type stubs; both checkers must tolerate the absent package on
+    # installations that did not pull it in.
+    from aa_skip_email.helpers import (  # pyright: ignore[reportMissingImports]
+        is_placeholder_email as _aa_skip_email_is_placeholder,
+    )
+except (
+    ImportError
+):  # pragma: no cover - exercised in environments without the plugin
+    _aa_skip_email_is_placeholder = None
+
+
+def _email_is_placeholder(email: str) -> bool:
+    """
+    Return True if ``email`` is a synthetic ``aa_skip_email`` placeholder.
+
+    Falls back to ``False`` when the optional plugin is not installed —
+    a missing detector is interpreted as "no information", which keeps
+    the ``REGISTRATION_VERIFY_EMAIL`` default authoritative for sites
+    that never had placeholders to begin with.
+    """
+    if _aa_skip_email_is_placeholder is None:
+        return False
+    # ``bool(...)`` cast: ``aa_skip_email`` is a soft dependency
+    # without type stubs, so mypy resolves the return value as Any.
+    # Coerce to a hard ``bool`` so downstream callers get a stable
+    # type rather than the upstream library's Any contagion.
+    return bool(_aa_skip_email_is_placeholder(email))
+
+
 @functools.lru_cache(maxsize=1)
 def _build_oidc_claim_scope(settings: OIDCSettings) -> dict[str, str]:
     """
@@ -169,6 +212,36 @@ class ClaimsBuilder:
         out: dict[str, Any] = {}
         if (email := self._email()) is not None:
             out["email"] = email
+            # OIDC Core 1.0 §5.1: ``email_verified`` is RECOMMENDED
+            # alongside ``email`` and MUST honestly reflect whether
+            # the address was actually verified.
+            #
+            # Decision tree, top to bottom:
+            #
+            # 1. If the operator set
+            #    ``ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`` to a
+            #    non-None value, that wins — escape hatch for
+            #    deployments where the trust signal originates outside
+            #    AA (e.g. users imported from an already-verifying
+            #    external IdP, or a site that knowingly accepts the
+            #    trade-off).
+            # 2. Else if ``aa_skip_email`` stamped a synthetic
+            #    placeholder (``username_42@noreply.example``), the
+            #    user never verified anything — emit ``False``.
+            # 3. Otherwise mirror AA's ``REGISTRATION_VERIFY_EMAIL``
+            #    via ``OIDCSettings.email_verified_default``: when AA
+            #    required confirmation at registration the address is
+            #    trusted; when the operator disabled the step we
+            #    cannot honestly claim verification.
+            #
+            # The default path keeps the trust level consistent with
+            # AA-side reality; the override is opt-in and audit-worthy.
+            if self.settings.force_email_verified is not None:
+                out["email_verified"] = self.settings.force_email_verified
+            elif _email_is_placeholder(email):
+                out["email_verified"] = False
+            else:
+                out["email_verified"] = self.settings.email_verified_default
         if (picture := self._picture()) is not None:
             out["picture"] = picture
         if (name := self._name()) is not None:
@@ -532,4 +605,13 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             for k, v in claims.items()
             if k in _ID_TOKEN_RESERVED_CLAIMS or k in requested
         }
+        # OIDC Core 1.0 §3.1.2.6: when the client supplied
+        # ``acr_values`` and we could not satisfy any of them, return
+        # ``acr=0`` (RFC 6711 "Authentication Context Class Reference
+        # 0", explicit "no specific level"). Without this the
+        # conformance suite warns via
+        # ``ValidateIdTokenACRClaimAgainstAcrValuesRequest`` —
+        # ``acr`` is only emitted when ``acr_values`` was present.
+        if "acr" not in narrowed and getattr(request, "acr_values", None):
+            narrowed["acr"] = "0"
         return narrowed, expiration_time

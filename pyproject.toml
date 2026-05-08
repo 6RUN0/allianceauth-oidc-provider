@@ -271,6 +271,7 @@ module = [
     "oauth2_provider.*",
     "oauthlib.*",
     "celery.*",
+    "aa_skip_email.*",
 ]
 ignore_missing_imports = true
 

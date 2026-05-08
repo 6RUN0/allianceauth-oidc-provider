@@ -62,6 +62,11 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertIn(self.test_grp.name, info["groups"])
 
         self.assertEqual("user1@example.com", info.get("email"))
+        # OIDC Core 1.0 §5.1: ``email_verified`` is RECOMMENDED to
+        # accompany ``email`` whenever the address has been validated;
+        # AA's signup workflow validates at registration so this is
+        # always True for users with a populated email field.
+        self.assertIs(True, info.get("email_verified"))
 
     def test_userinfo_scope_openid_only_returns_only_sub(self):
         """
@@ -77,8 +82,11 @@ class TestUserinfoClaims(OIDCTestCase):
     def test_userinfo_scope_openid_email_returns_only_sub_and_email(self):
         """Scope=`openid email` MUST NOT leak profile claims."""
         info = self._userinfo_for_user1_with_scope(f"{SCOPE_OPENID} email")
-        self.assertEqual({"sub", "email"}, set(info.keys()))
+        # ``email_verified`` rides along with ``email`` per OIDC §5.1;
+        # both are bound to scope=email in DOT's ``oidc_claim_scope``.
+        self.assertEqual({"sub", "email", "email_verified"}, set(info.keys()))
         self.assertEqual("user1@example.com", info["email"])
+        self.assertIs(True, info["email_verified"])
 
     def test_locale_claim_omitted_when_user_language_is_blank(self):
         """

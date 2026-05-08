@@ -480,7 +480,7 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
 
     def get(
         self, request: HttpRequest, *args: Any, **kwargs: Any
-    ) -> HttpResponse:
+    ) -> JsonResponse:
         """Decorate the upstream JSON body with our extra fields."""
         upstream = super().get(request, *args, **kwargs)
         # Re-decode upstream JSON rather than reach into DOT internals
