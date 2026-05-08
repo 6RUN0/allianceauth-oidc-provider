@@ -142,3 +142,8 @@ styles/*
 # Conformance: per-module summary JSON artifacts produced by
 # ``run_per_module.sh``. Ephemeral results — review and discard.
 tests/conformance/results/
+
+# Conformance: per-plan HTML report archives downloaded via
+# ``GET /api/plan/exporthtml/{id}`` (see ``runner/client.py``).
+# Ephemeral — regeneratable from any rerun.
+tests/conformance/diagnostic_export/
