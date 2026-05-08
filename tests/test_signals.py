@@ -7,11 +7,16 @@ the contract: the signal fires on success with a specific payload shape, and
 does NOT fire on failed token exchanges.
 """
 
+import types
 from unittest.mock import patch
 
+from django.test import SimpleTestCase
 from oauth2_provider.models import get_access_token_model
 
-from allianceauth_oidc.signals import oidc_token_issued
+from allianceauth_oidc.signals import (
+    audit_oidc_token_issued,
+    oidc_token_issued,
+)
 
 from ._oidc_testcase import REDIRECT_URI, OIDCTestCase
 
@@ -273,3 +278,80 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         body = json.loads(token_resp.content.decode("utf-8"))
         self.assertIn("access_token", body)
         self.assertEqual(1, len(self.captured))
+
+
+class TestAuditReceiverErrorPath(SimpleTestCase):
+    """
+    Cover the defensive ``except`` in ``audit_oidc_token_issued``.
+
+    The body intentionally narrows to four exception types known to come
+    from partially-mocked tokens or malformed audit bodies. Anything else
+    must propagate so genuine bugs surface in tests rather than being
+    silently logged away.
+    """
+
+    def _token(self) -> types.SimpleNamespace:
+        # Stable ``type(...).__name__`` for log assertions; the receiver
+        # only reads ``application``/``user`` via ``getattr(..., default)``
+        # so missing attrs are tolerated.
+        return types.SimpleNamespace(
+            application=types.SimpleNamespace(id=42, client_id="cid"),
+            user=types.SimpleNamespace(id=7, username="alice"),
+            scope=None,
+        )
+
+    def test_attribute_error_from_malformed_body_is_swallowed_and_logged(
+        self,
+    ) -> None:
+        # ``[1, 2, 3]`` is truthy so ``if body:`` enters the meta block,
+        # but ``body.get(...)`` raises AttributeError — exactly the failure
+        # mode the narrow except is designed to catch.
+        token = self._token()
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.signals", level="ERROR"
+        ) as cm:
+            audit_oidc_token_issued(
+                sender=None,
+                request=None,
+                token=token,
+                body=[1, 2, 3],  # type: ignore[arg-type]
+            )
+
+        joined = "\n".join(cm.output)
+        # Operators grep audit failures by token kind / app / user — all
+        # three identifiers must appear so the failed call is locatable.
+        self.assertIn("SimpleNamespace", joined)
+        self.assertIn("42", joined)
+        self.assertIn("7", joined)
+
+    def test_none_body_skips_meta_block_and_logs_info(self) -> None:
+        # ``body=None`` keeps the receiver on the happy path but skips
+        # the meta-extraction branch; covers the ``if body:`` False arm.
+        token = self._token()
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.signals", level="INFO"
+        ) as cm:
+            audit_oidc_token_issued(
+                sender=None, request=None, token=token, body=None
+            )
+        self.assertIn("OIDC token issued", "\n".join(cm.output))
+
+    def test_unrelated_exception_propagates(self) -> None:
+        # MemoryError / RecursionError / KeyboardInterrupt are explicitly
+        # NOT caught. Neither is RuntimeError. If someone widens the
+        # except to ``Exception:`` this test fails — that's the point.
+        class BoomToken:
+            @property
+            def application(self) -> object:
+                raise RuntimeError("simulated unrelated bug")
+
+            user = None
+            scope = None
+
+        with self.assertRaises(RuntimeError):
+            audit_oidc_token_issued(
+                sender=None,
+                request=None,
+                token=BoomToken(),  # type: ignore[arg-type]
+                body=None,
+            )
