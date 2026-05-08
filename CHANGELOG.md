@@ -14,6 +14,44 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.2.0b1] - 2026-05-08
+
+Minor bump (0.1 → 0.2) marks a widened dependency contract: this is the
+first release that officially supports Alliance Auth 5.x. Operators
+upgrading from `0.1.x` should review the **Compatibility** notes below
+before deploying.
+
+### Added
+
+- Official support for Alliance Auth 5.x (Django 5.2). The dev
+  environment locks to AA 5.0.1 + Django 5.2.x as the new primary;
+  AA 4.x backward compatibility stays under CI through the new
+  off-lock `tests_aa4` nox session, exercised on Python 3.10 / 3.11 /
+  3.12 (Python 3.13 is excluded because AA 4.13.x declares
+  `requires-python <3.13`). The package contract widens to
+  `allianceauth>=4,<6`; no version-specific shims live inside the
+  package itself.
+- Classifier `Framework :: Django :: 5.2` advertised on PyPI
+  alongside the existing `Framework :: Django :: 4.2`.
+
+### Changed
+
+- `tests/test_settingsAA4.py` overrides `STORAGES["staticfiles"]`
+  back to plain `StaticFilesStorage`. AA 5.x ships with
+  `ManifestStaticFilesStorage` as the default, which would otherwise
+  refuse to serve unhashed asset paths from templates without a
+  `staticfiles.json` produced by `collectstatic`. The override is
+  inert under AA 4.x / Django 4.2 (no behavioural change there) and
+  unblocks the suite under AA 5.x / Django 5.2.
+
+### Compatibility
+
+- Existing AA 4.x deployments keep working unchanged — no migration,
+  no settings edit required.
+- Operators planning the AA 4.x → 5.x jump should follow Alliance
+  Auth's own upgrade guide; this provider has no AA-version-specific
+  configuration knobs to flip.
+
 ## [0.1.0b6] - 2026-05-08
 
 ### Added

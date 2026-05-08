@@ -68,6 +68,22 @@ CACHES = {
 
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
+# AA 5.x ships with ``STORAGES["staticfiles"] = ManifestStaticFilesStorage``,
+# which insists on a ``staticfiles.json`` manifest produced by
+# ``manage.py collectstatic``. The test runner does not run collectstatic,
+# so any ``{% static %}`` lookup (admin pages, denial / consent templates)
+# would raise ``ValueError: Missing staticfiles manifest entry``. Override
+# back to plain ``StaticFilesStorage`` for the test session — this works
+# under both AA 4.x / Django 4.2 and AA 5.x / Django 5.2.
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
+
 OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"
 OAUTH2_PROVIDER = {
     "OIDC_ENABLED": True,

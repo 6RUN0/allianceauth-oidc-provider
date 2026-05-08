@@ -11,7 +11,9 @@ provider. It is a thin policy/auditing layer on top of
 protocol work, this app adds Alliance-Auth-specific access control, claim mapping, safe logging, and a
 custom `Application` model.
 
-Supported runtime: Python 3.10–3.12, Django 4.2, Alliance Auth 4.x, `django-oauth-toolkit>=3.2,<4`.
+Supported runtime: Python 3.10–3.13, Django 4.2 or 5.2, Alliance Auth 4.x or 5.x,
+`django-oauth-toolkit>=3.2,<4`. The dev environment locks to the AA 5.x stack (Django 5.2);
+AA 4.x compatibility is exercised via the off-lock `tests_aa4` nox session and CI matrix.
 
 ## Common commands
 

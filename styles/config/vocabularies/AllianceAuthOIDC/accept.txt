@@ -239,3 +239,5 @@ typing_extensions
 runtime_checkable
 importlib
 PackageNotFoundError
+regeneratable
+unhashed

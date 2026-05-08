@@ -35,6 +35,16 @@ jobs:
       matrix:
         # Mirror pyproject's ``requires-python = ">=3.10,<3.14"``.
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # ``aa-version`` selects the Alliance Auth major a job exercises.
+        # The lock resolves to AA 5.x (current primary), so the default
+        # ``tests`` nox session runs against AA 5 across every Python.
+        # AA 4.x backward-compat is verified via the off-lock
+        # ``tests_aa4`` session — included on a single Python to keep
+        # CI minutes reasonable while still catching regressions.
+        aa-version: ["5"]
+        include:
+          - python-version: "3.12"
+            aa-version: "4"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -52,13 +62,13 @@ jobs:
         run: uv sync --all-groups --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run nox -s tests
+        run: uv run nox -s ${{ matrix.aa-version == '4' && 'tests_aa4' || 'tests' }}
 
       - name: Upload test coverage
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: coverage-py${{ matrix.python-version }}
+          name: coverage-py${{ matrix.python-version }}-aa${{ matrix.aa-version }}
           path: htmlcov/
           if-no-files-found: ignore
 

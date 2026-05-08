@@ -4,7 +4,7 @@ requires = [ "uv_build>=0.5,<0.20" ]
 
 [project]
 name = "allianceauth-oidc-provider-eveo7"
-version = "0.1.0b6"
+version = "0.2.0b1"
 description = "OpenID Connect / OAuth2 provider for Alliance Auth, layered on django-oauth-toolkit."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -15,6 +15,7 @@ classifiers = [
     "Environment :: Web Environment",
     "Framework :: Django",
     "Framework :: Django :: 4.2",
+    "Framework :: Django :: 5.2",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
@@ -30,7 +31,7 @@ classifiers = [
 # ``allianceauth_oidc/__init__.py`` so the value never drifts from the
 # wheel that's actually deployed.
 
-dependencies = [ "allianceauth>=4,<5", "django-oauth-toolkit>=3.2,<4" ]
+dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.2,<4" ]
 
 urls.Homepage = "https://github.com/6RUN0/allianceauth-oidc-provider"
 urls.Source = "https://github.com/6RUN0/allianceauth-oidc-provider"

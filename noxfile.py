@@ -19,6 +19,7 @@ Examples::
     uv run nox -s makemigrations                   # generate Django migrations
     uv run nox -s markdown_lint                    # rumdl + lychee + vale
     uv run nox -s tests_matrix                     # tests on every Python
+    uv run nox -s tests_aa4                        # tests against AA 4.x stack
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
@@ -38,9 +39,11 @@ nox.options.default_venv_backend = "none"
 # Test runner config:
 # - tests.test_settingsAA4 boots Alliance Auth and (via tests/_fakeredis.py)
 #   monkey-patches django_redis with a fakeredis shim. Set AA_USE_FAKE_REDIS=0
-#   to skip the patch and run against a real Redis.
-# - --debug-mode disables ManifestStaticFilesStorage's manifest check, which
-#   would otherwise fail because we don't run collectstatic in CI.
+#   to skip the patch and run against a real Redis. The settings module is
+#   shared between the AA 4.x (``tests_aa4`` session) and AA 5.x (default
+#   ``tests`` session) runs — its ``STORAGES`` override neutralises Django
+#   5.x's ManifestStaticFilesStorage default, which would otherwise demand a
+#   ``staticfiles.json`` produced by ``collectstatic``.
 TEST_SETTINGS = "tests.test_settingsAA4"
 # Options-only base — the positional `tests` label is appended last
 # inside the session so that subset labels passed via `-- ...` end up
@@ -66,6 +69,27 @@ PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
 # tested. Update this list when bumping ``requires-python`` upper
 # bound.
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
+
+# Per-version Python interpreters used by ``tests_aa4``. AA 4.13.x
+# declares ``requires-python = >=3.8,<3.13`` upstream — Python 3.13 is
+# therefore not a valid combination and would either fail to install
+# AA<5 or silently resolve to an older AA the suite never targeted.
+# Drop the upper-bound entry from ``PYTHON_VERSIONS`` so the matrix
+# only schedules runs that can actually succeed.
+PYTHON_VERSIONS_AA4 = ["3.10", "3.11", "3.12"]
+
+# Third-party runtime dependencies the test suite imports directly,
+# independent of the AA / Django versions resolved in the lock. Used by
+# ``tests_aa4`` (and any future ``tests_aaN``) to provision a venv
+# off-lock against an older AA stack. Keep in sync with the imports under
+# ``tests/`` — anything else needed for the suite to import lives in
+# ``[dependency-groups].dev`` in ``pyproject.toml``.
+TEST_RUNTIME_DEPS = [
+    "fakeredis>=2.33",
+    "parameterized>=0.9",
+    "jwcrypto",
+    "requests>=2.32",
+]
 
 
 def _resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:
@@ -140,6 +164,51 @@ def tests_matrix(session: nox.Session) -> None:
         "sync",
         "--all-groups",
         f"--python={session.python}",
+        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
+    )
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "test",
+        *TEST_ARGS_BASE,
+        "--parallel=auto",
+        *_resolve_test_labels(tuple(session.posargs)),
+        env=_test_env(session),
+    )
+
+
+@nox.session(python=PYTHON_VERSIONS_AA4, venv_backend="uv")
+def tests_aa4(session: nox.Session) -> None:
+    """
+    Run the Django test suite against the Alliance Auth 4.x stack.
+
+    The default ``tests`` session runs against whatever AA / Django
+    versions ``uv.lock`` resolves to — which today is AA 5.0.1 + Django
+    5.2.x. ``tests_aa4`` provisions a parallel venv off-lock with
+    ``allianceauth<5`` + ``django<5`` so the older stack stays exercised
+    locally and in CI even though the dev environment moves forward.
+
+    Parametrised across ``PYTHON_VERSIONS_AA4`` (3.10 / 3.11 / 3.12) —
+    AA 4.13.x's ``requires-python <3.13`` constraint excludes Python 3.13
+    from this matrix dimension.
+
+    Off-lock by design: ``uv pip install`` (not ``uv sync``) is used so
+    the AA-version constraint can override what the lock says. Test
+    dependencies that aren't imported transitively via AA are listed in
+    ``TEST_RUNTIME_DEPS`` so they don't have to be discovered via
+    ``[dependency-groups].dev``.
+    """
+    session.run_install(
+        "uv",
+        "pip",
+        "install",
+        "-e",
+        ".",
+        "allianceauth<5",
+        "django<5",
+        "django-oauth-toolkit>=3.2,<4",
+        *TEST_RUNTIME_DEPS,
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
     session.run(

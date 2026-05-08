@@ -14,6 +14,7 @@ A thin policy / auditing layer on top of
 OAuth2 provider.
 
 - [Overview](#overview)
+- [Requirements](#requirements)
 - [Install](#install)
 - [Configuration](#configuration)
 - [Reference](#reference)
@@ -33,6 +34,19 @@ separately.
 ![Three-layer policy enforcement: dispatch then validate_code then save_bearer_token](https://raw.githubusercontent.com/6RUN0/allianceauth-oidc-provider/current/assets/diagrams/policy-flow.svg)
 
 The diagram source is `assets/diagrams/policy-flow.d2`; re-render with `make diagrams` after edits.
+
+## Requirements
+
+| Component             | Supported versions                              |
+|-----------------------|-------------------------------------------------|
+| Python                | 3.10, 3.11, 3.12, 3.13                          |
+| Alliance Auth         | 4.x and 5.x                                     |
+| Django                | 4.2 (with AA 4.x) or 5.2 (with AA 5.x)          |
+| `django-oauth-toolkit`| `>=3.2,<4`                                      |
+
+CI exercises the AA 5.x stack on every supported Python version and AA 4.x
+backward compatibility on Python 3.12. Both stacks share the same code path —
+no version-specific shims live in the package itself.
 
 ## Install
 
