@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import gettext as _
 from oauth2_provider.generators import (
     generate_client_id,
     generate_client_secret,
@@ -45,13 +45,7 @@ class Command(BaseCommand):
     default), so capture it from this output.
     """
 
-    # django-stubs types ``BaseCommand.help`` as ``str``; lazy
-    # translatables are accepted at runtime (Django str()-coerces in
-    # ``BaseCommand.create_parser``) but mypy / basedpyright don't
-    # know that.
-    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
-        "Create a new AllianceAuthApplication and print its credentials."
-    )
+    help = _("Create a new AllianceAuthApplication and print its credentials.")
 
     @override
     def add_arguments(self, parser: Any) -> None:

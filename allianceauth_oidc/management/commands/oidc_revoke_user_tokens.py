@@ -8,7 +8,7 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import gettext as _
 from oauth2_provider.models import (
     get_access_token_model,
     get_refresh_token_model,
@@ -30,10 +30,7 @@ class Command(BaseCommand):
     one. Idempotent: a re-run on an already-clean user is a no-op.
     """
 
-    # See ``oidc_create_app.Command.help`` for the type-ignore rationale.
-    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
-        "Revoke all OAuth2 tokens for a given user."
-    )
+    help = _("Revoke all OAuth2 tokens for a given user.")
 
     @override
     def add_arguments(self, parser: Any) -> None:

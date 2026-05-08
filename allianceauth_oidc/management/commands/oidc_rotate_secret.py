@@ -7,7 +7,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import gettext as _
 from oauth2_provider.generators import generate_client_secret
 from oauth2_provider.models import get_application_model
 from typing_extensions import override
@@ -27,10 +27,7 @@ class Command(BaseCommand):
     in-flight tokens for a specific user.
     """
 
-    # See ``oidc_create_app.Command.help`` for the type-ignore rationale.
-    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
-        "Regenerate the client_secret of an OIDC application."
-    )
+    help = _("Regenerate the client_secret of an OIDC application.")
 
     @override
     def add_arguments(self, parser: Any) -> None:

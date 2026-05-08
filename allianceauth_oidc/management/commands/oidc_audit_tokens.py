@@ -7,7 +7,7 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import gettext as _
 from oauth2_provider.models import (
     get_access_token_model,
     get_application_model,
@@ -27,10 +27,7 @@ class Command(BaseCommand):
     refreshable sessions?" diagnostics.
     """
 
-    # See ``oidc_create_app.Command.help`` for the type-ignore rationale.
-    help = _(  # type: ignore[assignment]  # pyright: ignore[reportAssignmentType]
-        "List active OIDC access tokens with optional filters."
-    )
+    help = _("List active OIDC access tokens with optional filters.")
 
     @override
     def add_arguments(self, parser: Any) -> None:
