@@ -21,7 +21,6 @@ import time
 import uuid
 from typing import Any, Final, Literal
 
-from django.conf import settings
 from oauth2_provider.settings import oauth2_settings
 from oauth2_provider.utils import jwk_from_pem
 
@@ -120,9 +119,19 @@ def _resolve_access_token_format(
 
 
 def _size_warn_threshold() -> int:
-    """Read the configurable size-guard threshold from settings."""
-    provider = getattr(settings, "OAUTH2_PROVIDER", {}) or {}
-    raw = provider.get(
+    """
+    Read the configurable size-guard threshold from settings.
+
+    Goes through ``oauth2_settings.user_settings`` (DOT's public proxy
+    over ``OAUTH2_PROVIDER``) instead of a direct
+    ``getattr(settings, "OAUTH2_PROVIDER", ...)`` so that DOT's
+    ``setting_changed`` reload contract — the same one that refreshes
+    ``OIDC_RSA_PRIVATE_KEY`` and ``ACCESS_TOKEN_EXPIRE_SECONDS`` above
+    — also governs this nested key. Tests rely on this when they
+    flip ``ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES`` mid-process via
+    ``override_settings``.
+    """
+    raw = oauth2_settings.user_settings.get(
         "ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES",
         _DEFAULT_SIZE_WARN_BYTES,
     )

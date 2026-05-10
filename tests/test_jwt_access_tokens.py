@@ -74,6 +74,31 @@ def split_jwt(token: str) -> tuple[dict, dict]:
     return header, payload
 
 
+def lookalike_access_token_generator(request: Any) -> str:
+    """
+    Decoy generator used by the L-3 regression test.
+
+    ``__module__`` and ``__qualname__`` are rewritten below so the
+    formatted ``f"{module}.{qualname}"`` happens to contain the
+    canonical dispatcher path as substring — a substring-based wiring
+    check would incorrectly stay silent. Identity-based detection
+    must still flag the mismatch because ``actual is dispatcher``
+    short-circuits before any name introspection.
+    """
+    return "lookalike-not-a-real-token"
+
+
+# DOT resolves ``ACCESS_TOKEN_GENERATOR`` via ``importlib`` against the
+# real dotted path (``tests.test_jwt_access_tokens.lookalike_...``).
+# The introspected ``__module__`` / ``__qualname__`` below are pure
+# attribute writes — they do not affect import — and exist solely to
+# fool the substring formatter.
+lookalike_access_token_generator.__module__ = "allianceauth_oidc.tokens"
+lookalike_access_token_generator.__qualname__ = (
+    "dispatching_access_token_generator"
+)
+
+
 # ---------------------------------------------------------------------------
 # US-009 — Batch 1
 # ---------------------------------------------------------------------------
@@ -632,6 +657,34 @@ class TestStartupWiringCheck(TestCase):
             )
         )
         self.assertEqual([], self._warning_records(captured))
+
+    def test_warns_on_lookalike_generator_with_spoofed_qualname(
+        self,
+    ) -> None:
+        """
+        Substring detection had a false-negative on a callable whose
+        ``__module__``/``__qualname__`` were rewritten to look like
+        ours — the formatted name contained the expected path, so a
+        ``substring in actual_name`` test stayed silent. Identity
+        check (``actual is dispatching_access_token_generator``)
+        catches the mismatch because object identity ignores the
+        spoofed attributes.
+        """
+        provider = self._build_provider(
+            ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="jwt",
+            ACCESS_TOKEN_GENERATOR=(
+                "tests.test_jwt_access_tokens.lookalike_access_token_generator"
+            ),
+        )
+        captured = self._capture_check(provider)
+        warnings = self._warning_records(captured)
+        self.assertTrue(
+            warnings,
+            "expected a WARNING for a lookalike whose name spoofs the "
+            "dispatcher path but whose identity differs",
+        )
+        joined = "\n".join(warnings)
+        self.assertIn(self.EXPECTED, joined)
 
 
 # ---------------------------------------------------------------------------

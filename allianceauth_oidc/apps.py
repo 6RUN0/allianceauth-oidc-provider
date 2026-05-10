@@ -26,12 +26,14 @@ def _check_jwt_wiring() -> None:
     diagnostic helper that crashes app startup is worse than the
     failure mode it's diagnosing.
 
-    The substring identity match is advisory — operator wrappers
-    around :func:`allianceauth_oidc.tokens.dispatching_access_token_generator`
-    legitimately produce a non-matching ``__qualname__`` (and a
-    false-positive WARNING). Operators with custom wrappers can
-    silence the line via the standard ``logging`` configuration on
-    the ``extensions.allianceauth_oidc.apps`` logger.
+    Detection is by object identity against
+    :func:`allianceauth_oidc.tokens.dispatching_access_token_generator`.
+    Operator wrappers that wrap our dispatcher are legitimately a
+    different callable and will produce an advisory WARNING — silence
+    the line via the standard ``logging`` configuration on the
+    ``extensions.allianceauth_oidc.apps`` logger if the wrapper is
+    intentional. A formatted ``module.qualname`` is still emitted in
+    the message so operators can see what DOT actually loaded.
 
     Public name (no leading underscore on the docstring level)
     despite the ``_`` prefix on the symbol — the function is
@@ -39,11 +41,11 @@ def _check_jwt_wiring() -> None:
     ``tests/test_jwt_access_tokens.py::TestStartupWiringCheck``).
     """
     try:
-        from django.conf import settings
         from oauth2_provider.settings import oauth2_settings
 
-        provider = getattr(settings, "OAUTH2_PROVIDER", {}) or {}
-        default_format = provider.get(
+        from .tokens import dispatching_access_token_generator
+
+        default_format = oauth2_settings.user_settings.get(
             "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT", "opaque"
         )
         if default_format != "jwt":
@@ -52,6 +54,8 @@ def _check_jwt_wiring() -> None:
             "allianceauth_oidc.tokens.dispatching_access_token_generator"
         )
         actual = oauth2_settings.ACCESS_TOKEN_GENERATOR
+        if actual is dispatching_access_token_generator:
+            return
         if actual is None:
             actual_name = "<None>"
         elif callable(actual):
@@ -61,12 +65,11 @@ def _check_jwt_wiring() -> None:
             )
         else:
             actual_name = str(actual)
-        if expected not in actual_name:
-            logger.warning(
-                "OIDC: ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt' but OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] is %a (expected %a). JWT mode will NOT be active. See README opt-in section.",  # noqa: E501
-                actual_name,
-                expected,
-            )
+        logger.warning(
+            "OIDC: ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt' but OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] is %a (expected %a). JWT mode will NOT be active. See README opt-in section.",  # noqa: E501
+            actual_name,
+            expected,
+        )
     except Exception:
         # ``logger.exception`` already attaches the traceback; the
         # explicit message keeps log lines greppable per the existing
