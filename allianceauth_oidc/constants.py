@@ -29,3 +29,18 @@ AUDIT_DISPATCH_UID: Final[str] = "allianceauth_oidc.audit_oidc_token_issued"
 TASK_CLEAR_EXPIRED_TOKENS: Final[str] = (
     "allianceauth_oidc.clear_expired_tokens"
 )
+
+# Celery task name for the OIDC Back-Channel Logout 1.0 fan-out
+# dispatcher. ``dispatch_backchannel_logout`` queues one call per RP
+# under this name; the worker rebuilds the logout_token JWT and POSTs
+# it to ``application.backchannel_logout_uri``. Reference value for
+# anything that needs to grep the task across the codebase / docs.
+TASK_SEND_LOGOUT_TOKEN: Final[str] = "allianceauth_oidc.send_logout_token"
+
+# dispatch_uid for the default ``oidc_logout_required`` receiver.
+# Mirrors ``AUDIT_DISPATCH_UID``: tests that connect a custom logout
+# dispatcher reuse this constant to disconnect the default first,
+# preventing duplicate POSTs to RPs.
+DEFAULT_LOGOUT_DISPATCH_UID: Final[str] = (
+    "allianceauth_oidc.default_logout_dispatcher"
+)

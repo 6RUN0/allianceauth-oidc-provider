@@ -1,6 +1,15 @@
 """Custom OAuth2 Application model with AA state/group access policy."""
 
+from __future__ import annotations
+
+import concurrent.futures
+import ipaddress
+import logging
+import socket
+from urllib.parse import urlsplit
+
 from allianceauth.authentication.models import State
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
@@ -10,6 +19,39 @@ from oauth2_provider.models import AbstractApplication
 from typing_extensions import override
 
 from .constants import PERM_ACCESS_OIDC_CODENAME
+
+logger = logging.getLogger(f"extensions.{__name__}")
+
+# Per plan v5 §4.5: ``socket.setdefaulttimeout`` does NOT bound
+# ``getaddrinfo`` (a libc resolver call, not a Python socket
+# operation). A per-call ``ThreadPoolExecutor`` is the only correct
+# way to enforce a wall-clock timeout on the resolver.
+_DNS_BOUND_SECONDS = 3
+
+
+def _resolve_host_bounded(
+    host: str, deadline_seconds: int = _DNS_BOUND_SECONDS
+) -> list[tuple]:
+    """
+    Resolve ``host`` with a real wall-clock bound.
+
+    Returns the raw ``socket.getaddrinfo`` result list. Callers must
+    extract address strings via ``addr[4][0]``.
+
+    ``max_workers=1`` because exactly one resolver thread is needed
+    per call; the executor is GC'd at context-manager exit. Trades
+    one thread-creation per admin form save for module-level pool
+    lifecycle management — negligible vs the DNS round-trip itself.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(
+            socket.getaddrinfo,
+            host,
+            None,
+            type=socket.SOCK_STREAM,
+        )
+        return fut.result(timeout=deadline_seconds)
+
 
 # Module-level so admin/forms/tests can re-import the same source of
 # truth, mirroring DOT's ``CLIENT_TYPES`` / ``GRANT_TYPES`` pattern on
@@ -70,6 +112,27 @@ class AllianceAuthApplication(AbstractApplication):
             "Wire format of access tokens issued for this application. Leave blank to use the deployment-wide default (OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT'], or 'opaque' if unset)."  # noqa: E501
         ),
     )
+    # OIDC Back-Channel Logout 1.0 §2.4 — the RP's endpoint that
+    # accepts a signed ``logout_token`` POST when the AS terminates
+    # the user's session. Empty string disables BCL for this RP.
+    # ``URLValidator(schemes=['http','https'])`` mirrors ``logo_url``:
+    # ``ftp://`` is meaningless for a token POST and only widens the
+    # SSRF surface. The ``clean()`` override adds two additional
+    # gates per plan v5 §5.1 AC-3 / AC-3a / AC-3b:
+    #   * ``http://`` is rejected unless ``settings.DEBUG`` is True;
+    #   * the host's DNS resolution is checked against private /
+    #     loopback / link-local / multicast / reserved IPs;
+    #   * transient DNS failures are non-blocking (WARNING-logged).
+    backchannel_logout_uri = models.URLField(
+        max_length=1024,
+        blank=True,
+        default="",
+        validators=[URLValidator(schemes=["http", "https"])],
+        verbose_name=_("Back-channel logout URI"),
+        help_text=_(
+            "RP endpoint that accepts back-channel logout_token POSTs (OIDC Back-Channel Logout 1.0). Leave blank to disable. https:// required unless DEBUG is on; host must resolve to a public IP."  # noqa: E501
+        ),
+    )
 
     @override
     def is_usable(self, request):
@@ -119,6 +182,72 @@ class AllianceAuthApplication(AbstractApplication):
                     ),
                 }
             )
+        if self.backchannel_logout_uri:
+            self._validate_backchannel_logout_uri()
+
+    def _validate_backchannel_logout_uri(self) -> None:
+        """
+        Plan v5 §5.1 AC-3 / AC-3a / AC-3b — enforce TLS in production
+        and gate DNS resolution against private/loopback/link-local
+        IPs to close the SSRF surface on the worker's outbound POST.
+
+        Per AC-3b, transient resolver failures are non-blocking: the
+        admin save is allowed and a WARNING is logged for monitoring.
+        Operators decide whether to alert on the warning frequency.
+        """
+        parsed = urlsplit(self.backchannel_logout_uri)
+        if parsed.scheme == "http" and not settings.DEBUG:
+            raise ValidationError(
+                {
+                    "backchannel_logout_uri": _(
+                        "backchannel_logout_uri must use https:// unless DEBUG is enabled (development only)."  # noqa: E501
+                    ),
+                }
+            )
+        host = parsed.hostname or ""
+        if not host:
+            return
+        try:
+            infos = _resolve_host_bounded(host)
+        except (
+            TimeoutError,
+            socket.gaierror,
+            OSError,
+            concurrent.futures.TimeoutError,
+        ) as err:
+            logger.warning(
+                "could not verify backchannel_logout_uri host resolves to a public address: %s: %r",  # noqa: E501
+                host,
+                err,
+            )
+            return
+        allow_private = getattr(
+            settings,
+            "ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE",
+            False,
+        )
+        if allow_private:
+            return
+        for info in infos:
+            addr_str = info[4][0]
+            try:
+                addr = ipaddress.ip_address(addr_str)
+            except ValueError:
+                continue
+            if (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_multicast
+                or addr.is_reserved
+            ):
+                raise ValidationError(
+                    {
+                        "backchannel_logout_uri": _(
+                            "backchannel_logout_uri must resolve to a public IP; private/loopback/link-local addresses are blocked. Set ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True for dev environments."  # noqa: E501
+                        ),
+                    }
+                )
 
     class Meta:
         # `ordering` makes the admin changelist's pagination stable.

@@ -135,6 +135,14 @@ default'ом, а не частным случаем.
 становятся невалидными — и вы получаете outage пропорциональный
 числу активных сессий.
 
+Back-channel logout (sub-only, OIDC BCL 1.0) переиспользует ту же
+цепочку `OIDC_RSA_PRIVATE_KEY` + `OIDC_RSA_PRIVATE_KEYS_INACTIVE`
+для подписи `logout_token`. Celery dispatcher запоминает `kid`
+активного ключа в момент постановки в очередь, а worker на retry
+резолвит ключ из любого из двух store, поэтому ротация в полёте не
+теряет in-progress логауты. См.
+[docs/BACK_CHANNEL_LOGOUT.ru.md](BACK_CHANNEL_LOGOUT.ru.md).
+
 [dot-oidc]: https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html
 
 ## 6. RP cookbook

@@ -17,6 +17,7 @@ class ApplicationAdmin(admin.ModelAdmin):
         "authorization_grant_type",
         "pkce_required",
         "access_token_format",
+        "backchannel_logout_uri",
     )
     # `user` is rendered in `list_display` for every row in the
     # changelist; without `list_select_related`, Django issues one

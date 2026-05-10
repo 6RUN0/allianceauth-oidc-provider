@@ -224,6 +224,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. **Do not copy the test-suite literal `60`** — that value is test-only (used by `tests/test_settingsAA4.py` to exercise expiry paths without sleeps) and races against real RP login flows that need at least one /userinfo round-trip plus client-side `clockTolerance` (~5 s). The `passport-openidconnect` strategy used by Wiki.js, Outline, and similar reject sub-minute lifetimes outright. `3600` (1 hour) matches the production defaults of Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
+| `OIDC_ISS_ENDPOINT` | unset | **Required when ANY application has `backchannel_logout_uri` set.** Absolute issuer URL (e.g. `"https://auth.example.org/o"`). The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime — `oidc_issuer(None)` falls through to this setting. A Django system check (`allianceauth_oidc.E001`) fires at `manage.py check` if a back-channel logout is configured without this setting; CI fails loudly instead of crashing the first end-user logout. See [OIDC Back-Channel Logout 1.0](docs/BACK_CHANNEL_LOGOUT.md). |
 
 ### Custom settings (ALLIANCEAUTH_OIDC_*)
 
@@ -486,6 +487,25 @@ data-minimization, troubleshooting** — see
 walks through the recommended rollout (per-app first, global last) and points
 at `manage.py oidc_audit_tokens --include-expired` whose `format` column
 makes the per-token wire format inspectable from the operator side.
+
+### Back-channel logout (OIDC BCL 1.0)
+
+Sub-only [back-channel logout](docs/BACK_CHANNEL_LOGOUT.md) is wired
+in. Set `backchannel_logout_uri` on an application to enable per-RP
+fan-out; the AS POSTs a signed `logout_token` whenever a session
+ends (revoke / deactivate / group or state change / account delete).
+Five trigger sites cover the realistic operator workflows. SSRF
+defenses (host DNS check with 3 s wall-clock, scheme allow-list,
+`allow_redirects=False`), spec-compliant `events` URI, and a
+secret-pin regression test on every log line keep the dispatch path
+safe. Session-scoped logout (`sid`) is intentionally deferred to
+feature v2.
+
+`OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` is required once any RP
+registers a `backchannel_logout_uri` — the Celery worker has no HTTP
+request context. A Django system check
+(`allianceauth_oidc.E001`, severity `Error`) fails `manage.py check`
+at deploy time if the setting is missing.
 
 ### Debug logging
 

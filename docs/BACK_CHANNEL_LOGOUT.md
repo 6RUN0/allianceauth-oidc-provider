@@ -1,0 +1,221 @@
+# OIDC Back-Channel Logout 1.0
+
+## 1. Overview
+
+This module implements
+[OpenID Connect Back-Channel Logout 1.0](https://openid.net/specs/openid-connect-backchannel-1_0.html)
+in **sub-only** mode. When the AS terminates a user's session (revoke,
+deactivate, group/state change, or account delete), it POSTs a signed
+`logout_token` to every Relying Party that registered a
+`backchannel_logout_uri`. The RP is then obliged by spec §2.6 to
+"log out all of the user's sessions" for that `sub`.
+
+What sub-only means in practice:
+
+- The `logout_token` payload carries `sub` (the user's primary key) but
+  NEVER `sid`. The RP logs the user out across all of its tabs/devices,
+  not just the originating session.
+- The companion discovery flag
+  `backchannel_logout_session_supported` is intentionally NOT emitted.
+  Session-scoped logout is deferred to **feature v2** of this provider
+  (see §8 below).
+
+## 2. Operator setup
+
+Two settings + a Celery worker must be in place before any RP can be
+registered.
+
+1. **Pin the issuer.** The Celery worker has no HTTP request context,
+   so the AS cannot derive `iss` at logout-token build time. Add the
+   absolute issuer URL to `OAUTH2_PROVIDER`:
+
+   ```python
+   OAUTH2_PROVIDER = {
+       # ...
+       "OIDC_ISS_ENDPOINT": "https://auth.example.org/o",
+   }
+   ```
+
+   A Django system check (`allianceauth_oidc.E001`) fires at
+   `manage.py check` when any `AllianceAuthApplication` has a
+   `backchannel_logout_uri` set AND `OIDC_ISS_ENDPOINT` is missing.
+   Severity is `Error` — `manage.py check` exits non-zero, so CI
+   pipelines fail loudly instead of letting the first end-user logout
+   crash at runtime.
+
+2. **Run a Celery worker.** Back-channel logout is fan-out by design;
+   one logout event produces N outbound POSTs to N RPs. The worker
+   reuses the same broker / result-backend Alliance Auth already
+   relies on. No new entry in `CELERYBEAT_SCHEDULE` is required —
+   logout tasks are eager, triggered by signals.
+
+3. **Register the RP.** In Django admin → OIDC application → set
+   `backchannel_logout_uri` to the RP's endpoint. The URL MUST be
+   `https://` unless `settings.DEBUG=True` (development); the admin
+   form rejects `http://` in production. A DNS-bound SSRF guard
+   resolves the URL's host with a 3-second wall-clock deadline and
+   rejects private / loopback / link-local / multicast / reserved
+   addresses (RFC 1918, 127.0.0.0/8, 169.254.0.0/16, 224.0.0.0/4,
+   240.0.0.0/4). Set
+   `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` only for dev /
+   compose-network setups.
+
+## 3. Trigger sites (T1)
+
+A logout fan-out fires when ANY of these five sites detects a session
+that should end:
+
+| Site | Reason string | Condition |
+|---|---|---|
+| `manage.py oidc_revoke_user_tokens` | `user_revoked` | Always, post-revoke |
+| `User.is_active` flip True → False | `user_deactivated` | Unconditional on RT/AT presence |
+| `m2m_changed` on `User.groups` (post_remove / post_clear) | `groups_changed` | When `AccessPolicy.is_allowed` newly denies |
+| `allianceauth.authentication.signals.state_changed` | `state_changed` | When `AccessPolicy.is_allowed` newly denies |
+| `pre_delete` + `post_delete` on `User` | `user_deleted` | Unconditional on RT/AT presence |
+
+Spec §2.6 explicitly permits the AS to emit multiple `logout_tokens`
+for the same `(user, application)` if two triggers fire in one
+transaction (e.g. revoke + cascading deactivate). The RP MUST dedup on
+`jti` (which is unique per outbound POST).
+
+## 4. logout_token structure
+
+Header:
+
+```json
+{ "typ": "logout+jwt", "alg": "RS256", "kid": "<RFC 7638 thumbprint>" }
+```
+
+Payload (closed set — no fields beyond these are emitted, ever):
+
+```json
+{
+  "iss": "https://auth.example.org/o",
+  "aud": "<client_id>",
+  "iat": 1700000000,
+  "jti": "<uuid4 hex>",
+  "sub": "<user.pk>",
+  "events": {
+    "http://schemas.openid.net/event/backchannel-logout": {}
+  }
+}
+```
+
+Spec literals you MUST NOT "fix":
+
+- `events` URI is `http://...`, not `https://...`. Spec §2.4.
+- `nonce` claim is NEVER present (spec MUST NOT).
+- `sid` claim is NEVER present in v1 — sub-only logout per §2.6.
+
+Identity / PII claims (`email`, `name`, `picture`, `groups`, `locale`,
+`scope`, `client_secret`, character data) are NEVER emitted in the
+logout_token. A regression test
+(`TestBackChannelLogoutTokenBuilder.test_ac21_payload_never_contains_pii`)
+keeps the absence pinned.
+
+## 5. Retry & idempotency
+
+The Celery task `allianceauth_oidc.send_logout_token` carries scalar
+arguments (`user_pk`, `application_pk`, `jti`, `signing_kid`, `iat`)
+so the broker NEVER stores a JWT. On each attempt the worker rebuilds
+the token against the captured `signing_kid` and the pinned
+`(jti, iat)`, so retries are byte-identical. Default retry schedule
+is exponential backoff (5s, 10s, 20s, 40s, 80s capped at 125s) with
+`max_retries=3`; cumulative wall-clock ≤ 155 s (≈ 2:35), inside the
+3-minute window the spec recommends for RP `iat` freshness.
+
+Status-code routing:
+
+| RP response | Action |
+|---|---|
+| 2xx | Success; audit signal `oidc_logout_dispatched(success=True)` |
+| 3xx | Blocked — `allow_redirects=False`; `reason="redirect_blocked"`; no retry |
+| 4xx | `reason="rp_client_error"`; no retry |
+| 5xx | Celery autoretry; final failure → `reason="retries_exhausted"` |
+| `SigningKeyRetiredError` | `reason="signing_kid_retired"`; no HTTP call |
+
+Outbound HTTP discipline:
+
+- `requests.post(allow_redirects=False, timeout=(5, 10))`.
+- Response body is NEVER read; only `status_code`.
+- `User-Agent: allianceauth-oidc/<version>`.
+
+## 6. Security model
+
+- **SSRF defense.** `Application.clean()` resolves the host with a
+  bounded `concurrent.futures.ThreadPoolExecutor` (3 s wall-clock),
+  not `socket.setdefaulttimeout` — the latter is a process-global
+  mutable and does NOT bound `getaddrinfo` (a libc resolver call).
+  Private / loopback / link-local / multicast / reserved IPs are
+  rejected unless the dev-only escape hatch
+  `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` is set.
+
+- **DNS-failure policy is non-blocking.** Transient resolver failures
+  (`gaierror`, `socket.timeout`, `OSError`,
+  `concurrent.futures.TimeoutError`) log a WARNING and allow the
+  admin form to save. Operators decide whether to alert on the
+  frequency — graylog dashboard, log aggregator, etc. — and a
+  malicious / drifted RP URL still has to pass the SSRF rejection at
+  the next save.
+
+- **No tokens in logs.** All log lines in `logout.py` and
+  `tasks.send_logout_token` route through `build_logout_debug_meta`,
+  which has a fixed allow-list of fields (`application_pk`,
+  `application_name`, `backchannel_logout_uri`, `jti`, `status_code`,
+  `reason`). The
+  `TestBackChannelLogoutLogging.test_ac36_*_branch_log_has_no_token_material`
+  tests verify no `logout_token`, `access_token`, `refresh_token`,
+  `id_token`, or `client_secret` leaks into captured log output
+  across the success / 3xx / 4xx / kid-retired branches.
+
+- **No PII in tokens.** Per §4 above — closed payload set.
+
+## 7. Audit / observability
+
+Two Django signals are emitted:
+
+- `oidc_logout_required(sender, user, application, reason=None)` —
+  raised by every trigger site BEFORE any HTTP fan-out happens. The
+  default receiver (`logout.dispatch_backchannel_logout`) enqueues
+  the Celery task; custom receivers can connect under a different
+  `dispatch_uid` for SIEM forwarding.
+
+- `oidc_logout_dispatched(sender, application, jti, success, attempt_count, reason=None)`
+  — fired by `tasks.send_logout_token` on every attempt (success,
+  3xx, 4xx, kid-retired, retries-exhausted) AND by the dispatcher
+  when the broker is unavailable. Receivers can forward
+  `LogoutAuditBody` (the curated audit payload) to log aggregators
+  without leaking secrets.
+
+## 8. Out of scope — feature v2 (session-scoped logout)
+
+Sub-only logout terminates **all** of the user's sessions on the RP.
+A future feature v2 may add session-scoped logout (`sid` claim on the
+`logout_token`) — see plan v5 §12 for the three documented forward
+paths. The v1 omission is intentional, not an oversight; the
+session-scoped flow requires coupling with DOT's
+`RefreshToken.token_family` or a dedicated `OIDCSession` model, and
+the spec explicitly permits the AS to opt out of session scoping.
+
+## 9. RP integration
+
+Most off-the-shelf OIDC libraries support back-channel logout out of
+the box:
+
+- **oauth2-proxy** — set the redirect URI on the AS and configure the
+  RP's back-channel logout endpoint.
+- **mod_auth_openidc (Apache)** — `OIDCSessionType server-cache` plus
+  a registered logout endpoint per the module docs.
+- **Wiki.js / Outline / Grafana** — see vendor docs for "OIDC
+  back-channel logout"; the
+  `backchannel_logout_supported: true` flag in the discovery doc is
+  the feature-detection probe.
+
+For each RP:
+
+1. Register the back-channel logout endpoint on the RP side.
+2. Set `backchannel_logout_uri` in Django admin → OIDC application.
+3. Trigger a logout (e.g. `manage.py oidc_revoke_user_tokens
+   --username=test`).
+4. Confirm the RP's logs show a `logout_token` POST with `aud =
+   <client_id>` and the user's `sub` matching the AS's user.pk.

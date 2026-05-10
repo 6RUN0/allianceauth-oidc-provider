@@ -37,9 +37,10 @@ from django.contrib.auth import (
     SESSION_KEY,
 )
 from django.contrib.auth.models import Permission
-from django.test import LiveServerTestCase
+from django.test import LiveServerTestCase, override_settings
 from django.utils import timezone
 from jwcrypto import jwk, jwt
+from oauth2_provider.settings import oauth2_settings
 
 from allianceauth_oidc.constants import PERM_ACCESS_OIDC_CODENAME
 
@@ -56,6 +57,20 @@ HTTP_TIMEOUT = 5
 SCOPE_FULL = "openid profile email"
 
 
+def _oauth2_provider_without_iss() -> dict:
+    """
+    The default ``test_settingsAA4`` pins ``OIDC_ISS_ENDPOINT`` so that
+    Celery-driven back-channel logout dispatches can derive ``iss``
+    without a request context. The live-server flow needs the opposite:
+    discovery doc URLs MUST be absolute on the dynamically-allocated
+    live host, so the ``iss`` override has to be cleared here.
+    """
+    cfg = dict(getattr(settings, "OAUTH2_PROVIDER", {}) or {})
+    cfg.pop("OIDC_ISS_ENDPOINT", None)
+    return cfg
+
+
+@override_settings(OAUTH2_PROVIDER=_oauth2_provider_without_iss())
 class MockRelyingPartyFlow(LiveServerTestCase):
     """
     End-to-end OIDC code-flow over a real HTTP socket.
@@ -74,6 +89,12 @@ class MockRelyingPartyFlow(LiveServerTestCase):
 
     def setUp(self) -> None:
         super().setUp()
+        # ``oauth2_settings`` caches OAUTH2_PROVIDER at import; the
+        # class-level ``override_settings`` only takes effect after a
+        # cache reload. Mirror the pattern used by tests in
+        # ``tests/test_logout.py``.
+        oauth2_settings.reload()
+        self.addCleanup(oauth2_settings.reload)
         # Affiliation chain so the EVE claims have something to emit.
         alli = make_alliance("MRP", alliance_id=4001)
         corp = make_corp(

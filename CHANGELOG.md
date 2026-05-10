@@ -16,6 +16,29 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ### Added
 
+- OIDC Back-Channel Logout 1.0 (sub-only v1). Set
+  `backchannel_logout_uri` on an application to register an RP for
+  fan-out; five trigger sites (revoke command, `User.is_active`
+  flip, group / state change, account delete) emit
+  `oidc_logout_required` and a Celery task POSTs a signed
+  `logout_token` to every registered RP. SSRF defenses: scheme
+  allow-list, DNS host check via per-call
+  `concurrent.futures.ThreadPoolExecutor` (3 s wall-clock, defends
+  against the `setdefaulttimeout` no-op trap), private/loopback/
+  link-local/multicast/reserved-IP rejection with
+  `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE` dev escape hatch.
+  Outbound HTTP discipline: `allow_redirects=False`, body never
+  read, bounded `timeout=(5, 10)`. Retries are byte-identical
+  (worker rebuilds the JWT against pinned `(jti, iat, signing_kid)`).
+  Discovery emits `backchannel_logout_supported: true`;
+  `backchannel_logout_session_supported` is intentionally absent
+  (sub-only v1). Django system check `allianceauth_oidc.E001`
+  (severity `Error`) fails `manage.py check` when an RP registers a
+  `backchannel_logout_uri` without `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']`
+  — the Celery worker has no HTTP request context to derive `iss`.
+  Operator guide:
+  [docs/BACK_CHANNEL_LOGOUT.md](docs/BACK_CHANNEL_LOGOUT.md).
+
 - JWT access tokens (RFC 9068). Opt-in via two `OAUTH2_PROVIDER` keys —
   `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT = "jwt"` AND
   `ACCESS_TOKEN_GENERATOR =

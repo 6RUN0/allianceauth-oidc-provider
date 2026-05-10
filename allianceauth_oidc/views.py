@@ -530,6 +530,13 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         # provider only signs with RS256 (DOT's only id_token alg
         # we wire up); per-app overrides do not change the algorithm.
         data["access_token_signing_alg_values_supported"] = ["RS256"]
+        # OIDC Back-Channel Logout 1.0 §3 discovery — RPs feature-
+        # detect on this single flag. v1 is sub-only logout
+        # (path-b in plan v5), so we deliberately DO NOT emit
+        # ``backchannel_logout_session_supported``; that companion
+        # flag promises ``sid``-scoped logout, which the AS reserves
+        # for feature v2.
+        data["backchannel_logout_supported"] = True
         response = JsonResponse(data)
         response["Access-Control-Allow-Origin"] = "*"
         return response

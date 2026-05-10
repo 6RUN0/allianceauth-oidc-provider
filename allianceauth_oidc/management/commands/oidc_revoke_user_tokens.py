@@ -92,6 +92,19 @@ class Command(BaseCommand):
             )
             return
 
+        # Collect ``(user, application)`` pairs BEFORE the revoke
+        # loop walks the iterators — once ``revoke()`` runs, the
+        # AccessToken/RefreshToken rows are gone and re-deriving the
+        # set after the fact is not possible.
+        from oauth2_provider.models import get_application_model
+
+        from allianceauth_oidc.signals import oidc_logout_required
+
+        Application = get_application_model()
+        app_ids: set[int] = set()
+        app_ids.update(access.values_list("application_id", flat=True))
+        app_ids.update(refresh.values_list("application_id", flat=True))
+
         revoked_access = 0
         revoked_refresh = 0
         with transaction.atomic():
@@ -101,6 +114,22 @@ class Command(BaseCommand):
             for token in refresh.iterator():
                 token.revoke()
                 revoked_refresh += 1
+
+        # Command-local dedup — per plan v5 m-V3-3 the dispatcher
+        # itself does NOT dedup, but the entry-point command is a
+        # top-level scope with a finite, known ``(user, app)`` set.
+        seen: set[tuple[int, int]] = set()
+        for app in Application.objects.filter(pk__in=app_ids):
+            key = (user.pk, app.pk)
+            if key in seen:
+                continue
+            seen.add(key)
+            oidc_logout_required.send(
+                sender=Command,
+                user=user,
+                application=app,
+                reason="user_revoked",
+            )
 
         logger.warning(
             "OIDC revoke_user_tokens: user_id=%s username=%s access=%d refresh=%d",  # noqa: E501

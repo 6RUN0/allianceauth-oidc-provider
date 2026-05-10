@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from io import StringIO
+from typing import Any
 
 from allianceauth.authentication.models import State
 from django.contrib.auth.models import Group
@@ -733,8 +734,9 @@ class TestOIDCJwksRotateCommand(OIDCTestCase):
         # generated even when the PEM lands in a file.
         self.assertIn("kid:", stdout_text)
 
-        with open(path) as fh:
-            file_text = fh.read()
+        from pathlib import Path as _Path
+
+        file_text = _Path(path).read_text()
         self.assertTrue(file_text.startswith(self.PEM_BEGIN))
         # Trailing newline is fine; no recipe / kid in the file.
         self.assertNotIn("kid:", file_text)

@@ -1,4 +1,4 @@
-"""``manage.py oidc_jwks_rotate`` — mint a fresh RSA key + kid for JWKS rotation."""
+"""``manage.py oidc_jwks_rotate`` — mint a fresh RSA key + kid for JWKS rotation."""  # noqa: E501
 
 from __future__ import annotations
 
@@ -49,8 +49,7 @@ class Command(BaseCommand):
     """
 
     help = _(
-        "Mint a fresh RSA private key for JWKS rotation; print PEM "
-        "and RFC 7638 thumbprint."
+        "Mint a fresh RSA private key for JWKS rotation; print PEM and RFC 7638 thumbprint."  # noqa: E501
     )
 
     @override
@@ -58,9 +57,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--out",
             help=_(
-                "Write the bare PEM to this path (mode 0600) instead "
-                "of printing it to stdout. The kid and rotation recipe "
-                "still go to stdout."
+                "Write the bare PEM to this path (mode 0600) instead of printing it to stdout. The kid and rotation recipe still go to stdout."  # noqa: E501
             ),
         )
         parser.add_argument(
@@ -68,9 +65,7 @@ class Command(BaseCommand):
             type=int,
             default=_MIN_KEY_SIZE,
             help=_(
-                "RSA key size in bits. Default and floor 2048 "
-                "(FIPS 186-4); compliance regimes targeting 128-bit "
-                "security strength typically request 3072+."
+                "RSA key size in bits. Default and floor 2048 (FIPS 186-4); compliance regimes targeting 128-bit security strength typically request 3072+."  # noqa: E501
             ),
         )
 
@@ -79,8 +74,7 @@ class Command(BaseCommand):
         key_size: int = options["key_size"]
         if key_size < _MIN_KEY_SIZE:
             raise CommandError(
-                f"--key-size {key_size} is below the {_MIN_KEY_SIZE}-bit "
-                "minimum (FIPS 186-4). Refusing to mint a weak key."
+                f"--key-size {key_size} is below the {_MIN_KEY_SIZE}-bit minimum (FIPS 186-4). Refusing to mint a weak key."  # noqa: E501
             )
 
         private_key = rsa.generate_private_key(
@@ -133,7 +127,8 @@ class Command(BaseCommand):
 # rotation. Kept short on purpose; the doc has the long form.
 _RECIPE = _(
     """Rotation recipe (overlap window prevents in-flight JWT invalidation):
-  1. Move your current OIDC_RSA_PRIVATE_KEY into OIDC_RSA_PRIVATE_KEYS_INACTIVE.
+  1. Move current OIDC_RSA_PRIVATE_KEY into
+     OIDC_RSA_PRIVATE_KEYS_INACTIVE.
   2. Set OIDC_RSA_PRIVATE_KEY to the PEM above.
   3. Restart Auth. JWKS now publishes both kids; existing JWTs validate.
   4. After your access-token TTL x 2, drop the old PEM from

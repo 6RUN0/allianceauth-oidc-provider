@@ -57,12 +57,7 @@ class Command(BaseCommand):
             "--suspicious",
             action="store_true",
             help=_(
-                "Restrict output to tokens that do not match the "
-                "operator's current configuration: TTL farther in "
-                "the future than a freshly-minted token would be, "
-                "or issued by an application currently marked "
-                "active=False. Adds a ``reasons`` column listing "
-                "which checks fired."
+                "Restrict output to tokens that do not match the operator's current configuration: TTL farther in the future than a freshly-minted token would be, or issued by an application currently marked active=False. Adds a ``reasons`` column listing which checks fired."  # noqa: E501
             ),
         )
         parser.add_argument(
@@ -181,11 +176,12 @@ def _classify_suspicious(token: Any, *, now: datetime) -> list[str]:
     reasons: list[str] = []
     expires = getattr(token, "expires", None)
     if expires is not None:
-        ceiling = (
-            now
-            + timedelta(seconds=oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
-            + _TTL_ANOMALY_SKEW
-        )
+        # DOT types ``ACCESS_TOKEN_EXPIRE_SECONDS`` as the wide
+        # IMPORT_STRINGS union but at runtime it's always ``int`` /
+        # ``float``. The ``Any``-bound intermediate evades pyright's
+        # union check (same shape as ``tokens.py::expires_in_raw``).
+        ttl_raw: Any = oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS
+        ceiling = now + timedelta(seconds=int(ttl_raw)) + _TTL_ANOMALY_SKEW
         if expires > ceiling:
             reasons.append("ttl_anomaly")
     app = getattr(token, "application", None)

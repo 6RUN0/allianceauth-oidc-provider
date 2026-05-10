@@ -19,7 +19,15 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=10000]
       - id: detect-private-key
-        exclude: ^tests/oidc-test\.key$
+        # ``tests/oidc-test.key`` is the JWT test key.
+        # ``tests/test_management_commands.py`` only contains the
+        # literal PEM header / footer markers as a presence assert
+        # on ``oidc_jwks_rotate`` stdout — no key material.
+        exclude: |
+          (?x)^(
+              tests/oidc-test\.key
+            | tests/test_management_commands\.py
+          )$
       - id: debug-statements
       - id: end-of-file-fixer
         exclude: |

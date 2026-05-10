@@ -108,4 +108,10 @@ OAUTH2_PROVIDER = {
     "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
     "REFRESH_TOKEN_EXPIRE_SECONDS": 7 * 24 * 60 * 60,
     "ROTATE_REFRESH_TOKEN": True,  # nosec B105
+    # Pins the issuer so ``oidc_issuer(None)`` (DOT) resolves at
+    # worker dispatch time, where there is no HTTP request to derive
+    # ``iss`` from. Back-channel logout builds tokens off the Celery
+    # path, so the system check (E001) makes this setting structurally
+    # required once any application registers a ``backchannel_logout_uri``.
+    "OIDC_ISS_ENDPOINT": "https://auth.example.test/o",
 }

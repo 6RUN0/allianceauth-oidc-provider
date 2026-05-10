@@ -16,6 +16,30 @@
 
 ### Добавлено
 
+- OIDC Back-Channel Logout 1.0 (sub-only v1). Установите
+  `backchannel_logout_uri` у application, чтобы зарегистрировать RP
+  для fan-out; пять trigger-сайтов (revoke-команда, `User.is_active`
+  flip, изменение groups/state, удаление аккаунта) эмитят
+  `oidc_logout_required`, и Celery-task POST-ит подписанный
+  `logout_token` каждому зарегистрированному RP. SSRF-защита:
+  allow-list для scheme, проверка host-DNS через per-call
+  `concurrent.futures.ThreadPoolExecutor` (3 s wall-clock, защищает
+  от no-op-ловушки `setdefaulttimeout`), отказ для
+  private/loopback/link-local/multicast/reserved IP с dev escape
+  hatch `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE`. Дисциплина
+  исходящих HTTP: `allow_redirects=False`, тело не читается,
+  ограниченный `timeout=(5, 10)`. Retry — байт-в-байт (worker
+  пересобирает JWT против закреплённых `(jti, iat, signing_kid)`).
+  Discovery эмитит `backchannel_logout_supported: true`;
+  `backchannel_logout_session_supported` намеренно отсутствует
+  (sub-only v1). Django system check `allianceauth_oidc.E001`
+  (severity `Error`) падает на `manage.py check`, если RP
+  регистрирует `backchannel_logout_uri` без
+  `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` — у Celery-worker нет HTTP
+  request context, чтобы вывести `iss`. Руководство оператора:
+  [docs/BACK_CHANNEL_LOGOUT.md](docs/BACK_CHANNEL_LOGOUT.md)
+  ([RU](docs/BACK_CHANNEL_LOGOUT.ru.md)).
+
 - JWT access-токены (RFC 9068). Включается двумя ключами в
   `OAUTH2_PROVIDER`: `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT =
   "jwt"` И `ACCESS_TOKEN_GENERATOR =

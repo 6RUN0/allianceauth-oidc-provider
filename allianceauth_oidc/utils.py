@@ -18,12 +18,35 @@ if TYPE_CHECKING:
     from .security import AppLike
 
 __all__ = [
+    "LogoutDebugMeta",
     "OIDCDebugMeta",
     "RedactedSecret",
     "SecretRedactor",
     "app_log",
+    "build_logout_debug_meta",
     "build_oidc_debug_meta",
 ]
+
+
+class LogoutDebugMeta(TypedDict):
+    """
+    Curated, secret-free debug payload for back-channel logout log
+    lines (``logout.py`` + ``tasks.send_logout_token``).
+
+    Allow-list per plan v5 §5.6 AC-35. Adding a field here is an
+    intentional, security-reviewed decision: the dispatcher's log
+    line is one of the few places where a stray ``access_token`` or
+    ``client_secret`` could leak across operator boundaries. If you
+    need new metadata, extend the TypedDict and update the unit
+    test in ``TestBackChannelLogoutLogging``.
+    """
+
+    application_pk: int | None
+    application_name: str | None
+    backchannel_logout_uri: str | None
+    jti: str | None
+    status_code: int | None
+    reason: str | None
 
 
 # A string that has passed through ``redact_secret``. Runtime no-op
@@ -242,4 +265,47 @@ def build_oidc_debug_meta(
         "access_token": redact(payload_dict.get("access_token")),
         "refresh_token": redact(payload_dict.get("refresh_token")),
         "id_token": redact(payload_dict.get("id_token")),
+    }
+
+
+def build_logout_debug_meta(
+    *,
+    application: Any = None,
+    jti: str | None = None,
+    status_code: int | None = None,
+    reason: str | None = None,
+) -> LogoutDebugMeta:
+    """
+    Build a :class:`LogoutDebugMeta` for back-channel logout log lines.
+
+    Keeping this construction in one place — instead of each caller
+    formatting its own log dict — is what makes the AC-36 "no token
+    leaks under debug_mode" regression test stable. New BCL log lines
+    MUST route through this builder; if a field doesn't exist on the
+    TypedDict, the answer is to extend the TypedDict (and AC-35) and
+    NOT to ad-hoc add it to the log dict.
+
+    ``application`` is the persisted ``AllianceAuthApplication`` (or
+    None); ``backchannel_logout_uri`` is non-secret per AC-35, so it's
+    safe to include in audit logs.
+    """
+    return {
+        "application_pk": (
+            getattr(application, "pk", None)
+            if application is not None
+            else None
+        ),
+        "application_name": (
+            getattr(application, "name", None)
+            if application is not None
+            else None
+        ),
+        "backchannel_logout_uri": (
+            getattr(application, "backchannel_logout_uri", None)
+            if application is not None
+            else None
+        ),
+        "jti": jti,
+        "status_code": status_code,
+        "reason": reason,
     }

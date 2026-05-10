@@ -98,9 +98,25 @@ class AllianceAuthOIDC(AppConfig):
         # Explicit connect calls — see ``signals.connect_default_receiver``
         # and ``app_settings.connect_invalidator`` for why these are
         # not side-effects on module import.
+        from . import (
+            checks,
+            receivers,
+        )
         from .app_settings import connect_invalidator
-        from .signals import connect_default_receiver
+        from .logout import dispatch_backchannel_logout
+        from .signals import (
+            connect_default_logout_receiver,
+            connect_default_receiver,
+        )
 
+        # Importing ``checks`` runs the ``@register`` decorator that
+        # wires ``allianceauth_oidc.E001`` into Django's system-check
+        # framework — the module is "used" for that side effect.
+        # Touch a public attribute so pyright doesn't flag the import
+        # as unused; ``E001_ID`` is the public id constant.
+        _ = checks.E001_ID
         connect_default_receiver()
+        connect_default_logout_receiver(dispatch_backchannel_logout)
+        receivers.connect_all()
         connect_invalidator()
         _check_jwt_wiring()

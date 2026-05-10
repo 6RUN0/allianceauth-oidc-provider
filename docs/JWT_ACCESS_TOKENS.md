@@ -128,6 +128,13 @@ The signing key is `OIDC_RSA_PRIVATE_KEY`. Rotation discipline:
 Skipping the overlap (steps 2-3) instantly invalidates every in-flight
 JWT and triggers an outage proportional to the active session count.
 
+Back-channel logout (sub-only, OIDC BCL 1.0) re-uses the same
+`OIDC_RSA_PRIVATE_KEY` plus `OIDC_RSA_PRIVATE_KEYS_INACTIVE` chain
+for signing `logout_token`s. The Celery dispatcher captures the
+active key's `kid` at enqueue time and the worker resolves it from
+either store on retry, so a rotation in flight does not lose
+in-progress logouts. See [docs/BACK_CHANNEL_LOGOUT.md](BACK_CHANNEL_LOGOUT.md).
+
 [dot-oidc]: https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html
 
 ## 6. RP cookbook
