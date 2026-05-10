@@ -204,6 +204,7 @@ def make_app(
     active: bool = True,
     debug_mode: bool = False,
     pkce_required: bool = True,
+    access_token_format: str | None = None,
     redirect_uri: str = DEFAULT_REDIRECT_URI,
     skip_authorization: bool = False,
     algorithm: str = "RS256",
@@ -247,6 +248,7 @@ def make_app(
         active=active,
         debug_mode=debug_mode,
         pkce_required=pkce_required,
+        access_token_format=access_token_format,
     )
     for state_name in states or []:
         app.states.add(State.objects.get(name=state_name))

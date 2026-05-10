@@ -41,7 +41,14 @@ from django.test import TransactionTestCase, override_settings
 APP_LABEL = "allianceauth_oidc"
 MIGRATION_PREVIOUS = "0009_alter_allianceauthapplication_options"
 MIGRATION_SCHEMA = "0010_alliance_auth_application_pkce_required"
-MIGRATION_TARGET = "0011_backfill_pkce_required"
+# ``MIGRATION_TARGET`` tracks the latest migration the suite migrates
+# forward to. Tests that ``ObjectManager.create(...)`` rows via the
+# LIVE model after migration need the DB schema to match the live
+# model — bump this whenever a new migration is added so live-model
+# INSERTs see the columns they expect. PKCE-specific assertions
+# inside this file still depend on the ``0011`` data step having
+# run; that's true for any chain ending at 0011 or beyond.
+MIGRATION_TARGET = "0012_allianceauthapplication_access_token_format"
 
 
 def _migrate_to(target):

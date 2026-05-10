@@ -218,6 +218,7 @@ data-шаг видит non-boolean значение, переключается 
 | `APPLICATION_ADMIN_CLASS` | `"allianceauth_oidc.admin.ApplicationAdmin"` | **Обязательно.** AA-aware админка для нашей модели `Application`. |
 | `SCOPES` | `{"openid": "...", "email": "...", "profile": "..."}` | **Обязательно.** Какие scope-ы показывать на consent-экране. Строки — это user-facing метки. |
 | `PKCE_REQUIRED` | `per_app_pkce_required` (callable, импорт из `allianceauth_oidc.pkce`) | Per-app override, читается из `AllianceAuthApplication.pkce_required`. Новые приложения получают `True` (RFC 9700); существующие — то значение, что было в глобальной настройке на момент миграции. Неизвестный `client_id` сваливается в `True` и пишется в лог как `WARNING`. Конфигурируется через Django admin. **Внимание: значение должно быть ссылкой на функцию, а не dotted-path строкой — DOT не импортирует это значение автоматически.** |
+| `ACCESS_TOKEN_GENERATOR` | `"allianceauth_oidc.tokens.dispatching_access_token_generator"` | **Требуется только при включении JWT-режима** (RFC 9068). Здесь dotted-path строка работает: `ACCESS_TOKEN_GENERATOR` входит в `IMPORT_STRINGS` DOT, и DOT резолвит путь на старте. В отличие от `PKCE_REQUIRED` (нужна именно ссылка на функцию). См. [JWT-токены доступа](#jwt-токены-доступа-rfc-9068). |
 | `ROTATE_REFRESH_TOKEN` | `True` | Рекомендуется. На каждом использовании выпускает свежий refresh-токен; старый аннулируется. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Рекомендуется. Защита от replay'я по RFC 6819 §5.2.2.3 — refresh-токен, предъявленный дважды, отзывает всё семейство токенов. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Компромисс: чем короче срок жизни access-токена, тем чаще RP вынуждены ходить за refresh — быстрее реакция на отзыв, но больше запросов к token endpoint; чем длиннее — тем медленнее распространяется отзыв, зато трафик легче. **Не берите за основу тестовое `60`** — это значение из `tests/test_settingsAA4.py`, нужно лишь для того, чтобы expiry-сценарии в тестах гонялись без `sleep`-ов. В реальном логине RP токен должен прожить как минимум один запрос на `/userinfo` плюс запас на `clockTolerance` клиента (~5 секунд); `passport-openidconnect` (Wiki.js, Outline и им подобные) отвергает токены со сроком жизни меньше минуты сразу же. `3600` (1 час) — то же значение по умолчанию, что в Auth0 / Keycloak / Google. |
@@ -235,6 +236,8 @@ data-шаг видит non-boolean значение, переключается 
 | `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE` | `"https://images.evetech.net/characters/{character_id}/portrait?size={size}"` | Шаблон URL для claim'а `picture`. Обязательны плейсхолдеры `{character_id}` и `{size}`; битый шаблон просто пропускает claim с warning'ом. |
 | `ALLIANCEAUTH_OIDC_PORTRAIT_SIZE` | `128` | Какой размер запрашивать у image-сервера. EVE поддерживает 32 / 64 / 128 / 256 / 512 / 1024. |
 | `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` | `None` | Тройственный force-override для claim'а `email_verified`. `True` — всегда отдавать `true` (например, доверие приходит извне AA: пользователи импортированы из IdP, который сам верифицирует адреса). `False` — всегда `false`. `None` (по умолчанию) — auto-режим: синтетические плейсхолдер-адреса от опционального плагина `aa-skip-email` → `false`; иначе зеркалит настройку AA `REGISTRATION_VERIFY_EMAIL`. |
+| `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` | `"opaque"` | Wire-формат, в котором выпускаются access-токены, когда у приложения поле `access_token_format` пустое. Установите `"jwt"`, чтобы включить RFC 9068 глобально; per-app `access_token_format` приоритетнее. Помимо этой настройки оператор должен прописать `ACCESS_TOKEN_GENERATOR` (см. выше) — иначе JWT-режим не активируется и стартовый лог пишет `WARNING` о неполной конфигурации. См. [JWT-токены доступа](#jwt-токены-доступа-rfc-9068). |
+| `ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES` | `4096` | Мягкий size-guard на длину выпущенных JWT-токенов. Генератор пишет `logger.warning`, если токен превысил порог (типичная причина — фикстура с пользователем в сотнях групп). Токен **не** мутируется и не отвергается — оператор сам решает, обрезать ли claim'ы, поднимать ли лимит `Authorization`-заголовка в апстримном прокси (Apache `LimitRequestFieldSize`, nginx `large_client_header_buffers`, HAProxy `tune.bufsize`) или сократить group-churn. Действует только в JWT-режиме. |
 
 ### Периодическая чистка истёкших токенов (Celery Beat)
 
@@ -333,6 +336,10 @@ def forward_to_siem(sender, *, app, user, request, body, **kwargs):
 - `states` (M2M) и `groups` (M2M) — whitelist доступа; пусто = открыто для всех.
 - `active` — `is_usable()` возвращает это значение; деактивированное приложение не выдаёт коды.
 - `debug_mode` — per-app флаг повышенного уровня логов (см. *Debug-логи*).
+- `access_token_format` — per-app override wire-формата access-токена
+  (`"opaque"` / `"jwt"` / пусто). Пустое значение наследует deployment-wide
+  `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` (по умолчанию `"opaque"`).
+  См. [JWT-токены доступа](#jwt-токены-доступа-rfc-9068).
 - `pkce_required` — per-app форсирование PKCE; читается через
   `pkce.per_app_pkce_required` (делегирует в `AccessPolicy.pkce_required`).
 
@@ -426,6 +433,61 @@ AllianceAuthApplication.objects.filter(
 Обратное направление идентично (`pkce_required=True`). Для *новых* приложений, создаваемых
 через CLI вместо admin, `oidc_create_app --no-pkce-required` сразу выставляет нужное значение
 без последующего визита в admin; default — `True`.
+
+### JWT-токены доступа (RFC 9068)
+
+Access-токены по умолчанию — непрозрачные случайные строки. Оператор может
+включить токены формата [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068)
+глобально или для отдельных приложений, когда нижестоящие RP (oauth2-proxy,
+mod_auth_openidc, WikiJS, кастомные сервисы) предпочитают валидировать токен
+локально без round-trip'a в /o/introspect/. JWT-режим **opt-in** и
+**stateful**: JWT хранится в `oauth2_provider_accesstoken.token`, поэтому
+revoke / introspect / audit продолжают работать.
+
+Активируйте, прописав две настройки в `OAUTH2_PROVIDER`:
+
+```python
+OAUTH2_PROVIDER = {
+    # ... ваши обычные настройки ...
+    "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "jwt",
+    "ACCESS_TOKEN_GENERATOR": (
+        "allianceauth_oidc.tokens.dispatching_access_token_generator"
+    ),
+    # Рекомендация при активации JWT-режима: уменьшить срок жизни
+    # access-токена, чтобы ограничить окно PII-at-rest в таблице
+    # AccessToken. См. секцию "Data minimization" в
+    # docs/JWT_ACCESS_TOKENS.md.
+    "ACCESS_TOKEN_EXPIRE_SECONDS": 300,  # 5 минут; раньше было 3600
+}
+```
+
+> [!IMPORTANT]
+> Нужны обе настройки. `ACCESS_TOKEN_GENERATOR` принимает dotted-path строку,
+> потому что эта настройка входит в `IMPORT_STRINGS` DOT — DOT резолвит путь
+> на старте. `PKCE_REQUIRED` НЕ входит в `IMPORT_STRINGS` и поэтому требует
+> ссылку на функцию. Если выставлен только
+> `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="jwt"` без
+> `ACCESS_TOKEN_GENERATOR`, JWT-режим не включится, а
+> `AllianceAuthOIDC.ready()` напишет в лог `WARNING` о
+> неполной конфигурации. Проверка только логирует — старт никогда не падает
+> из-за битого dotted-path.
+
+**Per-app override.** У каждого `AllianceAuthApplication` есть необязательное
+поле `access_token_format` (`"opaque"` / `"jwt"` / пусто). Пустое значение
+наследует глобальный default. Это позволяет сначала переключить один
+некритичный RP, проверить и только потом править глобал. Поле редактируется
+через Django admin.
+
+**Маппинг claim'ов.** Identity-claim'ы (`email`, `name`, `groups`, `eve_*`,
+…) проходят через ту же scope-gating-машинерию, что и id_token — через
+канонический хук DOT `get_oidc_claims`. AT и id_token дают идентичный набор
+claim'ов для одного и того же набора scope. Поверх добавляются framing-claim'ы
+RFC 9068 (`typ="at+jwt"`, `aud=client_id`, `client_id`, `exp`, `iat`, `jti`,
+`scope`). Подпись — `RS256` ключом `OIDC_RSA_PRIVATE_KEY`, публикуемый
+`kid` — это RFC 7638 thumbprint ключа.
+
+**RP cookbook, дисциплина ротации ключей, data-minimization, troubleshooting** —
+см. [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md).
 
 ### Debug-логи
 

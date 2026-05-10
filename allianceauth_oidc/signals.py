@@ -39,6 +39,12 @@ class OIDCAuditBody(TypedDict):
 
     grant_type: NotRequired[str | None]
     scope: NotRequired[str | None]
+    # Wire format of the issued ``access_token`` — ``"opaque"``,
+    # ``"jwt"``, or ``None`` if the dispatcher could not classify the
+    # token (e.g. hashed-at-rest storage). Exposed for SIEM receivers
+    # that route differently for JWT vs opaque issuance; never used
+    # for security decisions.
+    format: NotRequired[str | None]
 
 
 # Custom signal instead of direct logging inside TokenView:

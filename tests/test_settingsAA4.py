@@ -93,6 +93,17 @@ OAUTH2_PROVIDER = {
     "OAUTH2_VALIDATOR_CLASS": "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator",
     "SCOPES": {"openid": "openid", "email": "email", "profile": "profile"},
     "PKCE_REQUIRED": per_app_pkce_required,
+    # ``ACCESS_TOKEN_GENERATOR`` IS in DOT's ``IMPORT_STRINGS`` tuple
+    # (``oauth2_provider/settings.py``), so a dotted-path string
+    # resolves to the callable at startup — no settings-time import
+    # needed and no risk of touching the apps registry before
+    # ``django.setup()`` completes. Contrast with ``PKCE_REQUIRED``
+    # above which is NOT in ``IMPORT_STRINGS`` and therefore needs
+    # the function reference (see ``allianceauth_oidc/pkce.py`` for
+    # the matching guidance).
+    "ACCESS_TOKEN_GENERATOR": (
+        "allianceauth_oidc.tokens.dispatching_access_token_generator"
+    ),
     "APPLICATION_ADMIN_CLASS": "allianceauth_oidc.admin.ApplicationAdmin",
     "ACCESS_TOKEN_EXPIRE_SECONDS": 60,
     "REFRESH_TOKEN_EXPIRE_SECONDS": 7 * 24 * 60 * 60,

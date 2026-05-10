@@ -16,6 +16,7 @@ class ApplicationAdmin(admin.ModelAdmin):
         "client_type",
         "authorization_grant_type",
         "pkce_required",
+        "access_token_format",
     )
     # `user` is rendered in `list_display` for every row in the
     # changelist; without `list_select_related`, Django issues one
@@ -27,6 +28,7 @@ class ApplicationAdmin(admin.ModelAdmin):
         "authorization_grant_type",
         "skip_authorization",
         "pkce_required",
+        "access_token_format",
     )
     filter_horizontal = ("states", "groups")
     radio_fields = {

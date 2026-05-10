@@ -219,6 +219,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `APPLICATION_ADMIN_CLASS` | `"allianceauth_oidc.admin.ApplicationAdmin"` | **Required.** AA-aware admin for the custom `Application` model. |
 | `SCOPES` | `{"openid": "...", "email": "...", "profile": "..."}` | **Required.** Scopes shown on the consent screen. Strings are user-facing labels. |
 | `PKCE_REQUIRED` | `per_app_pkce_required` (callable, imported from `allianceauth_oidc.pkce`) | Per-app override resolved from `AllianceAuthApplication.pkce_required`. New apps default to `True` (RFC 9700); existing apps land at the previous global value at migration time. Unknown `client_id` falls back to `True` and is logged at `WARNING`. Configurable through Django admin. **Note: must be assigned as a function reference, not a dotted-path string — DOT does not auto-import this setting.** |
+| `ACCESS_TOKEN_GENERATOR` | `"allianceauth_oidc.tokens.dispatching_access_token_generator"` | **Required only when activating JWT mode** (RFC 9068). Dotted-path string is fine here — `ACCESS_TOKEN_GENERATOR` IS in DOT's `IMPORT_STRINGS`, so DOT resolves the path at startup. Contrast with `PKCE_REQUIRED` (function-reference). See [JWT access tokens](#jwt-access-tokens-rfc-9068). |
 | `ROTATE_REFRESH_TOKEN` | `True` | Recommended. Mints a fresh refresh token on every use; old one is invalidated. |
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. **Do not copy the test-suite literal `60`** — that value is test-only (used by `tests/test_settingsAA4.py` to exercise expiry paths without sleeps) and races against real RP login flows that need at least one /userinfo round-trip plus client-side `clockTolerance` (~5 s). The `passport-openidconnect` strategy used by Wiki.js, Outline, and similar reject sub-minute lifetimes outright. `3600` (1 hour) matches the production defaults of Auth0 / Keycloak / Google. |
@@ -236,6 +237,8 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `ALLIANCEAUTH_OIDC_PORTRAIT_URL_TEMPLATE` | `"https://images.evetech.net/characters/{character_id}/portrait?size={size}"` | URL template for the `picture` claim. Both `{character_id}` and `{size}` placeholders are required; a malformed template skips the claim with a warning. |
 | `ALLIANCEAUTH_OIDC_PORTRAIT_SIZE` | `128` | Pixel size requested from the portrait service. EVE supports 32 / 64 / 128 / 256 / 512 / 1024. |
 | `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` | `None` | Tri-state operator override for the `email_verified` claim. `True` always emits `true` (e.g. trust signal originates outside AA — users imported from an already-verifying external IdP). `False` always emits `false`. `None` (default) falls through to the auto decision tree: synthetic placeholder addresses from the optional `aa-skip-email` plugin → `false`; otherwise mirrors AA's `REGISTRATION_VERIFY_EMAIL` setting. |
+| `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` | `"opaque"` | Wire format for newly issued access tokens when an app's `access_token_format` field is blank. Set to `"jwt"` to enable RFC 9068 globally; per-app `access_token_format` overrides this. Operators must also wire `ACCESS_TOKEN_GENERATOR` (above) for JWT mode to activate; the startup log emits a `WARNING` if only one of the two is configured. See [JWT access tokens](#jwt-access-tokens-rfc-9068). |
+| `ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES` | `4096` | Soft size guard for issued JWT access tokens. The generator emits `logger.warning` if a token exceeds this length (likely cause: a fixture user with hundreds of groups). The token is **not** mutated or rejected — operators decide whether to slim claims, raise upstream proxy `Authorization`-header limits (Apache `LimitRequestFieldSize`, nginx `large_client_header_buffers`, HAProxy `tune.bufsize`), or reduce group churn. Effective only under JWT mode. |
 
 ### Periodic cleanup of expired tokens (Celery Beat)
 
@@ -336,6 +339,10 @@ Beyond DOT's `AbstractApplication` schema, `AllianceAuthApplication` adds:
 - `debug_mode` — per-app flag escalating log level (see *Debug logging*).
 - `pkce_required` — per-app PKCE enforcement; resolved by
   `pkce.per_app_pkce_required` (delegates to `AccessPolicy.pkce_required`).
+- `access_token_format` — per-app override for the access-token wire format
+  (`"opaque"` / `"jwt"` / blank). Blank inherits the deployment-wide
+  `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` (default `"opaque"`). See
+  [JWT access tokens](#jwt-access-tokens-rfc-9068).
 
 ## Operations
 
@@ -423,6 +430,58 @@ record into your operations log noting the filter expression and timestamp.
 Reverse direction is identical (`pkce_required=True`). For *new* apps created from CLI rather
 than admin, `oidc_create_app --no-pkce-required` opts out at creation time without a follow-up
 admin visit; the default is `True`.
+
+### JWT access tokens (RFC 9068)
+
+Access tokens are opaque random strings by default — operators can opt in to
+[RFC 9068](https://www.rfc-editor.org/rfc/rfc9068) JWT tokens per-application or
+globally when downstream RPs (oauth2-proxy, mod_auth_openidc, WikiJS, custom
+services) prefer to validate tokens locally without an introspection round-trip.
+JWT mode is **opt-in** and **stateful**: the JWT lives in
+`oauth2_provider_accesstoken.token`, so revocation, introspection, and audit
+continue to work.
+
+Activate by setting two keys in `OAUTH2_PROVIDER`:
+
+```python
+OAUTH2_PROVIDER = {
+    # ... your existing settings ...
+    "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "jwt",
+    "ACCESS_TOKEN_GENERATOR": (
+        "allianceauth_oidc.tokens.dispatching_access_token_generator"
+    ),
+    # Recommended companion: shorten access-token TTL when activating JWT
+    # mode to bound the PII-at-rest window in the AccessToken table.
+    # See docs/JWT_ACCESS_TOKENS.md "Data minimization" section.
+    "ACCESS_TOKEN_EXPIRE_SECONDS": 300,  # 5 minutes; default was 3600
+}
+```
+
+> [!IMPORTANT]
+> Both keys are needed. `ACCESS_TOKEN_GENERATOR` accepts the dotted-path string
+> because it IS in DOT's `IMPORT_STRINGS` tuple — DOT resolves it at startup.
+> `PKCE_REQUIRED` is NOT in `IMPORT_STRINGS` and therefore requires the function
+> reference. If you set `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="jwt"`
+> but forget `ACCESS_TOKEN_GENERATOR`, JWT mode will not activate and
+> `AllianceAuthOIDC.ready()` emits a startup `WARNING` flagging the
+> misconfiguration. The check is log-only — startup never aborts on a
+> misconfigured dotted path.
+
+**Per-app override.** Every `AllianceAuthApplication` carries an optional
+`access_token_format` field (`"opaque"` / `"jwt"` / blank). Blank inherits the
+deployment-wide default. This lets you flip a single non-critical RP first,
+verify, then flip the global default. Editable through Django admin.
+
+**Claim mapping.** Identity claims (`email`, `name`, `groups`, `eve_*`, …) ride
+exactly the same scope-gating as the id_token via DOT's canonical
+`get_oidc_claims` hook — AT and id_token claim sets are byte-equivalent for the
+same scope. RFC 9068 framing claims (`typ="at+jwt"`, `aud=client_id`,
+`client_id`, `exp`, `iat`, `jti`, `scope`) are added on top. The provider signs
+with `RS256` against `OIDC_RSA_PRIVATE_KEY`; the published `kid` is the RFC 7638
+thumbprint of the key.
+
+**RP cookbook, key rotation discipline, data-minimization, troubleshooting** —
+see [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md).
 
 ### Debug logging
 

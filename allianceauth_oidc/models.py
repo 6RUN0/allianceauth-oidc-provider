@@ -10,6 +10,17 @@ from typing_extensions import override
 
 from .constants import PERM_ACCESS_OIDC_CODENAME
 
+# Module-level so admin/forms/tests can re-import the same source of
+# truth, mirroring DOT's ``CLIENT_TYPES`` / ``GRANT_TYPES`` pattern on
+# ``AbstractApplication``. Translations live on the values; the keys
+# travel through DOT/oauthlib unchanged.
+ACCESS_TOKEN_FORMAT_OPAQUE = "opaque"  # nosec B105 - enum value, not a password
+ACCESS_TOKEN_FORMAT_JWT = "jwt"  # nosec B105 - enum value, not a password
+ACCESS_TOKEN_FORMAT_CHOICES = [
+    (ACCESS_TOKEN_FORMAT_OPAQUE, _("Opaque (random string)")),
+    (ACCESS_TOKEN_FORMAT_JWT, _("JWT (RFC 9068)")),
+]
+
 
 class AllianceAuthApplication(AbstractApplication):
     """OAuth2 Application restricted by Alliance Auth states and groups."""
@@ -41,6 +52,21 @@ class AllianceAuthApplication(AbstractApplication):
         verbose_name=_("PKCE required"),
         help_text=_(
             "If enabled, this application must use PKCE on the authorization endpoint (RFC 7636 / 9700). Disable only for known-incompatible clients; new applications default to enabled."  # noqa: E501
+        ),
+    )
+    # ``null=True`` is intentional: the form's "blank" state must persist
+    # as ``None`` (not ``""``) so the resolver's
+    # ``per_app in ("opaque", "jwt")`` gate falls through cleanly to the
+    # global default. See plan v3 AC and Critic finding C-N15.
+    access_token_format = models.CharField(  # noqa: DJ001
+        max_length=8,
+        choices=ACCESS_TOKEN_FORMAT_CHOICES,
+        blank=True,
+        null=True,
+        default=None,
+        verbose_name=_("Access token format"),
+        help_text=_(
+            "Wire format of access tokens issued for this application. Leave blank to use the deployment-wide default (OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT'], or 'opaque' if unset)."  # noqa: E501
         ),
     )
 

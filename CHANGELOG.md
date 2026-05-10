@@ -14,6 +14,36 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Added
+
+- JWT access tokens (RFC 9068). Opt-in via two `OAUTH2_PROVIDER` keys —
+  `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT = "jwt"` AND
+  `ACCESS_TOKEN_GENERATOR =
+  "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Per-app
+  override via `AllianceAuthApplication.access_token_format` (`"opaque"` /
+  `"jwt"` / blank). Default format remains `"opaque"` for zero-disruption
+  upgrades. Tokens stay stateful — JWT lives in
+  `oauth2_provider_accesstoken.token` so introspection, revocation, and
+  the `oidc_token_issued` audit signal continue to work; the audit body
+  gains a `format` field. Identity claims gated through DOT's canonical
+  `get_oidc_claims` hook, so AT and id_token claim sets are byte-equivalent
+  for the same scope. New configurable size guard
+  `ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES` (default `4096`) emits
+  `WARNING` on oversize tokens without mutating issuance. Discovery
+  endpoint advertises `access_token_signing_alg_values_supported:
+  ["RS256"]`. Operator guide:
+  [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md) covers opt-in,
+  RP cookbook (oauth2-proxy / mod_auth_openidc / WikiJS), key rotation,
+  data minimization, and rollback.
+
+### Changed
+
+- `tests/test_migrations.py` `MIGRATION_TARGET` constant bumped to
+  `"0012_allianceauthapplication_access_token_format"` so post-migrate
+  live-model `objects.create(...)` calls hit a schema with the new
+  field. PKCE-specific assertions still cover the `0011` data step
+  because that step runs as part of the chain forward to `0012`.
+
 ## [0.2.0b2] - 2026-05-09
 
 ### Fixed

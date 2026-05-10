@@ -75,6 +75,25 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
                 f"{key}={doc[key]!r} is not absolute",
             )
 
+    def test_discovery_advertises_access_token_signing_alg_values_supported(
+        self,
+    ):
+        """
+        OIDC Discovery 1.0 §3 ``access_token_signing_alg_values_supported``
+        lets RP-side libraries that do RFC 9068 JWT validation
+        feature-detect on the algorithm before downloading the JWKS.
+        Pinned by ``AllianceAuthDiscoveryView`` regardless of whether
+        JWT mode is currently active — the algorithm choice is fixed
+        even when the deployment issues opaque tokens.
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content.decode("utf-8"))
+        self.assertEqual(
+            ["RS256"],
+            doc.get("access_token_signing_alg_values_supported"),
+        )
+
     def test_discovery_advertises_grant_types_and_claim_types(self):
         """
         OIDC Discovery 1.0 §3 RECOMMENDED fields ``grant_types_supported``

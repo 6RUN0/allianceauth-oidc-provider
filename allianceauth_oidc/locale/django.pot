@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-06 16:32+0000\n"
+"POT-Creation-Date: 2026-05-10 15:21+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -48,6 +48,11 @@ msgstr ""
 msgid "Allowed Django group name (repeat for multiple)."
 msgstr ""
 
+msgid ""
+"Require PKCE on the authorization endpoint for this app (RFC 7636 / 9700). "
+"Default: True. Pass --no-pkce-required for known-incompatible legacy clients."
+msgstr ""
+
 msgid "Revoke all OAuth2 tokens for a given user."
 msgstr ""
 
@@ -61,6 +66,12 @@ msgid "Regenerate the client_secret of an OIDC application."
 msgstr ""
 
 msgid "Show what would change without writing."
+msgstr ""
+
+msgid "Opaque (random string)"
+msgstr ""
+
+msgid "JWT (RFC 9068)"
 msgstr ""
 
 msgid ""
@@ -80,6 +91,16 @@ msgid ""
 "If enabled, this application must use PKCE on the authorization endpoint "
 "(RFC 7636 / 9700). Disable only for known-incompatible clients; new "
 "applications default to enabled."
+msgstr ""
+
+msgid "Access token format"
+msgstr ""
+
+msgid ""
+"Wire format of access tokens issued for this application. Leave blank to use "
+"the deployment-wide default "
+"(OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT'], or "
+"'opaque' if unset)."
 msgstr ""
 
 msgid "Alliance Auth OIDC application"

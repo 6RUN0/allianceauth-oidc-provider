@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final, Literal, Protocol, runtime_checkable
 
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
 
 from .constants import PERM_ACCESS_OIDC
@@ -68,6 +69,7 @@ class AppLike(Protocol):
     states: Any
     groups: Any
     pkce_required: Any
+    access_token_format: Any
 
 
 @runtime_checkable
@@ -279,6 +281,40 @@ class AccessPolicy:
         captured app".
         """
         return bool(getattr(app, "pkce_required", True))
+
+    def access_token_format(
+        self, app: AppLike | None
+    ) -> Literal["opaque", "jwt"]:
+        """
+        Return the access-token wire format for ``app``.
+
+        Resolution order:
+
+        1. ``app.access_token_format`` if it is one of
+           ``("opaque", "jwt")`` — the per-app override.
+        2. ``OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT']``
+           if that value is one of ``("opaque", "jwt")``.
+        3. ``"opaque"`` as the safe-by-default fallback.
+
+        Pure-logic counterpart to ``requires_pkce``: takes a
+        pre-loaded ``AppLike`` and returns the resolved format.
+        ORM-resolution from a raw ``client_id`` lives in the DOT
+        adapter (``tokens.py:_resolve_access_token_format``) so the
+        policy stays DI-testable with synthetic ``AppLike`` doubles.
+        """
+        if app is not None:
+            per_app = getattr(app, "access_token_format", None)
+            if per_app == "jwt":
+                return "jwt"
+            if per_app == "opaque":
+                return "opaque"
+        provider = getattr(settings, "OAUTH2_PROVIDER", {}) or {}
+        global_default = provider.get(
+            "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT", "opaque"
+        )
+        if global_default == "jwt":
+            return "jwt"
+        return "opaque"
 
     # ---- internal building blocks (raise-form) --------------------
 

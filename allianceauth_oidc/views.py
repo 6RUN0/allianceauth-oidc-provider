@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from dataclasses import dataclass, field
@@ -52,6 +54,40 @@ logger = logging.getLogger(f"extensions.{__name__}")
 # of headroom while preventing a misconfigured upstream from feeding
 # an unbounded payload to json.loads.
 _DEFAULT_MAX_BODY_BYTES_FOR_AUDIT_PARSE: Final[int] = 64 * 1024
+
+
+# A compact JWS has exactly three base64url segments (header,
+# payload, signature). Used by ``_classify_token_format`` to
+# distinguish JWT-shaped tokens from opaque random strings.
+_JWS_COMPACT_SEGMENT_COUNT: Final[int] = 3
+
+
+def _classify_token_format(token_str: object) -> str | None:
+    """
+    Heuristic format classification for an issued access token.
+
+    Returns ``"jwt"`` if the token looks like a 3-segment JWS with
+    a header that includes ``"typ": "at+jwt"`` (RFC 9068 §2.1);
+    ``"opaque"`` otherwise; ``None`` if the input is not a string at
+    all (hashed-at-rest storage exposes ``None`` for the raw value).
+
+    Used only by the audit signal pipeline — the value flows through
+    ``OIDCAuditBody["format"]`` to receivers that route differently
+    on issued format. Never used for security decisions.
+    """
+    if not isinstance(token_str, str):
+        return None
+    parts = token_str.split(".")
+    if len(parts) != _JWS_COMPACT_SEGMENT_COUNT:
+        return "opaque"
+    try:
+        pad = "=" * (-len(parts[0]) % 4)
+        header = json.loads(base64.urlsafe_b64decode(parts[0] + pad))
+    except (ValueError, TypeError, binascii.Error):
+        return "opaque"
+    if isinstance(header, dict) and header.get("typ") == "at+jwt":
+        return "jwt"
+    return "opaque"
 
 
 @dataclass
@@ -184,6 +220,7 @@ class TokenAudit:
         audit_body: OIDCAuditBody = {
             "grant_type": self.request.POST.get("grant_type"),
             "scope": self.request.POST.get("scope"),
+            "format": _classify_token_format(getattr(token, "token", None)),
         }
         for receiver, response_or_exc in oidc_token_issued.send_robust(
             sender=self.sender,
@@ -488,6 +525,11 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         data = json.loads(upstream.content)
         data["grant_types_supported"] = list(_GRANT_TYPES_SUPPORTED)
         data["claim_types_supported"] = list(_CLAIM_TYPES_SUPPORTED)
+        # OIDC Discovery 1.0 §3 — clients that do RFC 9068 JWT
+        # access-token validation feature-detect on this field. The
+        # provider only signs with RS256 (DOT's only id_token alg
+        # we wire up); per-app overrides do not change the algorithm.
+        data["access_token_signing_alg_values_supported"] = ["RS256"]
         response = JsonResponse(data)
         response["Access-Control-Allow-Origin"] = "*"
         return response

@@ -14,6 +14,37 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- JWT access-токены (RFC 9068). Включается двумя ключами в
+  `OAUTH2_PROVIDER`: `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT =
+  "jwt"` И `ACCESS_TOKEN_GENERATOR =
+  "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Per-app
+  override через `AllianceAuthApplication.access_token_format`
+  (`"opaque"` / `"jwt"` / пусто). Default остаётся `"opaque"` —
+  обновление никого не ломает. Токены по-прежнему stateful: JWT
+  хранится в `oauth2_provider_accesstoken.token`, поэтому introspect,
+  revoke и audit-сигнал `oidc_token_issued` продолжают работать; в
+  body audit-сигнала добавилось поле `format`. Identity-claim'ы идут
+  через канонический хук DOT `get_oidc_claims`, AT и id_token дают
+  идентичный набор claim'ов для одного и того же набора scope. Новая
+  настраиваемая защита от перерастания токена
+  `ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES` (по умолчанию `4096`) пишет
+  `WARNING` при превышении, не меняя выпуск. Discovery-документ
+  публикует `access_token_signing_alg_values_supported: ["RS256"]`.
+  Руководство оператора:
+  [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md) — включение,
+  RP cookbook (oauth2-proxy / mod_auth_openidc / WikiJS), ротация
+  ключей, data minimization, откат.
+
+### Изменено
+
+- В `tests/test_migrations.py` константа `MIGRATION_TARGET` обновлена
+  до `"0012_allianceauthapplication_access_token_format"` — иначе
+  post-migrate `objects.create(...)` через live-модель промахивается
+  мимо схемы. PKCE-проверки продолжают покрывать data-шаг `0011`,
+  потому что он по-прежнему запускается как часть цепочки до `0012`.
+
 ## [0.2.0b2] - 2026-05-09
 
 ### Исправлено

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: allianceauth-oidc-provider 0.0.1b9\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-06 16:18+0000\n"
+"POT-Creation-Date: 2026-05-10 15:21+0000\n"
 "PO-Revision-Date: 2026-05-06 11:25+0500\n"
 "Last-Translator: Boris Talovikov <boris@talovikov.ru>\n"
 "Language-Team: Russian <ru@li.org>\n"
@@ -51,6 +51,11 @@ msgstr "Разрешённое имя AA-state (повторите флаг дл
 msgid "Allowed Django group name (repeat for multiple)."
 msgstr "Разрешённое имя Django-group (повторите флаг для нескольких)."
 
+msgid ""
+"Require PKCE on the authorization endpoint for this app (RFC 7636 / 9700). "
+"Default: True. Pass --no-pkce-required for known-incompatible legacy clients."
+msgstr ""
+
 msgid "Revoke all OAuth2 tokens for a given user."
 msgstr "Отозвать все OAuth2-токены указанного пользователя."
 
@@ -65,6 +70,12 @@ msgstr "Перегенерировать client_secret OIDC-приложения
 
 msgid "Show what would change without writing."
 msgstr "Показать что изменится, без записи."
+
+msgid "Opaque (random string)"
+msgstr ""
+
+msgid "JWT (RFC 9068)"
+msgstr ""
 
 msgid ""
 "URL to the application's icon (128x128). Can be a local static-file URL or "
@@ -91,6 +102,16 @@ msgstr ""
 "Если включено, приложение обязано использовать PKCE на authorize-эндпоинте "
 "(RFC 7636 / 9700). Отключайте только для заведомо несовместимых клиентов; "
 "новые приложения создаются с включённым флагом."
+
+msgid "Access token format"
+msgstr ""
+
+msgid ""
+"Wire format of access tokens issued for this application. Leave blank to use "
+"the deployment-wide default "
+"(OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT'], or "
+"'opaque' if unset)."
+msgstr ""
 
 msgid "Alliance Auth OIDC application"
 msgstr "OIDC-приложение Alliance Auth"
