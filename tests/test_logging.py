@@ -4,11 +4,19 @@ no raw tokens or secrets are ever written to logs, even when debug logging is
 enabled.
 """
 
+import json
 import logging
 
+from django.test import override_settings
 from oauth2_provider.models import get_access_token_model
 
-from ._oidc_testcase import REDIRECT_URI, SCOPE_OPENID, OIDCTestCase
+from ._oidc_testcase import (
+    REDIRECT_URI,
+    SCOPE_FULL,
+    SCOPE_OPENID,
+    OIDCTestCase,
+)
+from .test_jwt_access_tokens import _jwt_mode_oauth2_provider, split_jwt
 
 VIEWS_LOGGER = "extensions.allianceauth_oidc.views"
 
@@ -148,3 +156,90 @@ class TestDebugLogging(OIDCTestCase):
             f"INFO record leaked after debug_mode flipped False: {leaked}",
         )
         self.assertNotIn("OIDC DEBUG token issued", log_text)
+
+
+@override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+class TestDebugLoggingJWTMode(OIDCTestCase):
+    """
+    Same no-leak contract as :class:`TestDebugLogging`, but exercised
+    against a JWT-mode AT.
+
+    A JWT carries identity claims (``email``, ``name``, ``groups``)
+    plaintext-base64url-encoded in segment 2 — so a future contributor
+    who relaxes ``build_oidc_debug_meta`` (e.g. adds a ``payload=%s``
+    field for diagnosis) leaks structured PII, not just a random
+    bearer string. The opaque-mode regression test would happily pass
+    that change. This class locks the JWT-mode side of the contract.
+    """
+
+    def _capture_views_log_during_exchange(self, code: str) -> str:
+        with self.assertLogs(VIEWS_LOGGER, level="NOTSET") as cm:
+            logging.getLogger(VIEWS_LOGGER).debug("test-anchor")
+            resp = self.exchange_code_for_token(
+                code=code,
+                redirect_uri=REDIRECT_URI,
+                expected_status=200,
+            )
+        body = json.loads(resp.content.decode("utf-8"))
+        return body["access_token"], "\n".join(cm.output)
+
+    def test_debug_logging_does_not_leak_jwt_or_decoded_claims(self) -> None:
+        """
+        With ``debug_mode=True`` AND JWT mode active, neither the raw
+        JWT, the decoded ``email``, the decoded ``name``, nor any
+        decoded ``groups`` member must reach the views log buffer.
+        """
+        self.oauth_app.debug_mode = True
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+        self.grant_oidc_access(self.user1)
+        # SCOPE_FULL = "openid profile email" → identity claims will
+        # be present in the JWT payload, maximising the leak surface.
+        code = self.authorize_to_code(
+            self.user1, scope=SCOPE_FULL, state="jwt-leak"
+        )
+
+        token_str, log_text = self._capture_views_log_during_exchange(code)
+
+        # The exchange returned a JWT (3 segments).
+        header, payload = split_jwt(token_str)
+        self.assertEqual("at+jwt", header.get("typ"))
+
+        # The OIDC DEBUG INFO line was actually emitted (so the
+        # negative assertions are not passing vacuously on an empty
+        # buffer). Mirrors the opaque-mode regression test.
+        self.assertIn("OIDC DEBUG token issued", log_text)
+
+        # 1. Raw JWT must not appear in the buffer.
+        self.assertNotIn(token_str, log_text)
+        # 2. Each individual segment is also a leak — guards against
+        #    a hypothetical "log header for diagnosis" regression that
+        #    would still expose ``kid`` correlation across requests.
+        for segment in token_str.split("."):
+            self.assertNotIn(segment, log_text)
+
+        # 3. Decoded identity claims must not leak. ``user1`` ships
+        #    with the ``character.name1`` main char and an empty
+        #    email; assertions are guarded by ``if claim`` so they
+        #    only fire when the fixture actually carries a value.
+        for claim_key in ("email", "name", "preferred_username"):
+            value = payload.get(claim_key)
+            if isinstance(value, str) and value:
+                self.assertNotIn(
+                    value,
+                    log_text,
+                    f"identity claim {claim_key!r}={value!r} leaked to log",
+                )
+        # ``groups`` is a list of strings — each member must be absent.
+        for grp in payload.get("groups") or []:
+            if isinstance(grp, str) and grp:
+                self.assertNotIn(
+                    grp,
+                    log_text,
+                    f"group {grp!r} from JWT claims leaked to log",
+                )
+
+        # 4. The client_secret stays redacted under JWT mode, same as
+        #    opaque. The masking pipeline shares one code path; this
+        #    assertion just locks the JWT-mode side.
+        self.assertNotIn(self.oauth_secret, log_text)

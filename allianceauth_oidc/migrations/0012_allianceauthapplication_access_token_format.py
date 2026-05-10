@@ -4,15 +4,25 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('allianceauth_oidc', '0011_backfill_pkce_required'),
+        ("allianceauth_oidc", "0011_backfill_pkce_required"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='allianceauthapplication',
-            name='access_token_format',
-            field=models.CharField(blank=True, choices=[('opaque', 'Opaque (random string)'), ('jwt', 'JWT (RFC 9068)')], default=None, help_text="Wire format of access tokens issued for this application. Leave blank to use the deployment-wide default (OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT'], or 'opaque' if unset).", max_length=8, null=True, verbose_name='Access token format'),
+            model_name="allianceauthapplication",
+            name="access_token_format",
+            field=models.CharField(
+                blank=True,
+                choices=[
+                    ("opaque", "Opaque (random string)"),
+                    ("jwt", "JWT (RFC 9068)"),
+                ],
+                default=None,
+                help_text="Wire format of access tokens issued for this application. Leave blank to use the deployment-wide default (OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT'], or 'opaque' if unset).",
+                max_length=8,
+                null=True,
+                verbose_name="Access token format",
+            ),
         ),
     ]

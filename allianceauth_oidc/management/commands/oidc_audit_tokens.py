@@ -14,6 +14,8 @@ from oauth2_provider.models import (
 )
 from typing_extensions import override
 
+from allianceauth_oidc.views import classify_token_format
+
 from ._format import FORMAT_CHOICES, render_rows
 
 
@@ -84,6 +86,11 @@ class Command(BaseCommand):
         # triaging "did this token come from a strict-PKCE client?" without
         # context-switching to admin. Column name matches the model field
         # for symmetry with ``oidc_create_app`` output.
+        # ``format`` derives from the persisted token bytes via the
+        # heuristic in ``views.classify_token_format`` — JWT tokens
+        # render ``"jwt"``, anything else (opaque, hashed-at-rest)
+        # renders ``"opaque"``. Documented as the verification step
+        # in ``docs/JWT_ACCESS_TOKENS.md`` migration recipe.
         rows = [
             {
                 "id": t.id,
@@ -92,6 +99,7 @@ class Command(BaseCommand):
                 "scope": t.scope,
                 "expires": t.expires.isoformat() if t.expires else "",
                 "pkce_required": getattr(t.application, "pkce_required", None),
+                "format": classify_token_format(t.token) or "opaque",
             }
             for t in qs.order_by("-expires").iterator()
         ]
@@ -105,6 +113,7 @@ class Command(BaseCommand):
                     "scope",
                     "expires",
                     "pkce_required",
+                    "format",
                 ),
                 fmt=options["format"],
             )

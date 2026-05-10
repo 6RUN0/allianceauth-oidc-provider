@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from django.conf import settings
 from oauth2_provider.settings import oauth2_settings
@@ -44,7 +44,7 @@ logger = logging.getLogger(f"extensions.{__name__}")
 # to 16 KB. 4096 leaves headroom for cookies and other Authorization
 # overhead, and is operator-overridable via
 # ``OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES']``.
-_DEFAULT_SIZE_WARN_BYTES = 4096
+_DEFAULT_SIZE_WARN_BYTES: Final[int] = 4096
 
 
 def dispatching_access_token_generator(request: Any) -> str:
@@ -104,14 +104,12 @@ def _resolve_access_token_format(
     from .models import AllianceAuthApplication
 
     if not client_id:
-        logger.warning(
-            "OIDC AT format: empty client_id -> fail-safe opaque"
-        )
+        logger.warning("OIDC AT format: empty client_id -> fail-safe opaque")
         return "opaque"
     try:
-        app = AllianceAuthApplication.objects.only(
-            "access_token_format"
-        ).get(client_id=client_id)
+        app = AllianceAuthApplication.objects.only("access_token_format").get(
+            client_id=client_id
+        )
     except AllianceAuthApplication.DoesNotExist:
         logger.warning(
             "OIDC AT format: unknown client_id=%a -> fail-safe opaque",
@@ -200,12 +198,10 @@ def _required_claims(request: Any) -> dict[str, Any]:
     client_id = (
         getattr(getattr(request, "client", None), "client_id", "") or ""
     )
-    is_authenticated = (
-        user is not None and getattr(user, "is_authenticated", False)
+    is_authenticated = user is not None and getattr(
+        user, "is_authenticated", False
     )
-    sub = (
-        str(getattr(user, "pk", "") or "") if is_authenticated else client_id
-    )
+    sub = str(getattr(user, "pk", "") or "") if is_authenticated else client_id
     expires_in_raw: Any = (
         getattr(request, "expires_in", None)
         or oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS

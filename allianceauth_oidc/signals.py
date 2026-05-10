@@ -54,6 +54,25 @@ class OIDCAuditBody(TypedDict):
 #   to SIEM/audit sinks without changing the core token issuance logic.
 # - use_caching=True helps when emitting frequently: Django caches
 #   the receiver list.
+#
+# Receiver contract (READ BEFORE WIRING NEW RECEIVERS):
+#
+#     def my_receiver(sender, request, token, body=None, **kwargs):
+#         ...
+#
+# - ``body`` is the curated, secret-free :class:`OIDCAuditBody` —
+#   safe to forward to SIEM/log sinks unchanged.
+# - ``token`` is the persisted :class:`oauth2_provider.AccessToken`
+#   model. Reading ``token.scope``, ``token.user``, ``token.application``,
+#   ``token.expires``, ``token.id`` is safe.
+#   *NEVER forward, log, repr, or otherwise serialise the
+#   ``token.token`` attribute or the model as a whole* — it carries
+#   the raw bearer token (including a JWT with embedded identity
+#   claims when the dispatcher issued in JWT mode). Forwarding it
+#   to an external sink leaks a credential that is valid for the
+#   token's full TTL. The default receiver
+#   :func:`audit_oidc_token_issued` is hand-written to read only
+#   non-sensitive fields; new receivers should follow that pattern.
 oidc_token_issued = Signal(use_caching=True)
 
 

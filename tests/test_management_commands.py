@@ -432,3 +432,71 @@ class TestOIDCAuditTokensCommand(OIDCTestCase):
         call_command("oidc_audit_tokens", "--format=json", stdout=out)
         rows = json.loads(out.getvalue())
         self.assertFalse(rows[0]["pkce_required"])
+
+    def test_audit_surfaces_format_column_jwt_vs_opaque(self) -> None:
+        """
+        ``docs/JWT_ACCESS_TOKENS.md`` migration recipe Step 5 instructs
+        operators to grep the audit output for a ``format`` column to
+        confirm the per-app rollout (one RP under JWT mode, others
+        still on opaque). The column derives from the persisted token
+        bytes via ``views.classify_token_format``: tokens whose
+        compact form is a 3-segment ``at+jwt`` JWS render ``"jwt"``;
+        anything else renders ``"opaque"`` (including hashed-at-rest
+        tokens, which the heuristic cannot decode).
+
+        Locks the migration recipe into a regression: if the column
+        is dropped, renamed, or hardcoded, this test fails loudly.
+        """
+        # Seed a real JWT-shaped token. The classification heuristic
+        # only looks at the header bytes, so a plausibly-formed JWT
+        # (3 segments, header with ``typ="at+jwt"``) is sufficient
+        # without going through the issuance path.
+        import base64
+
+        from oauth2_provider.models import get_access_token_model
+
+        AccessToken = get_access_token_model()
+
+        def _b64(payload: bytes) -> str:
+            return (
+                base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+            )
+
+        jwt_like = ".".join(
+            (
+                _b64(b'{"typ":"at+jwt","alg":"RS256","kid":"x"}'),
+                _b64(b'{"sub":"1","aud":"a","exp":1}'),
+                _b64(b"signature-bytes"),
+            )
+        )
+
+        AccessToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            token=jwt_like,
+            expires=timezone.now() + timedelta(hours=1),
+            scope="openid",
+        )
+        AccessToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            token="opaque-random-string-no-dots",  # nosec B106 - test fixture
+            expires=timezone.now() + timedelta(hours=1),
+            scope="openid",
+        )
+
+        out = StringIO()
+        call_command("oidc_audit_tokens", "--format=json", stdout=out)
+        rows = json.loads(out.getvalue())
+        self.assertEqual(2, len(rows))
+
+        # Each row exposes a ``format`` key.
+        for row in rows:
+            self.assertIn("format", row, f"missing format column in {row!r}")
+
+        formats = {row["format"] for row in rows}
+        self.assertEqual(
+            {"jwt", "opaque"},
+            formats,
+            f"expected one jwt + one opaque row, got {formats!r}",
+        )

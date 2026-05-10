@@ -2,6 +2,7 @@
 
 from allianceauth.authentication.models import State
 from django.contrib.auth.models import Group
+from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -85,6 +86,39 @@ class AllianceAuthApplication(AbstractApplication):
         of silently letting ``active=False`` apps issue tokens.
         """
         return self.active
+
+    @override
+    def clean(self) -> None:
+        """
+        Reject configurations that would issue tokens with a key
+        the operator did not configure.
+
+        ``algorithm="HS256"`` + ``access_token_format="jwt"`` is
+        incoherent: the id_token would sign with the per-app HMAC key
+        (DOT's ``finalize_id_token`` honours ``self.algorithm``) while
+        the JWT access_token would sign with the deployment-wide
+        ``OIDC_RSA_PRIVATE_KEY`` (RS256). Two different keys for two
+        tokens of the same session is a confusing failure mode that
+        breaks the operator's mental model and surfaces only at
+        runtime as ``MalformedFraming`` if no RSA key is configured.
+
+        Raised at ``full_clean()`` so the admin form rejects the
+        combination before persistence; the error is keyed on
+        ``access_token_format`` so the form points at the offending
+        field.
+        """
+        super().clean()
+        if (
+            self.access_token_format == ACCESS_TOKEN_FORMAT_JWT
+            and self.algorithm == self.HS256_ALGORITHM
+        ):
+            raise ValidationError(
+                {
+                    "access_token_format": _(
+                        "JWT access tokens require the application's id_token signing algorithm to be RS256, not HS256. Either set Algorithm to RS256 or pick an opaque (or blank) access-token format."  # noqa: E501
+                    ),
+                }
+            )
 
     class Meta:
         # `ordering` makes the admin changelist's pagination stable.

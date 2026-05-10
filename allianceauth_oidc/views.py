@@ -57,12 +57,12 @@ _DEFAULT_MAX_BODY_BYTES_FOR_AUDIT_PARSE: Final[int] = 64 * 1024
 
 
 # A compact JWS has exactly three base64url segments (header,
-# payload, signature). Used by ``_classify_token_format`` to
+# payload, signature). Used by ``classify_token_format`` to
 # distinguish JWT-shaped tokens from opaque random strings.
 _JWS_COMPACT_SEGMENT_COUNT: Final[int] = 3
 
 
-def _classify_token_format(token_str: object) -> str | None:
+def classify_token_format(token_str: object) -> str | None:
     """
     Heuristic format classification for an issued access token.
 
@@ -220,7 +220,7 @@ class TokenAudit:
         audit_body: OIDCAuditBody = {
             "grant_type": self.request.POST.get("grant_type"),
             "scope": self.request.POST.get("scope"),
-            "format": _classify_token_format(getattr(token, "token", None)),
+            "format": classify_token_format(getattr(token, "token", None)),
         }
         for receiver, response_or_exc in oidc_token_issued.send_robust(
             sender=self.sender,

@@ -28,7 +28,7 @@ from django.test import TestCase, override_settings
 from allianceauth_oidc.security import DEFAULT_POLICY
 from allianceauth_oidc.signals import oidc_token_issued
 
-from ._oidc_testcase import SCOPE_FULL, OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, SCOPE_FULL, OIDCTestCase
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -203,9 +203,7 @@ class TestSignatureVerification(OIDCTestCase):
         body = self.run_code_flow(self.user1)
         token_str = body["access_token"]
 
-        jwks_resp = self.client.get(
-            "/o/.well-known/jwks.json"
-        )
+        jwks_resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, jwks_resp.status_code)
         jwks_doc = json.loads(jwks_resp.content)
         self.assertIn("keys", jwks_doc)
@@ -269,9 +267,7 @@ class TestAuditSignal(OIDCTestCase):
 
         self._capture_receiver = capture
         oidc_token_issued.connect(capture, weak=False)
-        self.addCleanup(
-            oidc_token_issued.disconnect, capture
-        )
+        self.addCleanup(oidc_token_issued.disconnect, capture)
 
     def test_audit_signal_payload_includes_format_jwt(self) -> None:
         self.run_code_flow(self.user1)
@@ -337,9 +333,7 @@ class TestDispatcherFormatResolution(TestCase):
     def test_per_app_none_global_absent_falls_back_to_opaque(self) -> None:
         with override_settings(OAUTH2_PROVIDER={}):
             app = SimpleNamespace(access_token_format=None)
-            self.assertEqual(
-                "opaque", DEFAULT_POLICY.access_token_format(app)
-            )
+            self.assertEqual("opaque", DEFAULT_POLICY.access_token_format(app))
 
     def test_app_is_none_uses_global(self) -> None:
         with override_settings(
@@ -347,9 +341,7 @@ class TestDispatcherFormatResolution(TestCase):
                 "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "jwt",
             }
         ):
-            self.assertEqual(
-                "jwt", DEFAULT_POLICY.access_token_format(None)
-            )
+            self.assertEqual("jwt", DEFAULT_POLICY.access_token_format(None))
 
     def test_invalid_per_app_value_falls_through_to_global(self) -> None:
         with override_settings(
@@ -358,9 +350,7 @@ class TestDispatcherFormatResolution(TestCase):
             }
         ):
             app = SimpleNamespace(access_token_format="garbage")
-            self.assertEqual(
-                "opaque", DEFAULT_POLICY.access_token_format(app)
-            )
+            self.assertEqual("opaque", DEFAULT_POLICY.access_token_format(app))
 
     def test_invalid_global_value_falls_back_to_opaque(self) -> None:
         with override_settings(
@@ -374,7 +364,7 @@ class TestDispatcherFormatResolution(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Helper-tests: keep ``_classify_token_format`` / ``split_jwt`` honest.
+# Helper-tests: keep ``classify_token_format`` / ``split_jwt`` honest.
 # These guard the test infrastructure itself; if either drifts, every
 # JWT test in this file silently regresses.
 # ---------------------------------------------------------------------------
@@ -388,14 +378,12 @@ class TestSplitJWTHelper(TestCase):
         # paired with ``{"sub":"u"}`` payload and a placeholder
         # signature segment.
         header_seg = (
-            base64.urlsafe_b64encode(
-                b'{"typ":"at+jwt","alg":"RS256"}'
-            ).rstrip(b"=").decode()
-        )
-        payload_seg = (
-            base64.urlsafe_b64encode(b'{"sub":"u"}')
+            base64.urlsafe_b64encode(b'{"typ":"at+jwt","alg":"RS256"}')
             .rstrip(b"=")
             .decode()
+        )
+        payload_seg = (
+            base64.urlsafe_b64encode(b'{"sub":"u"}').rstrip(b"=").decode()
         )
         token = f"{header_seg}.{payload_seg}.sig"
         header, payload = split_jwt(token)
@@ -583,9 +571,7 @@ class TestStartupWiringCheck(TestCase):
     """
 
     LOGGER_NAME = "extensions.allianceauth_oidc.apps"
-    EXPECTED = (
-        "allianceauth_oidc.tokens.dispatching_access_token_generator"
-    )
+    EXPECTED = "allianceauth_oidc.tokens.dispatching_access_token_generator"
 
     def _build_provider(self, **overrides: Any) -> dict:
         provider = dict(django_settings.OAUTH2_PROVIDER)
@@ -607,9 +593,7 @@ class TestStartupWiringCheck(TestCase):
         return captured
 
     def _warning_records(self, captured: Any) -> list[str]:
-        return [
-            line for line in captured.output if line.startswith("WARNING")
-        ]
+        return [line for line in captured.output if line.startswith("WARNING")]
 
     def test_no_warning_when_default_is_opaque(self) -> None:
         captured = self._capture_check(
@@ -835,12 +819,14 @@ class TestBackcompatLifecycle(OIDCTestCase):
         resp = self.client.post(
             "/o/introspect/",
             data={"token": token},
-            HTTP_AUTHORIZATION=(
-                "Basic "
-                + base64.b64encode(
-                    f"{self.oauth_id}:{self.oauth_secret}".encode("ascii")
-                ).decode("ascii")
-            ),
+            headers={
+                "authorization": (
+                    "Basic "
+                    + base64.b64encode(
+                        f"{self.oauth_id}:{self.oauth_secret}".encode("ascii")
+                    ).decode("ascii")
+                )
+            },
         )
         return json.loads(resp.content)
 
@@ -858,3 +844,273 @@ class TestBackcompatLifecycle(OIDCTestCase):
             intro.get("active"),
             f"expected legacy opaque token to remain valid; got {intro!r}",
         )
+
+
+# ---------------------------------------------------------------------------
+# US-012 — Follow-up coverage from second-pass review (M-1, G-1, G-2, G-3)
+# ---------------------------------------------------------------------------
+
+
+class TestHS256JWTRejection(OIDCTestCase):
+    """
+    Operators can configure ``algorithm`` per app (DOT's
+    ``AbstractApplication`` field). Combining ``algorithm="HS256"`` with
+    ``access_token_format="jwt"`` is logically incoherent: id_tokens
+    would sign with the per-app HMAC key while access_tokens would
+    sign with the deployment's RSA key — two different keys for two
+    tokens of the same session. We refuse the combination at the
+    model-validation layer so the admin form rejects it before
+    persistence.
+
+    The opposite combination (``algorithm="HS256"`` +
+    ``access_token_format=None|"opaque"``) stays valid because the
+    opaque format does not sign anything.
+    """
+
+    def test_full_clean_rejects_hs256_plus_jwt(self) -> None:
+        from django.core.exceptions import ValidationError
+
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1,
+            algorithm="HS256",
+            access_token_format="jwt",
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            creds.app.full_clean()
+        # The validation error must explicitly cite ``access_token_format``
+        # so admin-form errors point operators at the offending field.
+        self.assertIn("access_token_format", ctx.exception.message_dict)
+
+    def test_full_clean_accepts_rs256_plus_jwt(self) -> None:
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1,
+            algorithm="RS256",
+            access_token_format="jwt",
+        )
+        # full_clean() should not raise on the supported combination.
+        creds.app.full_clean()
+
+    def test_full_clean_accepts_hs256_plus_opaque(self) -> None:
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1,
+            algorithm="HS256",
+            access_token_format="opaque",
+        )
+        creds.app.full_clean()
+
+    def test_full_clean_accepts_hs256_plus_null_format(self) -> None:
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1,
+            algorithm="HS256",
+            access_token_format=None,
+        )
+        creds.app.full_clean()
+
+
+class TestMissingPrivateKey(OIDCTestCase):
+    """
+    JWT mode without ``OIDC_RSA_PRIVATE_KEY`` is an operator
+    misconfiguration. The dispatcher must fail-closed (no token
+    issued) rather than fail-silent or fall back to opaque — the
+    operator explicitly opted into JWT mode, so a silent fallback
+    would mask their mistake.
+
+    We assert that the token endpoint returns a non-200 response;
+    the exact OAuth2 error code is left to oauthlib's translation
+    layer because ``_build_jwt``'s exception type is an implementation
+    detail of ``jwcrypto``.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.grant_oidc_access(self.user1)
+
+    def test_jwt_mode_without_private_key_does_not_issue_a_token(
+        self,
+    ) -> None:
+        provider = _jwt_mode_oauth2_provider()
+        provider["OIDC_RSA_PRIVATE_KEY"] = ""
+        # The Django test client re-raises view exceptions by default;
+        # in production the same path renders a 500 via the standard
+        # Django exception middleware. Disable re-raise so we observe
+        # the operator-visible behaviour (a non-2xx response with no
+        # access_token), not the test-time pass-through.
+        self.client.raise_request_exception = False
+        with override_settings(OAUTH2_PROVIDER=provider):
+            code = self.authorize_to_code(self.user1)
+            resp = self.client.post(
+                "/o/token/",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": self.oauth_id,
+                    "client_secret": self.oauth_secret,
+                    "redirect_uri": REDIRECT_URI,
+                    "code": code,
+                },
+            )
+        self.assertNotEqual(
+            200,
+            resp.status_code,
+            f"expected non-2xx on missing private key, got 200: "
+            f"{resp.content!r}",
+        )
+        # Body must NOT contain a usable access_token. Even on 500
+        # responses the body is rendered, so check structurally.
+        try:
+            body = json.loads(resp.content.decode("utf-8"))
+        except json.JSONDecodeError:
+            return  # non-JSON 500 page; absence of token is implicit
+        self.assertNotIn(
+            "access_token",
+            body,
+            f"unexpected access_token in failure response: {body!r}",
+        )
+
+
+class TestKeyRotationOverlap(OIDCTestCase):
+    """
+    RFC 7517 / DOT key-rotation idiom: during the overlap window,
+    ``OIDC_RSA_PRIVATE_KEYS_INACTIVE`` lists keys that JWKS continues
+    to publish so existing tokens remain verifiable while
+    ``OIDC_RSA_PRIVATE_KEY`` (the active signing key) is the one the
+    AS uses to sign new tokens.
+
+    Documented in ``docs/JWT_ACCESS_TOKENS.md`` §"Key rotation". This
+    test locks that documented overlap into a regression: JWKS
+    publishes both kids, and freshly issued JWTs sign with the new
+    key.
+    """
+
+    @staticmethod
+    def _generate_rsa_pem() -> str:
+        """Mint a fresh 2048-bit RSA key as PEM string."""
+        # Local import — only this test class needs the heavy
+        # ``cryptography`` primitives, and they are a transitive dep
+        # of ``jwcrypto``.
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = priv.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        return pem.decode("ascii")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.grant_oidc_access(self.user1)
+        # Pre-generate the rotated-out key once per test (cheap on
+        # 2048; ~50ms). Tests that need the original key read it
+        # from the active settings.
+        self.old_pem = django_settings.OAUTH2_PROVIDER["OIDC_RSA_PRIVATE_KEY"]
+        self.new_pem = self._generate_rsa_pem()
+
+    def test_jwks_publishes_active_and_inactive_keys(self) -> None:
+        provider = _jwt_mode_oauth2_provider()
+        provider["OIDC_RSA_PRIVATE_KEY"] = self.new_pem
+        provider["OIDC_RSA_PRIVATE_KEYS_INACTIVE"] = [self.old_pem]
+        with override_settings(OAUTH2_PROVIDER=provider):
+            resp = self.client.get("/o/.well-known/jwks.json")
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content)
+        self.assertIn("keys", doc)
+        kids = {k.get("kid") for k in doc["keys"]}
+        self.assertEqual(
+            2,
+            len(kids),
+            f"JWKS must publish exactly 2 distinct kids during overlap, "
+            f"got {kids!r}",
+        )
+
+    def test_freshly_issued_jwt_signs_with_active_kid(self) -> None:
+        from oauth2_provider.utils import jwk_from_pem
+
+        # ``jwk_from_pem`` is ``lru_cache``d at module level in DOT.
+        # Different PEM inputs produce distinct cache entries, so no
+        # ``cache_clear()`` needed.
+        expected_kid = jwk_from_pem(self.new_pem).thumbprint()
+
+        provider = _jwt_mode_oauth2_provider()
+        provider["OIDC_RSA_PRIVATE_KEY"] = self.new_pem
+        provider["OIDC_RSA_PRIVATE_KEYS_INACTIVE"] = [self.old_pem]
+        with override_settings(OAUTH2_PROVIDER=provider):
+            body = self.run_code_flow(self.user1)
+        header, _ = split_jwt(body["access_token"])
+        self.assertEqual(expected_kid, header.get("kid"))
+
+
+@override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+class TestJWTRevocation(OIDCTestCase):
+    """
+    RFC 7009 ``/o/revoke_token/`` works on the persisted ``AccessToken``
+    row, not on the wire format. Revocation must succeed for a JWT
+    that was just issued, AND for an opaque token issued *before*
+    flipping the global default to JWT.
+
+    Closes G-3 from the second-pass review.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.grant_oidc_access(self.user1)
+
+    def _introspect(self, token: str) -> dict:
+        resp = self.client.post(
+            "/o/introspect/",
+            data={"token": token},
+            headers={
+                "authorization": (
+                    "Basic "
+                    + base64.b64encode(
+                        f"{self.oauth_id}:{self.oauth_secret}".encode("ascii")
+                    ).decode("ascii")
+                )
+            },
+        )
+        return json.loads(resp.content)
+
+    def _revoke(self, token: str) -> int:
+        resp = self.client.post(
+            "/o/revoke_token/",
+            data={
+                "token": token,
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+            },
+        )
+        return resp.status_code
+
+    def test_revoke_jwt_access_token(self) -> None:
+        body = self.run_code_flow(self.user1)
+        jwt_at = body["access_token"]
+        # Sanity: it really is a JWT under JWT mode.
+        header, _ = split_jwt(jwt_at)
+        self.assertEqual("at+jwt", header.get("typ"))
+
+        # Token starts active.
+        self.assertTrue(self._introspect(jwt_at).get("active"))
+        # RFC 7009 §2.2: success is 200 with empty body.
+        self.assertEqual(200, self._revoke(jwt_at))
+        # Post-revocation, introspection reports inactive.
+        self.assertFalse(self._introspect(jwt_at).get("active"))
+
+    def test_revoke_legacy_opaque_token_after_format_flip(self) -> None:
+        # Issue under opaque mode; the JWT-mode decorator is overridden
+        # for this block only.
+        with override_settings(OAUTH2_PROVIDER=_opaque_mode_oauth2_provider()):
+            body = self.run_code_flow(self.user1)
+            opaque_at = body["access_token"]
+        # The class-level decorator (JWT mode) is back in effect.
+        self.assertTrue(self._introspect(opaque_at).get("active"))
+        self.assertEqual(200, self._revoke(opaque_at))
+        self.assertFalse(self._introspect(opaque_at).get("active"))
