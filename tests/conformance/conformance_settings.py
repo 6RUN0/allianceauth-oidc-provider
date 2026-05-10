@@ -77,7 +77,9 @@ OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"] = 3600
 # expires the code mid-flow, causing every browser-driven module
 # to fail at /o/token/ with ``invalid_grant``. Bump to 10 minutes —
 # real apps should keep the production default.
-OAUTH2_PROVIDER["AUTHORIZATION_CODE_EXPIRE_SECONDS"] = 600
+OAUTH2_PROVIDER["AUTHORIZATION_CODE_EXPIRE_SECONDS"] = 60
+
+OAUTH2_PROVIDER["REFRESH_TOKEN_EXPIRE_SECONDS"] = 24 * 3600
 
 # The conformance suite POSTs to /account/login/ with a normal Django
 # session cookie. Production AA sets Secure on the session cookie; the
