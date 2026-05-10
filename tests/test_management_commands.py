@@ -501,6 +501,146 @@ class TestOIDCAuditTokensCommand(OIDCTestCase):
             f"expected one jwt + one opaque row, got {formats!r}",
         )
 
+    # -----------------------------------------------------------------
+    # ``--suspicious`` filter: surfaces tokens that do not match the
+    # operator's current configuration. Each check pins a single class
+    # of anomaly; the joined ``reasons`` column lets the operator
+    # see at a glance why each row was flagged.
+    # -----------------------------------------------------------------
+
+    def _seed_token_with_expiry(
+        self, *, expires_at: Any, app: Any = None, label: str = "sus"
+    ) -> object:
+        """Plant a token with explicit ``expires``; default app is the fixture."""
+        AccessToken = get_access_token_model()
+        return AccessToken.objects.create(
+            user=self.user1,
+            application=app or self.oauth_app,
+            token=f"audit-{label}",  # nosec B106 - test fixture
+            expires=expires_at,
+            scope="openid",
+        )
+
+    def test_suspicious_returns_no_rows_when_token_is_normal(self) -> None:
+        """
+        Token planted within the deployment-default TTL on a live app
+        passes both checks. ``--suspicious`` filters everything out.
+        """
+        from oauth2_provider.settings import oauth2_settings
+
+        normal_ttl = oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS
+        self._seed_token_with_expiry(
+            expires_at=timezone.now() + timedelta(seconds=normal_ttl - 5),
+            label="normal",
+        )
+        out = StringIO()
+        call_command(
+            "oidc_audit_tokens",
+            "--suspicious",
+            "--format=json",
+            stdout=out,
+        )
+        rows = json.loads(out.getvalue())
+        self.assertEqual([], rows)
+
+    def test_suspicious_flags_ttl_anomaly(self) -> None:
+        """
+        Token whose ``expires`` is farther in the future than a
+        freshly-minted token would be (``now + ACCESS_TOKEN_EXPIRE_SECONDS
+        + buffer``) is anomalous: the dispatcher would never produce
+        such a row, so it was either issued under a longer-TTL config
+        that has since been tightened or the row was hand-edited.
+        Either way the operator should see it.
+        """
+        long_lived = self._seed_token_with_expiry(
+            expires_at=timezone.now() + timedelta(hours=1),
+            label="long-ttl",
+        )
+        out = StringIO()
+        call_command(
+            "oidc_audit_tokens",
+            "--suspicious",
+            "--format=json",
+            stdout=out,
+        )
+        rows = json.loads(out.getvalue())
+        self.assertEqual(1, len(rows))
+        self.assertEqual(long_lived.pk, rows[0]["id"])
+        self.assertIn("ttl_anomaly", rows[0]["reasons"])
+
+    def test_suspicious_flags_disabled_app(self) -> None:
+        """
+        ``application.active = False`` means the app is not allowed to
+        issue new tokens, but old live tokens (``expires`` in the
+        future) keep working until DOT's clear_expired or an explicit
+        revoke. ``--suspicious`` surfaces these so the operator can
+        decide whether to revoke proactively.
+        """
+        from oauth2_provider.settings import oauth2_settings
+
+        normal_ttl = oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS
+        self.oauth_app.active = False
+        self.oauth_app.save(update_fields=["active"])
+        token = self._seed_token_with_expiry(
+            expires_at=timezone.now() + timedelta(seconds=normal_ttl - 5),
+            label="dis-app",
+        )
+        out = StringIO()
+        call_command(
+            "oidc_audit_tokens",
+            "--suspicious",
+            "--format=json",
+            stdout=out,
+        )
+        rows = json.loads(out.getvalue())
+        self.assertEqual(1, len(rows))
+        self.assertEqual(token.pk, rows[0]["id"])
+        self.assertIn("disabled_app", rows[0]["reasons"])
+
+    def test_suspicious_joins_multiple_reasons(self) -> None:
+        """
+        A single token can match multiple checks. The ``reasons``
+        column lists all of them — comma-joined — so the operator
+        sees the full picture in one row instead of de-duplicating
+        across multiple ``--suspicious`` queries.
+        """
+        self.oauth_app.active = False
+        self.oauth_app.save(update_fields=["active"])
+        self._seed_token_with_expiry(
+            expires_at=timezone.now() + timedelta(hours=1),
+            label="both",
+        )
+        out = StringIO()
+        call_command(
+            "oidc_audit_tokens",
+            "--suspicious",
+            "--format=json",
+            stdout=out,
+        )
+        rows = json.loads(out.getvalue())
+        self.assertEqual(1, len(rows))
+        reasons = rows[0]["reasons"]
+        self.assertIn("ttl_anomaly", reasons)
+        self.assertIn("disabled_app", reasons)
+
+    def test_reasons_column_only_appears_under_suspicious(self) -> None:
+        """
+        Default ``oidc_audit_tokens`` output is the operator's daily
+        view; adding a column unconditionally would break scripts that
+        consume the JSON. ``reasons`` is therefore only emitted when
+        ``--suspicious`` is set; the regular listing stays
+        backwards-compatible.
+        """
+        self._seed_token()  # uses fixture default (1h TTL)
+        out_default = StringIO()
+        call_command(
+            "oidc_audit_tokens",
+            "--format=json",
+            stdout=out_default,
+        )
+        rows_default = json.loads(out_default.getvalue())
+        self.assertNotIn("reasons", rows_default[0])
+
 
 class TestOIDCJwksRotateCommand(OIDCTestCase):
     """

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -12,11 +13,17 @@ from oauth2_provider.models import (
     get_access_token_model,
     get_application_model,
 )
+from oauth2_provider.settings import oauth2_settings
 from typing_extensions import override
 
 from allianceauth_oidc.views import classify_token_format
 
 from ._format import FORMAT_CHOICES, render_rows
+
+# Clock-skew tolerance for the TTL anomaly check. Set wide enough to
+# cover small drift between the dispatcher's ``now`` and our ``now``,
+# narrow enough not to mask a token issued under a stale TTL config.
+_TTL_ANOMALY_SKEW = timedelta(seconds=5)
 
 
 class Command(BaseCommand):
@@ -45,6 +52,18 @@ class Command(BaseCommand):
             "--include-expired",
             action="store_true",
             help=_("Include tokens past their expiry timestamp."),
+        )
+        parser.add_argument(
+            "--suspicious",
+            action="store_true",
+            help=_(
+                "Restrict output to tokens that do not match the "
+                "operator's current configuration: TTL farther in "
+                "the future than a freshly-minted token would be, "
+                "or issued by an application currently marked "
+                "active=False. Adds a ``reasons`` column listing "
+                "which checks fired."
+            ),
         )
         parser.add_argument(
             "--format",
@@ -80,6 +99,11 @@ class Command(BaseCommand):
                 ) from exc
             qs = qs.filter(application=app)
 
+        suspicious_only: bool = options["suspicious"]
+        # Anchor "now" once per invocation so TTL anomaly classification
+        # is consistent across rows even on slow listings.
+        now = timezone.now()
+
         # ``pkce_required`` mirrors the matching ``AllianceAuthApplication``'s
         # field. The ``select_related("application")`` above keeps this an
         # in-memory attribute access — no extra query per row. Useful when
@@ -91,8 +115,9 @@ class Command(BaseCommand):
         # render ``"jwt"``, anything else (opaque, hashed-at-rest)
         # renders ``"opaque"``. Documented as the verification step
         # in ``docs/JWT_ACCESS_TOKENS.md`` migration recipe.
-        rows = [
-            {
+        rows: list[dict[str, Any]] = []
+        for t in qs.order_by("-expires").iterator():
+            row: dict[str, Any] = {
                 "id": t.id,
                 "user": getattr(t.user, "username", None),
                 "client_id": getattr(t.application, "client_id", None),
@@ -101,20 +126,69 @@ class Command(BaseCommand):
                 "pkce_required": getattr(t.application, "pkce_required", None),
                 "format": classify_token_format(t.token) or "opaque",
             }
-            for t in qs.order_by("-expires").iterator()
-        ]
+            if suspicious_only:
+                reasons = _classify_suspicious(t, now=now)
+                if not reasons:
+                    continue
+                row["reasons"] = ",".join(reasons)
+            rows.append(row)
+
+        columns: tuple[str, ...] = (
+            "id",
+            "user",
+            "client_id",
+            "scope",
+            "expires",
+            "pkce_required",
+            "format",
+        )
+        if suspicious_only:
+            columns = (*columns, "reasons")
+
         self.stdout.write(
             render_rows(
                 rows,
-                columns=(
-                    "id",
-                    "user",
-                    "client_id",
-                    "scope",
-                    "expires",
-                    "pkce_required",
-                    "format",
-                ),
+                columns=columns,
                 fmt=options["format"],
             )
         )
+
+
+def _classify_suspicious(token: Any, *, now: datetime) -> list[str]:
+    """
+    Return the list of suspicious-check reason codes a token matches.
+
+    Empty list means "looks normal under the operator's current config".
+
+    Checks (each emits its own reason code):
+
+    * ``ttl_anomaly`` — ``expires`` is farther in the future than a
+      freshly-minted token would be (``now + ACCESS_TOKEN_EXPIRE_SECONDS
+      + skew``). The dispatcher always sets ``expires`` from the
+      deployment-default at issue time, so a row past that ceiling
+      either pre-dates a TTL reduction or was hand-edited. Either
+      way it deserves operator attention.
+    * ``disabled_app`` — the application is currently marked
+      ``active=False``. ``is_usable()`` returns False so DOT will
+      not authorise new requests, but tokens minted earlier remain
+      valid until ``expires``. Surfacing them lets operators
+      proactively revoke instead of waiting for expiry.
+
+    Reason codes are stable strings (greppable from JSON output).
+    Never raises — defensive ``getattr`` keeps the listing useful
+    when fed orphaned rows whose ``application`` was deleted.
+    """
+    reasons: list[str] = []
+    expires = getattr(token, "expires", None)
+    if expires is not None:
+        ceiling = (
+            now
+            + timedelta(seconds=oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+            + _TTL_ANOMALY_SKEW
+        )
+        if expires > ceiling:
+            reasons.append("ttl_anomaly")
+    app = getattr(token, "application", None)
+    if app is not None and getattr(app, "active", True) is False:
+        reasons.append("disabled_app")
+    return reasons
