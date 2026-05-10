@@ -71,12 +71,12 @@ OAUTH2_PROVIDER["OIDC_ISS_ENDPOINT"] = CONFORMANCE_PUBLIC_URL
 # A longer access token TTL keeps the suite from spinning into refresh
 # tests prematurely.
 OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"] = 3600
-# The suite spends 60+ seconds between issuing the auth code and
-# exchanging it (fixture setup, state validation, callback parsing,
-# ID-token sanity probes). DOT's default 60-second auth-code TTL
-# expires the code mid-flow, causing every browser-driven module
-# to fail at /o/token/ with ``invalid_grant``. Bump to 10 minutes —
-# real apps should keep the production default.
+# DOT's default 60-second auth-code TTL is preserved here — current
+# step pacing of the conformance suite reliably exchanges the code
+# well within that window. Holding the production default keeps the
+# suite honest: an unexpected mid-flow ``invalid_grant`` from a
+# browser-driven module signals a real regression in code lifetime
+# accounting, not a too-tight test fixture knob.
 OAUTH2_PROVIDER["AUTHORIZATION_CODE_EXPIRE_SECONDS"] = 60
 
 OAUTH2_PROVIDER["REFRESH_TOKEN_EXPIRE_SECONDS"] = 24 * 3600

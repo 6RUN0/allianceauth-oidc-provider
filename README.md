@@ -480,8 +480,12 @@ same scope. RFC 9068 framing claims (`typ="at+jwt"`, `aud=client_id`,
 with `RS256` against `OIDC_RSA_PRIVATE_KEY`; the published `kid` is the RFC 7638
 thumbprint of the key.
 
-**RP cookbook, key rotation discipline, data-minimization, troubleshooting** —
-see [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md).
+**Per-app → global migration sequence, RP cookbook, key rotation discipline,
+data-minimization, troubleshooting** — see
+[docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md). The recipe in §7
+walks through the recommended rollout (per-app first, global last) and points
+at `manage.py oidc_audit_tokens --include-expired` whose `format` column
+makes the per-token wire format inspectable from the operator side.
 
 ### Debug logging
 

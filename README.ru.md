@@ -486,8 +486,13 @@ RFC 9068 (`typ="at+jwt"`, `aud=client_id`, `client_id`, `exp`, `iat`, `jti`,
 `scope`). Подпись — `RS256` ключом `OIDC_RSA_PRIVATE_KEY`, публикуемый
 `kid` — это RFC 7638 thumbprint ключа.
 
-**RP cookbook, дисциплина ротации ключей, data-minimization, troubleshooting** —
-см. [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md).
+**Сценарий миграции per-app → глобал, RP cookbook, дисциплина ротации ключей,
+data-minimization, troubleshooting** — см.
+[docs/JWT_ACCESS_TOKENS.ru.md](docs/JWT_ACCESS_TOKENS.ru.md). Рецепт в §7
+проводит по рекомендованной последовательности (сначала per-app, потом
+глобал) и указывает на `manage.py oidc_audit_tokens --include-expired`,
+где колонка `format` позволяет проверить wire-формат каждого токена со
+стороны оператора.
 
 ### Debug-логи
 
