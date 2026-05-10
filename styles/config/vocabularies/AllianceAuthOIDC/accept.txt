@@ -283,3 +283,5 @@ Wiki.js
 Outline
 oidc_token_issued
 introspect-only
+rollout
+inspectable

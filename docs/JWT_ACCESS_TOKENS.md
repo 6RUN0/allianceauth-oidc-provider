@@ -105,8 +105,14 @@ default `"opaque"` and configure RPs to introspect.
 
 The signing key is `OIDC_RSA_PRIVATE_KEY`. Rotation discipline:
 
-1. **Provision the new key** offline. Generate via the same procedure
-   as the original — see the [DOT documentation][dot-oidc].
+1. **Provision the new key** offline. The bundled
+   `manage.py oidc_jwks_rotate` mints a fresh PKCS8 RSA private key,
+   prints its RFC 7638 thumbprint (the `kid` that will land in JWT
+   headers and JWKS), and re-emits the recipe below for reference.
+   `--out PATH` writes the bare PEM straight to a settings-ready
+   file (mode `0600`); `--key-size 3072` (or higher) covers
+   compliance regimes targeting `>= 128`-bit security strength.
+   For non-bundled paths see the [DOT documentation][dot-oidc].
 2. **Configure overlap**. DOT supports
    `OIDC_RSA_PRIVATE_KEYS_INACTIVE` for keys that are still trusted
    for verification but no longer used for signing. Add the **old**

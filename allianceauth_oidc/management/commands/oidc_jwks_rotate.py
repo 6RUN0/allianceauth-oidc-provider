@@ -116,19 +116,13 @@ class Command(BaseCommand):
     @staticmethod
     def _stdout_inline(pem_text: str, kid: str) -> str:
         """PEM + kid + recipe — used when no ``--out`` was given."""
-        return (
-            f"{pem_text}\n"
-            f"kid: {kid}\n"
-            f"\n{_RECIPE}\n"
-        )
+        return f"{pem_text}\nkid: {kid}\n\n{_RECIPE}\n"
 
     @staticmethod
     def _stdout_when_outfile(out_path: str, kid: str) -> str:
-        """kid + recipe only — PEM is in the file, not stdout."""
+        """Kid + recipe only — PEM is in the file, not stdout."""
         return (
-            f"PEM written to {out_path} (mode 0600)\n"
-            f"kid: {kid}\n"
-            f"\n{_RECIPE}\n"
+            f"PEM written to {out_path} (mode 0600)\nkid: {kid}\n\n{_RECIPE}\n"
         )
 
 
