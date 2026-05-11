@@ -133,6 +133,19 @@ class AllianceAuthApplication(AbstractApplication):
             "RP endpoint that accepts back-channel logout_token POSTs (OIDC Back-Channel Logout 1.0). Leave blank to disable. https:// required unless DEBUG is on; host must resolve to a public IP."  # noqa: E501
         ),
     )
+    # Default ``False`` preserves v1 ("all five triggers fire")
+    # semantics so the migration is a no-op for existing
+    # deployments. Gating contract lives in
+    # ``logout.dispatch_backchannel_logout``: any reason ≠
+    # ``"user_revoked"`` is silently skipped when the flag is
+    # True, including unknown reasons from custom receivers.
+    backchannel_logout_on_revoke_only = models.BooleanField(
+        default=False,
+        verbose_name=_("Back-Channel Logout: explicit revoke only"),
+        help_text=_(
+            "When checked, this RP receives a back-channel logout_token ONLY when an operator runs oidc_revoke_user_tokens. Lifecycle events (deactivation, group/state changes, account deletion) will NOT fan out to this RP. Default is unchecked (all five triggers fire)."  # noqa: E501
+        ),
+    )
 
     @override
     def is_usable(self, request):

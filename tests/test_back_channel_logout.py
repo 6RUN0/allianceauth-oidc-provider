@@ -765,12 +765,8 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
 
         jti = "feedbabe" * 4
         iat = 1_700_000_000
-        a, _ = build_logout_token(
-            self.user1, self.app, jti=jti, iat=iat
-        )
-        b, _ = build_logout_token(
-            self.user1, self.app, jti=jti, iat=iat
-        )
+        a, _ = build_logout_token(self.user1, self.app, jti=jti, iat=iat)
+        b, _ = build_logout_token(self.user1, self.app, jti=jti, iat=iat)
         self.assertEqual(a, b)
 
 
@@ -859,9 +855,7 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
         with _CapturedDispatches() as cap:
             call_command("oidc_revoke_user_tokens", "--username=User1")
         seen_apps = {pk for (pk, _) in cap.calls}
-        self.assertEqual(
-            seen_apps, {creds_a.app.pk, creds_b.app.pk}
-        )
+        self.assertEqual(seen_apps, {creds_a.app.pk, creds_b.app.pk})
         # Dedup — only ONE signal per (user, app) even though app_a
         # contributed both access AND refresh tokens.
         self.assertEqual(len(cap.calls), 2)
@@ -1014,9 +1008,7 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
         # signals — see test_ac13). Receivers fire for every RP the
         # user has tokens with; the URI-blank skip happens one layer
         # deeper inside ``dispatch_backchannel_logout``.
-        deact_apps = {
-            pk for (pk, r) in cap.calls if r == "user_deactivated"
-        }
+        deact_apps = {pk for (pk, r) in cap.calls if r == "user_deactivated"}
         self.assertEqual(
             deact_apps,
             {creds_a.app.pk, creds_b.app.pk, creds_c.app.pk},
@@ -1030,19 +1022,19 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
         """
         from allianceauth_oidc.logout import dispatch_backchannel_logout
 
-        blank_app = make_app(
-            owner=self.user2, backchannel_logout_uri=""
-        ).app
-        with mock.patch(
-            "allianceauth_oidc.tasks.send_logout_token.apply_async"
-        ) as apply_async:
-            with self.captureOnCommitCallbacks(execute=True):
-                dispatch_backchannel_logout(
-                    sender=type(self.user1),
-                    user=self.user1,
-                    application=blank_app,
-                    reason="user_revoked",
-                )
+        blank_app = make_app(owner=self.user2, backchannel_logout_uri="").app
+        with (
+            mock.patch(
+                "allianceauth_oidc.tasks.send_logout_token.apply_async"
+            ) as apply_async,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_backchannel_logout(
+                sender=type(self.user1),
+                user=self.user1,
+                application=blank_app,
+                reason="user_revoked",
+            )
         apply_async.assert_not_called()
 
     # ---------- AC-32 — state scoping: only affected RPs ----------
@@ -1076,9 +1068,7 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
         self._make_active_token(app=open_app.app, user=self.user1)
         with _CapturedDispatches() as cap:
             self.user1.groups.remove(grp)
-        groups_changed = [
-            pk for (pk, r) in cap.calls if r == "groups_changed"
-        ]
+        groups_changed = [pk for (pk, r) in cap.calls if r == "groups_changed"]
         self.assertEqual(groups_changed, [gated.app.pk])
         self.assertNotIn(open_app.app.pk, groups_changed)
 
@@ -1118,25 +1108,23 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         dispatches: list[dict] = []
 
         def sink(sender, application, jti, success, attempt_count, **kw):
-            dispatches.append({
-                "jti": jti,
-                "success": success,
-                "attempt_count": attempt_count,
-                "reason": kw.get("reason"),
-                "application_pk": application.pk,
-            })
+            dispatches.append(
+                {
+                    "jti": jti,
+                    "success": success,
+                    "attempt_count": attempt_count,
+                    "reason": kw.get("reason"),
+                    "application_pk": application.pk,
+                }
+            )
 
         oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink")
         try:
-            with mock.patch(
-                "allianceauth_oidc.tasks.requests.post"
-            ) as post:
+            with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
                 if raises is not None:
                     post.side_effect = raises
                 else:
-                    post.return_value = mock.MagicMock(
-                        status_code=status_code
-                    )
+                    post.return_value = mock.MagicMock(status_code=status_code)
                 send_logout_token(
                     user_pk=self.user1.pk,
                     application_pk=self.app.pk,
@@ -1163,9 +1151,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
 
         # ``bind=True`` gives ``self`` as the first param; user-facing
         # args are 5 scalars (no JWT, no sid).
-        params = list(
-            send_logout_token.__wrapped__.__code__.co_varnames[:6]
-        )
+        params = list(send_logout_token.__wrapped__.__code__.co_varnames[:6])
         self.assertEqual(
             params,
             [
@@ -1272,11 +1258,13 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         dispatches: list[dict] = []
 
         def sink(sender, application, jti, success, attempt_count, **kw):
-            dispatches.append({
-                "success": success,
-                "reason": kw.get("reason"),
-                "attempt_count": attempt_count,
-            })
+            dispatches.append(
+                {
+                    "success": success,
+                    "reason": kw.get("reason"),
+                    "attempt_count": attempt_count,
+                }
+            )
 
         # The task descriptor exposes ``request`` as a property on the
         # bound Task instance; the production body reads
@@ -1304,9 +1292,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                     new_callable=mock.PropertyMock,
                     return_value=fake_request,
                 ),
-                mock.patch(
-                    "allianceauth_oidc.tasks.requests.post"
-                ) as post,
+                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
             ):
                 post.return_value = mock.MagicMock(status_code=503)
                 send_logout_token(
@@ -1331,19 +1317,19 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         dispatches: list[dict] = []
 
         def sink(sender, application, jti, success, attempt_count, **kw):
-            dispatches.append({
-                "success": success,
-                "reason": kw.get("reason"),
-            })
+            dispatches.append(
+                {
+                    "success": success,
+                    "reason": kw.get("reason"),
+                }
+            )
 
         oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.kid")
         try:
             # Pass a kid that exists in NEITHER active nor inactive
             # key stores — build_logout_token raises
             # SigningKeyRetiredError; the task catches it.
-            with mock.patch(
-                "allianceauth_oidc.tasks.requests.post"
-            ) as post:
+            with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
                 send_logout_token(
                     user_pk=self.user1.pk,
                     application_pk=self.app.pk,
@@ -1353,9 +1339,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                 )
                 post.assert_not_called()  # AC-29a — no HTTP call
         finally:
-            oidc_logout_dispatched.disconnect(
-                dispatch_uid="test.sink.kid"
-            )
+            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.kid")
         self.assertEqual(
             dispatches,
             [{"success": False, "reason": "signing_kid_retired"}],
@@ -1377,32 +1361,29 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         def sink(sender, application, jti, success, attempt_count, **kw):
             dispatches.append({"reason": kw.get("reason")})
 
-        oidc_logout_dispatched.connect(
-            sink, dispatch_uid="test.sink.broker"
-        )
+        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.broker")
         # ``transaction.on_commit`` callbacks are deferred to the
         # OUTERMOST commit, which never fires under ``TestCase``
         # (transactions are rolled back). ``captureOnCommitCallbacks(
         # execute=True)`` is the documented way to run them
         # synchronously inside a test.
         try:
-            with mock.patch(
-                "allianceauth_oidc.tasks.send_logout_token.apply_async",
-                side_effect=RuntimeError("broker down"),
-            ), self.captureOnCommitCallbacks(execute=True):
+            with (
+                mock.patch(
+                    "allianceauth_oidc.tasks.send_logout_token.apply_async",
+                    side_effect=RuntimeError("broker down"),
+                ),
+                self.captureOnCommitCallbacks(execute=True),
+            ):
                 dispatch_backchannel_logout(
                     sender=type(self.user1),
                     user=self.user1,
                     application=self.app,
                     reason="user_revoked",
                 )
-            self.assertEqual(
-                dispatches, [{"reason": "broker_unavailable"}]
-            )
+            self.assertEqual(dispatches, [{"reason": "broker_unavailable"}])
         finally:
-            oidc_logout_dispatched.disconnect(
-                dispatch_uid="test.sink.broker"
-            )
+            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.broker")
 
 
 class TestBackChannelLogoutDiscovery(OIDCTestCase):
@@ -1517,11 +1498,12 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
     def _exercise_status_branch(self, *, status_code: int) -> str:
         from allianceauth_oidc.tasks import send_logout_token
 
-        with self.assertLogs(
-            "extensions.allianceauth_oidc.tasks", level=logging.WARNING
-        ) as captured, mock.patch(
-            "allianceauth_oidc.tasks.requests.post"
-        ) as post:
+        with (
+            self.assertLogs(
+                "extensions.allianceauth_oidc.tasks", level=logging.WARNING
+            ) as captured,
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
             post.return_value = mock.MagicMock(status_code=status_code)
             send_logout_token(
                 user_pk=self.user1.pk,
@@ -1557,11 +1539,12 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
     def test_ac36_kid_retired_branch_log_has_no_token_material(self) -> None:
         from allianceauth_oidc.tasks import send_logout_token
 
-        with self.assertLogs(
-            "extensions.allianceauth_oidc.tasks", level=logging.WARNING
-        ) as captured, mock.patch(
-            "allianceauth_oidc.tasks.requests.post"
-        ) as post:
+        with (
+            self.assertLogs(
+                "extensions.allianceauth_oidc.tasks", level=logging.WARNING
+            ) as captured,
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
             send_logout_token(
                 user_pk=self.user1.pk,
                 application_pk=self.app.pk,
@@ -1592,9 +1575,7 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
 
         oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ac38")
         try:
-            with mock.patch(
-                "allianceauth_oidc.tasks.requests.post"
-            ) as post:
+            with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
                 post.return_value = mock.MagicMock(status_code=200)
                 send_logout_token(
                     user_pk=self.user1.pk,
@@ -1614,3 +1595,304 @@ def _active_kid() -> str:
 
     pem = oauth2_settings.OIDC_RSA_PRIVATE_KEY.encode()
     return str(jwk.JWK.from_pem(pem).thumbprint())
+
+
+# ----------------------------------------------------------------------
+# US-OROF — backchannel_logout_on_revoke_only per-app flag
+# Plan: .omc/plans/bcl-on-revoke-only-plan-v1.md
+# ----------------------------------------------------------------------
+
+
+class TestBackChannelLogoutOnRevokeOnlyModel(OIDCTestCase):
+    """US-OROF-001 — model field shape (AC-1)."""
+
+    def test_field_exists_default_false_with_help_text(self) -> None:
+        field = AllianceAuthApplication._meta.get_field(
+            "backchannel_logout_on_revoke_only"
+        )
+        from django.db.models import BooleanField
+
+        self.assertIsInstance(field, BooleanField)
+        self.assertEqual(field.default, False)
+        # ``verbose_name`` / ``help_text`` are __proxy__ objects when
+        # wrapped in ``gettext_lazy``; cast to str to compare content
+        # and ensure they are non-empty (i18n hooks present).
+        self.assertTrue(str(field.verbose_name))
+        self.assertTrue(str(field.help_text))
+
+
+def _make_app_with_flag(
+    test_case: OIDCTestCase,
+    *,
+    on_revoke_only: bool,
+    uri: str = "https://rp.example.com/bcl",
+) -> AllianceAuthApplication:
+    """
+    Factory wrapper — create an app with the on_revoke_only flag set
+    AND a non-blank BCL URI (otherwise the blank-URI check short-
+    circuits the dispatcher and gating never runs).
+    """
+    creds = make_app(owner=test_case.user1, backchannel_logout_uri=uri)
+    creds.app.backchannel_logout_on_revoke_only = on_revoke_only
+    creds.app.save()
+    return creds.app
+
+
+class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
+    """
+    US-OROF-002 / US-OROF-003 / US-OROF-004 / US-OROF-005 —
+    dispatcher gating, default-False regression, flag=True paths.
+
+    Tests call ``dispatch_backchannel_logout`` directly (the default
+    receiver wired into ``oidc_logout_required`` at app init) and
+    assert on the ``send_logout_token.apply_async`` mock the same
+    way ``test_ac24a_apply_async_args_are_typed_scalars`` does.
+    """
+
+    def _dispatch(
+        self,
+        *,
+        app: AllianceAuthApplication,
+        reason: str,
+    ) -> mock.MagicMock:
+        """
+        Invoke ``dispatch_backchannel_logout`` with a stubbed
+        ``send_logout_token.apply_async`` and return the mock so
+        callers can inspect call_count / call_args.
+        """
+        from allianceauth_oidc.logout import dispatch_backchannel_logout
+
+        with (
+            mock.patch(
+                "allianceauth_oidc.tasks.send_logout_token.apply_async"
+            ) as apply_async,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_backchannel_logout(
+                sender=type(self.user1),
+                user=self.user1,
+                application=app,
+                reason=reason,
+            )
+        return apply_async
+
+    # ---------- US-OROF-003 — default False preserves v1 behavior ----------
+
+    def _default_false_fires_for(self, reason: str) -> None:
+        app = _make_app_with_flag(self, on_revoke_only=False)
+        apply_async = self._dispatch(app=app, reason=reason)
+        apply_async.assert_called_once()
+
+    def test_default_false_preserves_v1_behavior_for_user_revoked(
+        self,
+    ) -> None:
+        self._default_false_fires_for("user_revoked")
+
+    def test_default_false_preserves_v1_behavior_for_user_deactivated(
+        self,
+    ) -> None:
+        self._default_false_fires_for("user_deactivated")
+
+    def test_default_false_preserves_v1_behavior_for_groups_changed(
+        self,
+    ) -> None:
+        self._default_false_fires_for("groups_changed")
+
+    def test_default_false_preserves_v1_behavior_for_state_changed(
+        self,
+    ) -> None:
+        self._default_false_fires_for("state_changed")
+
+    def test_default_false_preserves_v1_behavior_for_user_deleted(
+        self,
+    ) -> None:
+        self._default_false_fires_for("user_deleted")
+
+    # ---------- US-OROF-004 — flag=True allows explicit revoke ----------
+
+    def test_flag_true_allows_user_revoked(self) -> None:
+        app = _make_app_with_flag(self, on_revoke_only=True)
+        apply_async = self._dispatch(app=app, reason="user_revoked")
+        apply_async.assert_called_once()
+
+    # ---------- US-OROF-005 — flag=True skips 4 lifecycle reasons ----------
+
+    def _flag_true_skips(self, reason: str) -> None:
+        app = _make_app_with_flag(self, on_revoke_only=True)
+        apply_async = self._dispatch(app=app, reason=reason)
+        apply_async.assert_not_called()
+
+    def test_flag_true_skips_user_deactivated(self) -> None:
+        self._flag_true_skips("user_deactivated")
+
+    def test_flag_true_skips_groups_changed(self) -> None:
+        self._flag_true_skips("groups_changed")
+
+    def test_flag_true_skips_state_changed(self) -> None:
+        self._flag_true_skips("state_changed")
+
+    def test_flag_true_skips_user_deleted(self) -> None:
+        self._flag_true_skips("user_deleted")
+
+    # ---------- US-OROF-005 / AC-7 — silent skip (no audit signal) ----------
+
+    def test_skipped_events_emit_no_dispatched_signal(self) -> None:
+        """
+        AC-7: when gating skips, ``oidc_logout_dispatched`` MUST NOT
+        be emitted. Audit log stays clean for default-False
+        deployments and only carries real dispatch outcomes.
+        """
+        from allianceauth_oidc.signals import oidc_logout_dispatched
+
+        app = _make_app_with_flag(self, on_revoke_only=True)
+        captured: list[dict] = []
+
+        def sink(sender, application, jti, success, attempt_count, **kw):
+            captured.append(
+                {
+                    "reason": kw.get("reason"),
+                    "success": success,
+                    "application_pk": application.pk,
+                }
+            )
+
+        oidc_logout_dispatched.connect(
+            sink, dispatch_uid="test.sink.onrevokeonly"
+        )
+        try:
+            self._dispatch(app=app, reason="user_deactivated")
+            self._dispatch(app=app, reason="groups_changed")
+            self._dispatch(app=app, reason="state_changed")
+            self._dispatch(app=app, reason="user_deleted")
+        finally:
+            oidc_logout_dispatched.disconnect(
+                dispatch_uid="test.sink.onrevokeonly"
+            )
+        self.assertEqual(
+            captured,
+            [],
+            "AC-7: skipped events MUST NOT emit oidc_logout_dispatched",
+        )
+
+    # ---------- US-OROF-002 — gating is centralized in the dispatcher ----------
+
+    def test_custom_signal_sender_with_non_revoke_reason_is_gated(
+        self,
+    ) -> None:
+        """
+        AC-6: gating lives in the dispatcher, not the receivers.
+        A custom signal sender that picks an unrecognised reason
+        (e.g. ``"custom_audit_event"``) is treated as non-revoke
+        and silently skipped when the flag is True.
+        """
+        app = _make_app_with_flag(self, on_revoke_only=True)
+        apply_async = self._dispatch(app=app, reason="custom_audit_event")
+        apply_async.assert_not_called()
+
+
+class TestBackChannelLogoutOnRevokeOnlyLogging(OIDCTestCase):
+    """US-OROF-006 — debug_mode-gated log on skipped events (AC-8)."""
+
+    _LOG_NAME = "extensions.allianceauth_oidc.logout"
+    _SKIP_SUBSTR = "skipped by on_revoke_only flag"
+
+    def _dispatch_skipped(
+        self,
+        *,
+        debug_mode: bool,
+        reason: str = "user_deactivated",
+    ) -> AllianceAuthApplication:
+        from allianceauth_oidc.logout import dispatch_backchannel_logout
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        creds.app.backchannel_logout_on_revoke_only = True
+        creds.app.debug_mode = debug_mode
+        creds.app.save()
+        with self.captureOnCommitCallbacks(execute=True):
+            dispatch_backchannel_logout(
+                sender=type(self.user1),
+                user=self.user1,
+                application=creds.app,
+                reason=reason,
+            )
+        return creds.app
+
+    def test_skip_logged_at_info_when_debug_mode(self) -> None:
+        """
+        AC-8a: with ``debug_mode=True`` on the RP, ``app_log`` routes
+        to INFO. The captured INFO log MUST contain the literal
+        substring marker AND the reason value.
+        """
+        with self.assertLogs(self._LOG_NAME, level=logging.INFO) as ctx:
+            self._dispatch_skipped(debug_mode=True, reason="user_deactivated")
+        joined = "\n".join(ctx.output)
+        self.assertIn(self._SKIP_SUBSTR, joined)
+        self.assertIn("user_deactivated", joined)
+
+    def test_skip_silent_when_debug_mode_false(self) -> None:
+        """
+        AC-8b: with ``debug_mode=False`` on the RP, ``app_log`` routes
+        to DEBUG. Capturing at INFO level MUST find NO log entries
+        bearing the skip substring marker.
+        """
+        # ``assertNoLogs`` raises if any log at the given level is
+        # emitted; pair it with a captured-output check at INFO to
+        # confirm the skip marker is absent.
+        logger = logging.getLogger(self._LOG_NAME)
+        handler = logging.StreamHandler(StringIO())
+        handler.setLevel(logging.INFO)
+        prior_level = logger.level
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        try:
+            self._dispatch_skipped(debug_mode=False, reason="user_deactivated")
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prior_level)
+        captured = typing.cast("StringIO", handler.stream).getvalue()
+        self.assertNotIn(self._SKIP_SUBSTR, captured)
+
+
+class TestBackChannelLogoutOnRevokeOnlyAdmin(OIDCTestCase):
+    """US-OROF-007 — admin exposes flag in list_filter (AC-9)."""
+
+    def test_admin_lists_field_in_list_filter(self) -> None:
+        from allianceauth_oidc.admin import ApplicationAdmin
+
+        self.assertIn(
+            "backchannel_logout_on_revoke_only",
+            ApplicationAdmin.list_filter,
+        )
+
+
+class TestBackChannelLogoutOnRevokeOnlyDocs(OIDCTestCase):
+    """US-OROF-008 / US-OROF-009 — docs describe the flag (AC-10)."""
+
+    _DOCS_EN = "docs/BACK_CHANNEL_LOGOUT.md"
+    _DOCS_RU = "docs/BACK_CHANNEL_LOGOUT.ru.md"
+
+    def _read_doc(self, relpath: str) -> str:
+        from pathlib import Path
+
+        # Tests run from the project root; the docs directory is a
+        # sibling of ``tests/`` and ``allianceauth_oidc/``.
+        root = Path(__file__).resolve().parent.parent
+        return (root / relpath).read_text(encoding="utf-8")
+
+    def test_docs_describe_on_revoke_only_flag_en(self) -> None:
+        content = self._read_doc(self._DOCS_EN)
+        self.assertIn("backchannel_logout_on_revoke_only", content)
+        self.assertIn("Per-app trigger filtering", content)
+
+    def test_docs_describe_on_revoke_only_flag_ru(self) -> None:
+        content = self._read_doc(self._DOCS_RU)
+        self.assertIn("backchannel_logout_on_revoke_only", content)
+        # AC-10b: a localised Russian section heading exists.
+        # ``"Фильтрация"`` is the section-title keyword; matching
+        # the noun alone keeps the test resilient to wording
+        # variations like "Фильтрация триггеров" / "Фильтрация по
+        # reason" / "Фильтрация для RP".
+        self.assertIn("Фильтрация", content)

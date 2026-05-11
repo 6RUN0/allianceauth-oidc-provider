@@ -78,6 +78,50 @@ for the same `(user, application)` if two triggers fire in one
 transaction (e.g. revoke + cascading deactivate). The RP MUST dedup on
 `jti` (which is unique per outbound POST).
 
+## 3.1 Per-app trigger filtering
+
+By default, all five trigger sites above fire a `logout_token` to
+every RP with a non-blank `backchannel_logout_uri`. For some classes
+of relying party — audit, analytics, long-term-access dashboards —
+the operator may want session continuity preserved across automatic
+lifecycle events and only end sessions on an explicit revoke
+command.
+
+The per-app `backchannel_logout_on_revoke_only` BooleanField narrows
+the fan-out:
+
+| Flag value | What fires for this RP |
+|---|---|
+| `False` (default) | All five triggers fire (v1 behaviour) |
+| `True` | ONLY `oidc_revoke_user_tokens` (`reason="user_revoked"`); the four lifecycle reasons (`user_deactivated`, `groups_changed`, `state_changed`, `user_deleted`) are silently skipped |
+
+### When to enable
+
+- Audit / analytics RPs that need to keep recording activity across
+  brief account churn (group rotations, temporary deactivations).
+- RPs whose own session lifecycle is longer than the AS-side
+  membership state and where the operator explicitly accepts the
+  "stale-session" risk in exchange for continuity.
+
+### Semantics of "skipped"
+
+A skipped event is **silent** on the audit signal — no
+`oidc_logout_dispatched` event is emitted. This keeps the audit log
+clean for the typical default-`False` deployment. When an operator
+needs to confirm that gating actually triggered (e.g. troubleshooting
+"why didn't BCL fire on this group change"), set `debug_mode=True`
+on the affected RP and re-run the trigger; the dispatcher emits an
+INFO-level log line containing the literal substring
+`skipped by on_revoke_only flag` and the originating reason. With
+`debug_mode=False`, the same call routes to DEBUG and stays hidden.
+
+### Custom receivers
+
+Operators wiring their own receivers to `oidc_logout_required` MUST
+use `reason="user_revoked"` when they want the dispatch to bypass
+the flag. Unknown / custom reason strings are treated as non-revoke
+and skipped when `backchannel_logout_on_revoke_only=True`.
+
 ## 4. logout_token structure
 
 Header:

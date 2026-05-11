@@ -77,6 +77,51 @@ Spec §2.6 явно разрешает AS эмитить несколько `log
 транзакции (например, revoke + cascade deactivate). RP ОБЯЗАН делать
 dedup по `jti` (уникальный для каждого исходящего POST).
 
+## 3.1 Фильтрация триггеров для RP
+
+По умолчанию все пять trigger-сайтов выше шлют `logout_token` каждому
+RP с непустым `backchannel_logout_uri`. Для некоторых типов relying
+party — audit, analytics, long-term-access дашбордов — оператор
+может хотеть сохранить непрерывность сессии при автоматических
+lifecycle-событиях и завершать сессии ТОЛЬКО при explicit revoke.
+
+Per-app BooleanField `backchannel_logout_on_revoke_only` сужает
+fan-out:
+
+| Значение флага | Что fires для этого RP |
+|---|---|
+| `False` (по умолчанию) | Все пять triggers fires (v1 behaviour) |
+| `True` | ТОЛЬКО `oidc_revoke_user_tokens` (`reason="user_revoked"`); четыре lifecycle reasons (`user_deactivated`, `groups_changed`, `state_changed`, `user_deleted`) silently пропускаются |
+
+### Когда включать
+
+- Audit / analytics RPs, которые должны продолжать запись активности
+  при кратковременном churn'е аккаунта (ротация групп, временный
+  deactivate).
+- RP, у которого собственный session lifecycle длиннее AS-side
+  membership state, и оператор явно принимает риск «stale session»
+  в обмен на continuity.
+
+### Семантика "skipped"
+
+Skipped-событие **silent** на audit-сигнале — никакого
+`oidc_logout_dispatched` не эмитится. Это держит audit log чистым
+для типичного default-`False` deployment'а. Когда оператор хочет
+подтвердить, что gating действительно сработал (например,
+troubleshooting «почему BCL не сработал на смене группы»), нужно
+установить `debug_mode=True` на затронутом RP и повторить trigger;
+dispatcher эмитит INFO-level log line с literal substring
+`skipped by on_revoke_only flag` и исходным reason. При
+`debug_mode=False` тот же вызов уходит в DEBUG и остаётся скрытым.
+
+### Custom receivers
+
+Операторы, подключающие собственные receivers к
+`oidc_logout_required`, ОБЯЗАНЫ использовать
+`reason="user_revoked"`, если хотят, чтобы dispatch обошёл флаг.
+Неизвестные / custom reason-строки трактуются как non-revoke и
+пропускаются при `backchannel_logout_on_revoke_only=True`.
+
 ## 4. Структура logout_token
 
 Header:

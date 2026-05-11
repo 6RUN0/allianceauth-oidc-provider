@@ -30,6 +30,7 @@ class ApplicationAdmin(admin.ModelAdmin):
         "skip_authorization",
         "pkce_required",
         "access_token_format",
+        "backchannel_logout_on_revoke_only",
     )
     filter_horizontal = ("states", "groups")
     radio_fields = {

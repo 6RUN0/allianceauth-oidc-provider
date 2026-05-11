@@ -63,9 +63,7 @@ _PENDING_LOGOUTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 # ---------- Trigger 2: User.is_active flip ----------
 
 
-def on_user_pre_save(
-    sender: Any, instance: Any, **kwargs: Any
-) -> None:
+def on_user_pre_save(sender: Any, instance: Any, **kwargs: Any) -> None:
     """
     Capture the persisted ``is_active`` BEFORE the save so the
     post-save receiver can diff against the new value.
@@ -178,9 +176,7 @@ def on_state_changed(
 # ---------- Trigger 5: User pre_delete + post_delete ----------
 
 
-def on_user_pre_delete(
-    sender: Any, instance: Any, **kwargs: Any
-) -> None:
+def on_user_pre_delete(sender: Any, instance: Any, **kwargs: Any) -> None:
     """
     Snapshot the list of application PKs the user has tokens with,
     so :func:`on_user_post_delete` can fan out logouts after the
@@ -191,9 +187,7 @@ def on_user_pre_delete(
         _PENDING_LOGOUTS[instance] = app_ids
 
 
-def on_user_post_delete(
-    sender: Any, instance: Any, **kwargs: Any
-) -> None:
+def on_user_post_delete(sender: Any, instance: Any, **kwargs: Any) -> None:
     """
     Read the pre-delete snapshot and emit one signal per RP with
     ``reason="user_deleted"``. Pops the entry to free the weakref

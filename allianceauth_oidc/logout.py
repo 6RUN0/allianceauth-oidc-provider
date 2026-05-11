@@ -166,12 +166,14 @@ def apps_with_active_tokens(user: Any) -> list[Any]:
     RefreshToken = get_refresh_token_model()
     app_ids: set[int] = set()
     app_ids.update(
-        AccessToken.objects.filter(user=user)
-        .values_list("application_id", flat=True)
+        AccessToken.objects.filter(user=user).values_list(
+            "application_id", flat=True
+        )
     )
     app_ids.update(
-        RefreshToken.objects.filter(user=user)
-        .values_list("application_id", flat=True)
+        RefreshToken.objects.filter(user=user).values_list(
+            "application_id", flat=True
+        )
     )
     if not app_ids:
         return []
@@ -212,11 +214,30 @@ def dispatch_backchannel_logout(
     from django.db import transaction
 
     from .signals import BackChannelLogoutSender, oidc_logout_dispatched
-    from .utils import build_logout_debug_meta
+    from .utils import app_log, build_logout_debug_meta
 
     logger = logging.getLogger(f"extensions.{__name__}")
 
     if not getattr(application, "backchannel_logout_uri", ""):
+        return
+    # Custom receivers that need to bypass this gate MUST emit
+    # ``reason="user_revoked"``; any other reason (including
+    # unknown ones from operator-wired triggers) is treated as
+    # non-revoke and silently skipped when the flag is True.
+    if (
+        getattr(application, "backchannel_logout_on_revoke_only", False)
+        and reason != "user_revoked"
+    ):
+        # The literal substring ``"skipped by on_revoke_only flag"``
+        # is operator-stable: grep for it to disambiguate this skip
+        # from other dispatch failure modes. ``app_log`` routes to
+        # INFO when ``debug_mode`` is on, DEBUG otherwise.
+        app_log(
+            logger,
+            application,
+            "OIDC BCL: skipped by on_revoke_only flag reason=%s",
+            reason,
+        )
         return
     try:
         signing_kid = _active_signing_kid()
