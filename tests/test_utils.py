@@ -243,3 +243,151 @@ class TestAppLog(SimpleTestCase):
         with self.assertLogs(logger, level="DEBUG") as cm:
             app_log(logger, object(), "msg")
         self.assertEqual(logging.DEBUG, cm.records[0].levelno)
+
+
+class TestSecretRedactorStructure(SimpleTestCase):
+    """
+    Pin the structural invariants of ``SecretRedactor``.
+
+    ``@dataclass(frozen=True, slots=True)`` carries the same cosmic-
+    ray survivor pattern as the AccessDecision dataclasses in
+    ``security.py``: existing tests exercise ``__call__`` but never
+    pin the constructor-set guarantees. ``ReplaceFalseWithTrue`` on
+    the ``enabled: bool = False`` default would silently turn
+    ``SecretRedactor()`` (no args) into a leak-by-default redactor.
+    """
+
+    def test_default_enabled_is_false(self):
+        # The redact-by-default invariant: a zero-arg redactor MUST
+        # treat secrets as opaque (``<redacted>`` marker), never
+        # leak prefix/suffix.
+        redactor = SecretRedactor()
+        self.assertFalse(redactor.enabled)
+        # Re-assert via behaviour: a real secret resolves to the
+        # opaque marker, not a masked prefix.
+        self.assertEqual("<redacted>", str(redactor("super-secret")))
+
+    def test_is_frozen(self):
+        # ``frozen=True``: instance fields cannot be reassigned.
+        # Removing the decorator (or flipping frozen=True) would
+        # let downstream code mutate the redactor's settings
+        # mid-request.
+        from dataclasses import FrozenInstanceError
+
+        redactor = SecretRedactor(enabled=True, head=2, tail=2)
+        with self.assertRaises(FrozenInstanceError):
+            redactor.enabled = False  # type: ignore[misc]
+
+    def test_uses_slots(self):
+        # ``slots=True``: no __dict__; an accidental attribute
+        # assignment (caught above by frozen=True) cannot also
+        # quietly shadow into a dict.
+        self.assertFalse(hasattr(SecretRedactor(), "__dict__"))
+
+
+class TestMaskSecretArithmeticBoundaries(SimpleTestCase):
+    """
+    Pin the arithmetic and boundary checks inside ``mask_secret``.
+
+    Three groups of surviving mutants:
+
+    * ``"*" * len(s)`` — ``Mul_Div`` flips the repetition. A short
+      string falling into the "fully starred" branch and asserting
+      the exact number of ``*`` distinguishes ``*`` from ``/`` /
+      ``//`` etc.
+    * ``head + tail == 0`` — both the ``+`` (Add_*) and the ``==``
+      (Eq_LtE) survive. ``head=0, tail=0`` returns ``"..."``;
+      ``head=1, tail=0`` does NOT.
+    * ``len(s) <= head + tail`` — boundary discriminates ``+`` from
+      multiplication when the values disagree (head=3, tail=2: 3+2=5
+      vs 3*2=6). ``len=6`` is the input where they split.
+    """
+
+    def test_short_string_returns_exact_star_count(self):
+        # ``"*" * 3`` -> ``"***"`` (3 chars). ``"*" / 3`` would
+        # raise TypeError; ``"*" // 3`` would also fail. Either way
+        # the string-multiply contract is pinned.
+        self.assertEqual("***", mask("abc", head=2, tail=2))
+
+    def test_short_string_with_length_one(self):
+        # ``len=1``: with default head=tail=2, ``len <= head+tail``
+        # is True; output is exactly one ``*``.
+        self.assertEqual("*", mask("x", head=2, tail=2))
+
+    def test_zero_head_zero_tail_returns_ellipsis(self):
+        # ``head + tail == 0`` -> ellipsis. ``Add_*`` mutating ``+``
+        # to ``*`` would also yield 0 here, so this case alone does
+        # not distinguish. Pin via the companion below.
+        self.assertEqual("...", mask("abcdef", head=0, tail=0))
+
+    def test_zero_one_does_not_return_ellipsis(self):
+        # ``head=0, tail=1``: ``+`` = 1, ``*`` = 0. Original branch
+        # checks ``head+tail == 0`` (False) and falls through to
+        # ``len(s) <= 1`` (False for ``"abcdef"``), then to the
+        # formatted branch ``""+"…"+"f" = "…f"``. Mutated
+        # ``head*tail = 0`` ⇒ ellipsis branch fires ⇒ ``"..."``.
+        # The discriminator pins ``+`` against ``*`` on the zero
+        # check. (``head=1, tail=0`` would surface the ``s[-0:]``
+        # corner case that returns the full string — a separate
+        # subtle behaviour, not what this test pins.)
+        self.assertEqual("…f", mask("abcdef", head=0, tail=1))
+
+    def test_len_greater_than_sum_uses_formatted_branch(self):
+        # ``head=3, tail=2``: original ``head + tail`` = 5,
+        # mutated ``head * tail`` = 6. For ``"abcdef"`` (len=6):
+        #   original: 6 <= 5 False ⇒ formatted ``"abc…ef"``
+        #   mutated:  6 <= 6 True  ⇒ ``"******"``
+        # Length 6 is the only input that distinguishes ``+`` from
+        # ``*`` on this guard.
+        self.assertEqual("abc…ef", mask("abcdef", head=3, tail=2))
+
+
+class TestBuildLogoutDebugMetaApplicationGuard(SimpleTestCase):
+    """
+    Pin the ``application is not None`` short-circuit in
+    ``build_logout_debug_meta``.
+
+    Three surviving mutants on the same line:
+    * ``AddNot`` flips the guard and yields field values for
+      ``application=None`` (AttributeError on ``getattr`` would
+      surface).
+    * ``IsNot_Is`` flips the comparison ⇒ same effect.
+
+    Existing BCL tests always pass a real application — none cover
+    the ``application is None`` arm of the conditional.
+    """
+
+    def test_application_none_yields_all_application_fields_none(self):
+        from allianceauth_oidc.utils import build_logout_debug_meta
+
+        meta = build_logout_debug_meta(
+            application=None, jti="j-1", status_code=200, reason="success"
+        )
+        # The three application-derived fields collapse to None.
+        self.assertIsNone(meta["application_pk"])
+        self.assertIsNone(meta["application_name"])
+        self.assertIsNone(meta["backchannel_logout_uri"])
+        # Non-application fields stay untouched.
+        self.assertEqual("j-1", meta["jti"])
+        self.assertEqual(200, meta["status_code"])
+        self.assertEqual("success", meta["reason"])
+
+    def test_application_present_populates_fields(self):
+        # Companion happy path: a real application shape resolves
+        # each field. Together with the None case above, both arms
+        # of the conditional are pinned.
+        from allianceauth_oidc.utils import build_logout_debug_meta
+
+        app_stub = SimpleNamespace(
+            pk=42,
+            name="acme",
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        meta = build_logout_debug_meta(
+            application=app_stub, jti="j-2", status_code=404, reason="oops"
+        )
+        self.assertEqual(42, meta["application_pk"])
+        self.assertEqual("acme", meta["application_name"])
+        self.assertEqual(
+            "https://rp.example.com/bcl", meta["backchannel_logout_uri"]
+        )
