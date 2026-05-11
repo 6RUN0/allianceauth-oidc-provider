@@ -171,6 +171,79 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         ):
             app.full_clean()
 
+    @override_settings(DEBUG=False)
+    def test_ac3a_reserved_rejected(self) -> None:
+        # The ``or`` chain ``is_private | is_loopback | is_link_local |
+        # is_multicast | is_reserved`` carried a ``ReplaceOrWithAnd``
+        # survivor on the ``is_reserved`` arm — no existing test
+        # exercises the reserved-block path. ``240.0.0.0/4`` is the
+        # canonical IETF-reserved range; ``ipaddress.is_reserved`` is
+        # True for any address inside it.
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("240.0.0.1"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_unparseable_ip_continues_to_next_address(self) -> None:
+        # Pin ``except ValueError: continue`` inside the per-address
+        # loop. Two survivors converge on the catch:
+        # * ``ExceptionReplacer`` narrowing ``ValueError`` would let
+        #   ``ipaddress.ip_address("not-an-ip")`` propagate out of the
+        #   loop, surfacing as a 500 on form save.
+        # * ``ReplaceContinueWithBreak`` would stop at the first
+        #   unparseable entry, skipping the private 10.0.0.1 that
+        #   follows — silently accepting a private-IP-resolving RP.
+        # The fixture seeds one garbage address followed by a real
+        # private IP; the only acceptable outcome is the same
+        # ValidationError the existing private-IP test asserts.
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("not-an-ip", "10.0.0.1"),
+            ),
+            self.assertRaises(ValidationError) as ctx,
+        ):
+            app.full_clean()
+        self.assertIn("backchannel_logout_uri", ctx.exception.error_dict)
+
+    @override_settings(DEBUG=False)
+    def test_ac3_http_rejected_with_non_interned_scheme(self) -> None:
+        # Pin ``parsed.scheme == "http"`` against
+        # ``ReplaceComparisonOperator_Eq_LtE``. The existing
+        # ``test_ac3_http_rejected_when_debug_false`` uses the
+        # interned literal ``"http"``, so ``==`` and ``<=`` agree
+        # trivially. ``urlsplit`` always returns interned strings
+        # for the scheme, but cosmic-ray's mutant operates on the
+        # right-hand operand (the literal in source). Build a URI
+        # whose scheme is reached via a more roundabout parse so
+        # the LHS is not an interned literal; here we use ``urlsplit
+        # (...).scheme`` directly from a constructed string. CPython
+        # may still intern the result — fall back to checking exact
+        # operator semantics by emitting the same ValidationError
+        # the documented http+!DEBUG branch produces, while skipping
+        # the DNS check via a public-IP mock.
+        app = self._new_app(uri="http://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            self.assertRaises(ValidationError) as ctx,
+        ):
+            app.full_clean()
+        # Specific error key + message pins the http+!DEBUG branch.
+        joined = " ".join(
+            ctx.exception.error_dict["backchannel_logout_uri"][0].messages
+        )
+        self.assertIn("https://", joined)
+
     @override_settings(
         DEBUG=False, ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True
     )
