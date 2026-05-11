@@ -14,7 +14,15 @@ than duplicating the values.
 
 from __future__ import annotations
 
-import nox
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # ``nox`` is only referenced as a type annotation (``nox.Session``)
+    # in this module; with PEP 563 / ``from __future__ import
+    # annotations`` the symbol is never resolved at runtime, so a
+    # ``TYPE_CHECKING``-guarded import keeps the runtime import graph
+    # minimal and satisfies ruff TC002.
+    import nox
 
 # Test runner config:
 # - tests.test_settingsAA4 boots Alliance Auth and (via tests/_fakeredis.py)

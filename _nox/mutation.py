@@ -116,7 +116,7 @@ def mutation(session: nox.Session) -> None:
 
 
 @nox.session
-def mutation_parallel(session: nox.Session) -> None:
+def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
     """
     Resume a partial cosmic-ray sweep with N isolated worker copies.
 
@@ -237,7 +237,12 @@ def mutation_parallel(session: nox.Session) -> None:
         for proc in procs:
             try:
                 proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired:  # noqa: PERF203
+                # Per-process wait MUST be in the loop body — the
+                # escalation (SIGKILL + drain) only fires for the
+                # specific worker that ignored SIGTERM. Hoisting it
+                # out of the loop would either escalate every worker
+                # or skip escalation entirely.
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(proc.pid, signal.SIGKILL)
                 with contextlib.suppress(subprocess.TimeoutExpired):
@@ -278,7 +283,8 @@ def mutation_parallel(session: nox.Session) -> None:
         baseline_timeout = 180
         with baseline_log.open("wb") as log_f:
             try:
-                baseline_rc = subprocess.run(                    ["bash", "-c", test_command],
+                baseline_rc = subprocess.run(
+                    ["bash", "-c", test_command],
                     cwd=worker_dirs[0],
                     env=worker_env,
                     stdout=log_f,
@@ -348,7 +354,8 @@ def mutation_parallel(session: nox.Session) -> None:
             log_path = work_base / f"worker-{i + 1}.log"
             log_f = log_path.open("wb")
             log_files.append(log_f)
-            proc = subprocess.Popen(                [
+            proc = subprocess.Popen(
+                [
                     str(venv_bin / "cosmic-ray"),
                     "--verbosity=WARNING",
                     "http-worker",
@@ -370,8 +377,7 @@ def mutation_parallel(session: nox.Session) -> None:
         # a hang. With the round-robin shape the total wait is
         # always ≤ 30 s regardless of N.
         session.log(
-            f"waiting for {n_workers} workers to bind "
-            "(30s total budget)..."
+            f"waiting for {n_workers} workers to bind (30s total budget)..."
         )
         bind_deadline_iters = 60
         pending: dict[int, subprocess.Popen[bytes]] = dict(enumerate(procs))
@@ -381,14 +387,13 @@ def mutation_parallel(session: nox.Session) -> None:
             for i, proc in list(pending.items()):
                 port = base_port + i
                 if proc.poll() is not None:
-                    log_text = (
-                        work_base / f"worker-{i + 1}.log"
-                    ).read_text(encoding="utf-8", errors="replace")
+                    log_text = (work_base / f"worker-{i + 1}.log").read_text(
+                        encoding="utf-8", errors="replace"
+                    )
                     session.error(
                         f"worker {i + 1} died before binding "
                         f"(rc={proc.returncode}).\n"
-                        "Log tail:\n"
-                        + "\n".join(log_text.splitlines()[-20:]),
+                        "Log tail:\n" + "\n".join(log_text.splitlines()[-20:]),
                     )
                 try:
                     with socket.create_connection(

@@ -4,27 +4,40 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('allianceauth_oidc', '0015_backchannellogoutattempt'),
-        ('auth', '0012_alter_user_first_name_max_length'),
-        ('authentication', '0025_userprofile_minimize_sidebar'),
+        ("allianceauth_oidc", "0015_backchannellogoutattempt"),
+        ("auth", "0012_alter_user_first_name_max_length"),
+        ("authentication", "0025_userprofile_minimize_sidebar"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='allianceauthapplication',
-            name='active',
-            field=models.BooleanField(default=True, help_text='Deactivated applications (``Active`` unchecked) cannot issue authorization codes or tokens. Toggling this off is the operator-facing kill switch for a compromised or retired client.', verbose_name='Active'),
+            model_name="allianceauthapplication",
+            name="active",
+            field=models.BooleanField(
+                default=True,
+                help_text="Deactivated applications (``Active`` unchecked) cannot issue authorization codes or tokens. Toggling this off is the operator-facing kill switch for a compromised or retired client.",
+                verbose_name="Active",
+            ),
         ),
         migrations.AlterField(
-            model_name='allianceauthapplication',
-            name='groups',
-            field=models.ManyToManyField(blank=True, help_text='Whitelist of Django groups allowed to authenticate this application. A user is granted access if their state OR any of their groups appears in either whitelist; leave both empty to open the app.', related_name='oidc_applications', to='auth.group'),
+            model_name="allianceauthapplication",
+            name="groups",
+            field=models.ManyToManyField(
+                blank=True,
+                help_text="Whitelist of Django groups allowed to authenticate this application. A user is granted access if their state OR any of their groups appears in either whitelist; leave both empty to open the app.",
+                related_name="oidc_applications",
+                to="auth.group",
+            ),
         ),
         migrations.AlterField(
-            model_name='allianceauthapplication',
-            name='states',
-            field=models.ManyToManyField(blank=True, help_text='Whitelist of Alliance Auth states allowed to authenticate this application. Leave empty (with Groups also empty) to open the app to every user holding the global OIDC permission.', related_name='oidc_applications', to='authentication.state'),
+            model_name="allianceauthapplication",
+            name="states",
+            field=models.ManyToManyField(
+                blank=True,
+                help_text="Whitelist of Alliance Auth states allowed to authenticate this application. Leave empty (with Groups also empty) to open the app to every user holding the global OIDC permission.",
+                related_name="oidc_applications",
+                to="authentication.state",
+            ),
         ),
     ]
