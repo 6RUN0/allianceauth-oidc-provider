@@ -46,6 +46,13 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Mutation testing (cosmic-ray) — work-queue sqlite + journals, plus
+# the rendered HTML report. All three are regenerable from
+# ``cosmic-ray.toml`` + the test suite, so we never commit them.
+mutation.sqlite
+mutation.sqlite-*
+html/
+
 # Translations: .po is the source, .mo is the compiled binary. We
 # commit shipped .mo files (under allianceauth_oidc/locale/) so the
 # wheel ships compiled catalogues and operators don't need to run

@@ -1,0 +1,69 @@
+# Mutation-testing configuration for cosmic-ray.
+#
+# Invoked from ``nox -s mutation`` / ``make mutation``. Run docs and
+# interpretation guidance live in ``docs/mutation-testing.md``.
+#
+# Mutation testing is a *pre-release gate*, not a CI-on-every-push
+# gate: a full sweep over ``allianceauth_oidc/`` takes multiple hours
+# wall-clock (thousands of mutants × ~7-10 s baseline test suite).
+
+[cosmic-ray]
+# ``module-path`` accepts a single directory or file; we mutate the
+# whole package and rely on ``excluded-modules`` to trim non-logic
+# files. Inverting the predicate (allowlist instead of denylist)
+# would require teaching cosmic-ray to traverse multiple roots, which
+# its 8.x CLI does not support without external scripting.
+module-path = "allianceauth_oidc"
+
+# ``timeout`` is the per-mutant wall-clock cap. The full test suite
+# completes in ~7-10 s on a baseline machine; 60 s gives ample
+# headroom for slow mutants (e.g. an extra DB roundtrip from the
+# dead-letter recorder) without letting infinite-loop regressions
+# (the canonical example: removing a sentinel check in a retry
+# helper) hang a worker indefinitely.
+timeout = 60.0
+
+# ``test-command`` mirrors ``noxfile.TEST_ARGS_BASE + tests`` exactly
+# so cosmic-ray sees the same Django + fakeredis configuration the
+# human-driven test pass uses. Drift here would silently weaken
+# every mutation verdict.
+#
+# Intentional divergences:
+# * ``--parallel 1`` — Django's ``--parallel=auto`` would multiply
+#   the wall-clock cost per mutant rather than divide it; the
+#   parallel-sweep concurrency comes from
+#   ``_nox.mutation::mutation_parallel`` instead.
+# * ``-v 0`` — silences per-test logging so the worker output is
+#   bounded; the human-driven path runs ``-v 2`` for live progress.
+#
+# ``--debug-mode`` IS preserved because ``allianceauth_oidc/models.py``
+# branches on ``settings.DEBUG`` (the ``backchannel_logout_uri``
+# SSRF gate rejects ``http://`` unless DEBUG is on). Omitting it
+# would let mutations to those branches survive cosmic-ray while
+# still being killed by ``nox -s tests``.
+test-command = "env DJANGO_SETTINGS_MODULE=tests.test_settingsAA4 AA_USE_FAKE_REDIS=1 python -m django test --settings=tests.test_settingsAA4 -v 0 --debug-mode --parallel 1 tests"
+
+# ``excluded-modules`` — paths cosmic-ray will NOT mutate. Production
+# logic only; framework shells and generated code produce mostly
+# equivalent mutants and would only inflate the report.
+#   * ``migrations/`` — Django-generated SQL DDL; no testable logic.
+#   * ``admin.py`` — ModelAdmin shell; framework hides most diffs.
+#   * ``apps.py`` — Django AppConfig metadata + signal wiring.
+#   * ``__init__.py`` — version-string export only.
+#   * ``urls.py`` — URL routing table; mutations rarely produce
+#     observable test failures and the file is short.
+excluded-modules = [
+    "allianceauth_oidc/migrations/*",
+    "allianceauth_oidc/admin.py",
+    "allianceauth_oidc/apps.py",
+    "allianceauth_oidc/__init__.py",
+    "allianceauth_oidc/urls.py",
+]
+
+[cosmic-ray.distributor]
+# ``local`` runs mutants in serial subprocesses on the current host.
+# Switch to ``http`` + the ``mutation_parallel`` nox session for
+# multi-worker runs (see ``docs/mutation-testing.md``). For one
+# developer + one workstation, ``local`` is the simplest correct
+# default and works without any orchestration setup.
+name = "local"

@@ -59,6 +59,15 @@ aa5 = [
 dev = [
     "bandit[toml]>=1.9",
     "coverage>=7.6",
+    # cosmic-ray (mutation testing). Chosen over mutmut 2.x because the
+    # latter's Pony-ORM result cache is incompatible with Python 3.13's
+    # tightened iterator protocol (no upstream fix), and mutmut 3.x is
+    # pytest-only which would force a parallel ``pytest-django``
+    # toolchain. cosmic-ray uses sqlite for its work-queue, supports
+    # any test runner via subprocess exit code (the Django runner here
+    # is plugged in via ``cosmic-ray.toml::test-command``), and is
+    # actively maintained.
+    "cosmic-ray>=8.3",
     "django-stubs>=5.2.9",
     "docformatter>=1.7",
     "fakeredis>=2.33",
@@ -393,6 +402,13 @@ reportImplicitStringConcatenation = "none"
 # They are inline-suppressed with `# nosec` where needed; this just trims the
 # scan to the production code.
 exclude_dirs = [ "tests", "allianceauth_oidc/migrations" ]
+
+# cosmic-ray (mutation testing) configuration lives in ``cosmic-ray.toml``
+# at the repo root rather than under ``[tool.cosmic-ray]`` here —
+# cosmic-ray's CLI takes the config file as a positional argument and
+# the upstream examples uniformly use a dedicated file. See
+# ``docs/mutation-testing.md`` for run instructions and the
+# ``cosmic-ray.toml`` inline comments for scope rationale.
 
 # xenon (cyclomatic complexity guard) — invoked from pre-commit / nox /
 # CI as: ``xenon --max-absolute D --max-modules B --max-average A

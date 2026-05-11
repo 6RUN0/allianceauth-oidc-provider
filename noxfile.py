@@ -20,6 +20,9 @@ Examples::
     uv run nox -s markdown_lint                    # rumdl + lychee + vale
     uv run nox -s tests_matrix                     # tests on every Python
     uv run nox -s tests_aa4                        # tests against AA 4.x stack
+    uv run nox -s mutation                         # cosmic-ray mutation sweep
+    uv run nox -s mutation_parallel -- 4           # parallel workers
+    uv run nox -s mutation_html                    # render mutation report
     AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
 """
 
@@ -29,6 +32,21 @@ import pathlib
 import shutil
 
 import nox
+
+# Importing the submodules is enough to register their sessions with
+# nox — each ``@nox.session`` decorator runs at import time and adds
+# the function to nox's global registry. Keeps the main noxfile
+# readable while domain-specific orchestrations (mutation testing,
+# conformance suite, cross-version matrices) live in their own files.
+import _nox.conformance
+import _nox.matrix
+import _nox.mutation  # noqa: F401
+from _nox.shared import (
+    TEST_ARGS_BASE,
+    TEST_SETTINGS,
+    resolve_test_labels,
+    test_env,
+)
 
 nox.options.sessions = ["lint", "tests"]
 # `none`: nox does not create its own venv; it runs sessions in the active
@@ -46,25 +64,6 @@ nox.options.default_venv_backend = "none"
 # explicitly via ``--group aa4`` (off-lock) or by leaving ``aa5`` to
 # the lock's default resolution.
 
-# Test runner config:
-# - tests.test_settingsAA4 boots Alliance Auth and (via tests/_fakeredis.py)
-#   monkey-patches django_redis with a fakeredis shim. Set AA_USE_FAKE_REDIS=0
-#   to skip the patch and run against a real Redis. The settings module is
-#   shared between the AA 4.x (``tests_aa4`` session) and AA 5.x (default
-#   ``tests`` session) runs — its ``STORAGES`` override neutralises Django
-#   5.x's ManifestStaticFilesStorage default, which would otherwise demand a
-#   ``staticfiles.json`` produced by ``collectstatic``.
-TEST_SETTINGS = "tests.test_settingsAA4"
-# Options-only base — the positional `tests` label is appended last
-# inside the session so that subset labels passed via `-- ...` end up
-# AFTER `--parallel=auto`, where Django's argparse accepts them.
-TEST_ARGS_BASE = [
-    f"--settings={TEST_SETTINGS}",
-    "-v",
-    "2",
-    "--debug-mode",
-]
-
 # Locales we ship translations for. ``en`` is the source language —
 # we keep the catalogue inside the tree because the Transifex config
 # (``.tx/transifex.yml``) treats it as the source-of-truth file. Add
@@ -72,61 +71,6 @@ TEST_ARGS_BASE = [
 # both ``makemessages`` (extract) and ``compilemessages`` (compile).
 LOCALES = ["en", "ru", "uk"]
 PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
-
-# Per-version Python interpreters used by ``tests_matrix``. Mirrors
-# ``pyproject.toml::requires-python = ">=3.10,<3.14"``: 3.10 is the
-# floor (mypy / basedpyright also pin to it), 3.13 is the most recent
-# tested. Update this list when bumping ``requires-python`` upper
-# bound.
-PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
-
-# Per-version Python interpreters used by ``tests_aa4``. AA 4.13.x
-# declares ``requires-python = >=3.8,<3.13`` upstream — Python 3.13 is
-# therefore not a valid combination and would either fail to install
-# AA<5 or silently resolve to an older AA the suite never targeted.
-# Drop the upper-bound entry from ``PYTHON_VERSIONS`` so the matrix
-# only schedules runs that can actually succeed.
-PYTHON_VERSIONS_AA4 = ["3.10", "3.11", "3.12"]
-
-# Third-party runtime dependencies the test suite imports directly,
-# independent of the AA / Django versions resolved in the lock. Used by
-# ``tests_aa4`` (and any future ``tests_aaN``) to provision a venv
-# off-lock against an older AA stack. Keep in sync with the imports under
-# ``tests/`` — anything else needed for the suite to import lives in
-# ``[dependency-groups].dev`` in ``pyproject.toml``.
-TEST_RUNTIME_DEPS = [
-    "fakeredis>=2.33",
-    "parameterized>=0.9",
-    "jwcrypto",
-    "requests>=2.32",
-]
-
-
-def _resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:
-    """
-    Decide which positional test labels to run.
-
-    Honour any user-supplied label (e.g. ``tests.test_signals``); if none is
-    given, default to running the whole ``tests`` package. Django argparse
-    rejects positional args that follow some option flags, so the caller must
-    pass these labels at the very end of the command — that is what every nox
-    session does.
-    """
-    has_label = any(not arg.startswith("-") for arg in posargs)
-    return list(posargs) if has_label else ["tests", *posargs]
-
-
-def _test_env(session: nox.Session) -> dict[str, str]:
-    """
-    Build the environment for test sessions.
-
-    Honours an explicit AA_USE_FAKE_REDIS in the caller's environment so
-    operators can flip to a real Redis without editing the noxfile.
-    """
-    return {
-        "DJANGO_SETTINGS_MODULE": TEST_SETTINGS,
-        "AA_USE_FAKE_REDIS": session.env.get("AA_USE_FAKE_REDIS", "1"),
-    }
 
 
 @nox.session
@@ -152,84 +96,8 @@ def tests(session: nox.Session) -> None:
         "test",
         *TEST_ARGS_BASE,
         "--parallel=auto",
-        *_resolve_test_labels(tuple(session.posargs)),
-        env=_test_env(session),
-    )
-
-
-@nox.session(python=PYTHON_VERSIONS, venv_backend="uv")
-def tests_matrix(session: nox.Session) -> None:
-    """
-    Run the Django test suite against every supported Python version.
-
-    Spawns a per-interpreter uv-managed venv (vs the default ``none``
-    backend that re-uses the active venv) and ``uv sync``s into it
-    before running ``django test``. Slower than ``tests`` but catches
-    version-specific regressions — typing-extension semantics,
-    deprecated stdlib modules, native wheel availability gaps. Pass
-    extra args to ``django test`` after ``--`` like with ``tests``.
-    """
-    session.run_install(
-        "uv",
-        "sync",
-        f"--python={session.python}",
-        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
-    )
-    session.run(
-        "python",
-        "-m",
-        "django",
-        "test",
-        *TEST_ARGS_BASE,
-        "--parallel=auto",
-        *_resolve_test_labels(tuple(session.posargs)),
-        env=_test_env(session),
-    )
-
-
-@nox.session(python=PYTHON_VERSIONS_AA4, venv_backend="uv")
-def tests_aa4(session: nox.Session) -> None:
-    """
-    Run the Django test suite against the Alliance Auth 4.x stack.
-
-    The default ``tests`` session runs against whatever AA / Django
-    versions ``uv.lock`` resolves to — which today is AA 5.0.1 + Django
-    5.2.x. ``tests_aa4`` provisions a parallel venv off-lock with
-    ``allianceauth<5`` + ``django<5`` so the older stack stays exercised
-    locally and in CI even though the dev environment moves forward.
-
-    Parametrised across ``PYTHON_VERSIONS_AA4`` (3.10 / 3.11 / 3.12) —
-    AA 4.13.x's ``requires-python <3.13`` constraint excludes Python 3.13
-    from this matrix dimension.
-
-    Off-lock by design: ``uv pip install`` (not ``uv sync``) is used so
-    the AA-version constraint from ``[dependency-groups].aa4`` (PEP 735,
-    declared in ``pyproject.toml``) can intersect with the package's
-    ``allianceauth>=4,<6`` contract and resolve to AA 4.x. Test
-    dependencies that aren't imported transitively via AA are listed in
-    ``TEST_RUNTIME_DEPS`` so they don't have to be discovered via
-    ``[dependency-groups].dev``.
-    """
-    session.run_install(
-        "uv",
-        "pip",
-        "install",
-        "-e",
-        ".",
-        "--group",
-        "aa4",
-        *TEST_RUNTIME_DEPS,
-        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
-    )
-    session.run(
-        "python",
-        "-m",
-        "django",
-        "test",
-        *TEST_ARGS_BASE,
-        "--parallel=auto",
-        *_resolve_test_labels(tuple(session.posargs)),
-        env=_test_env(session),
+        *resolve_test_labels(tuple(session.posargs)),
+        env=test_env(session),
     )
 
 
@@ -250,8 +118,8 @@ def coverage(session: nox.Session) -> None:
         "django",
         "test",
         *TEST_ARGS_BASE,
-        *_resolve_test_labels(tuple(session.posargs)),
-        env=_test_env(session),
+        *resolve_test_labels(tuple(session.posargs)),
+        env=test_env(session),
     )
     session.run("coverage", "report", "-m")
     session.run("coverage", "html")
@@ -301,7 +169,7 @@ def makemessages(session: nox.Session) -> None:
                 locale,
                 "--no-location",
                 "--keep-pot",
-                env=_test_env(session),
+                env=test_env(session),
             )
 
 
@@ -312,7 +180,7 @@ def compilemessages(session: nox.Session) -> None:
         session.run(
             "django-admin",
             "compilemessages",
-            env=_test_env(session),
+            env=test_env(session),
         )
 
 
@@ -483,73 +351,8 @@ def makemigrations(session: nox.Session) -> None:
         "allianceauth_oidc",
         f"--settings={TEST_SETTINGS}",
         *session.posargs,
-        env=_test_env(session),
+        env=test_env(session),
     )
-
-
-@nox.session
-def conformance(session: nox.Session) -> None:
-    """
-    Run the OpenID Conformance Suite against a Docker-Compose-built
-    provider stack.
-
-    Brings up MongoDB + the conformance suite + our provider, runs the
-    default plan via ``run_plan.py``, and tears the stack down
-    regardless of outcome. ``--`` args after the session name are
-    forwarded to the runner — e.g.::
-
-        uv run nox -s conformance -- --plan oidcc-basic-certification-test-plan
-        uv run nox -s conformance -- --strict-warnings
-
-    Excluded from default sessions because it pulls Docker images and
-    takes 10-15 minutes; see tests/conformance/README.md for context.
-    """
-    compose_file = "tests/conformance/docker-compose.yml"
-    cert_path = "tests/conformance/tls/ca.crt"
-    # Generate the self-signed CA + provider cert if missing. The
-    # conformance suite enforces ``https://`` for OIDC discovery, so
-    # the provider container serves TLS via ``runsslserver`` and the
-    # suite container imports the CA cert into its Java truststore on
-    # startup. Certs are gitignored — re-running ``gen.sh`` is safe
-    # (it overwrites). See ``tests/conformance/tls/`` for details.
-    if not pathlib.Path(cert_path).is_file():
-        session.run("sh", "tests/conformance/tls/gen.sh", external=True)
-    try:
-        # ``--build`` forces a rebuild on every invocation so a stale
-        # provider image does not silently mask code edits between
-        # iterations. Cheap when nothing changed (Docker reuses the
-        # cached layers).
-        session.run(
-            "docker",
-            "compose",
-            "-f",
-            compose_file,
-            "up",
-            "-d",
-            "--wait",
-            "--build",
-            external=True,
-        )
-        session.run(
-            "python",
-            "tests/conformance/run_plan.py",
-            *session.posargs,
-            external=True,
-        )
-    finally:
-        # ``-v`` wipes the named MongoDB volume so the next run starts
-        # from a clean suite-state. Runs unconditionally (try/finally)
-        # so an interrupted plan still tears the stack down.
-        session.run(
-            "docker",
-            "compose",
-            "-f",
-            compose_file,
-            "down",
-            "-v",
-            external=True,
-            success_codes=[0, 1],
-        )
 
 
 @nox.session
@@ -581,5 +384,5 @@ def integration(session: nox.Session) -> None:
         *TEST_ARGS_BASE,
         "--parallel=1",
         *labels,
-        env=_test_env(session),
+        env=test_env(session),
     )
