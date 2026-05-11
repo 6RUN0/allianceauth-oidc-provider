@@ -262,6 +262,105 @@ class TestOIDCCreateAppCommand(OIDCTestCase):
         app = Application.objects.get(client_id=row["client_id"])
         self.assertFalse(app.pkce_required)
 
+    def test_missing_name_argument_is_rejected(self) -> None:
+        # Pin ``required=True`` on ``--name``. ``ReplaceTrueWithFalse``
+        # would make the argument optional and let argparse pass an
+        # empty / missing name through to the model layer, where it
+        # would silently create an app with an empty name field.
+        with self.assertRaises(CommandError) as ctx:
+            call_command(
+                "oidc_create_app",
+                f"--user-id={self.user1.pk}",
+                stdout=StringIO(),
+            )
+        self.assertIn("name", str(ctx.exception).lower())
+
+    def test_missing_user_id_argument_is_rejected(self) -> None:
+        # Symmetric: pin ``required=True`` on ``--user-id``.
+        with self.assertRaises(CommandError) as ctx:
+            call_command(
+                "oidc_create_app",
+                "--name=No User",
+                stdout=StringIO(),
+            )
+        self.assertIn("user-id", str(ctx.exception).lower())
+
+    def test_mixed_valid_and_invalid_state_lists_only_invalid(self) -> None:
+        # Pin ``missing = set(options[...]) - {s.name for s in states}``
+        # against the ``Sub_BitOr`` mutant. The OR mutation would
+        # collapse subtraction into set union, leaking VALID state
+        # names into the error message alongside the invalid ones.
+        # The XOR mutation happens to agree with subtraction on the
+        # "all-missing" input the existing test uses, so the
+        # discriminator requires a mix of valid + invalid.
+        # Priority is unique; pick a high value unlikely to collide
+        # with the fixture-bootstrapped states (Member=10, Blue=20,
+        # Guest=0 etc.).
+        State.objects.get_or_create(
+            name="MixedGood",
+            defaults={"priority": 9001},
+        )
+        with self.assertRaises(CommandError) as ctx:
+            call_command(
+                "oidc_create_app",
+                "--name=mix-state",
+                f"--user-id={self.user1.pk}",
+                "--state=MixedGood",
+                "--state=MixedBad",
+                stdout=StringIO(),
+            )
+        msg = str(ctx.exception)
+        self.assertIn("MixedBad", msg)
+        # The valid state name MUST NOT appear in the error —
+        # ``Sub_BitOr`` mutation would surface it.
+        self.assertNotIn("MixedGood", msg)
+
+    def test_mixed_valid_and_invalid_group_lists_only_invalid(self) -> None:
+        # Symmetric: same ``Sub_BitOr`` mutant on the group lookup.
+        Group.objects.get_or_create(name="MixedGoodGroup")
+        with self.assertRaises(CommandError) as ctx:
+            call_command(
+                "oidc_create_app",
+                "--name=mix-group",
+                f"--user-id={self.user1.pk}",
+                "--group=MixedGoodGroup",
+                "--group=MixedBadGroup",
+                stdout=StringIO(),
+            )
+        msg = str(ctx.exception)
+        self.assertIn("MixedBadGroup", msg)
+        self.assertNotIn("MixedGoodGroup", msg)
+
+    def test_logentry_write_failure_does_not_undo_creation(self) -> None:
+        # Pin ``except Exception`` on the LogEntry write.
+        # ``ExceptionReplacer`` narrowing the catch (e.g. to
+        # ``OSError``) would let a real DB failure during audit
+        # propagate, breaking the creation flow that already
+        # committed the app. The contract documented in-source:
+        # "LogEntry is best-effort; failing to record audit must
+        # not undo the creation."
+        from unittest import mock
+
+        Application = get_application_model()
+        before = Application.objects.count()
+        with mock.patch(
+            "django.contrib.admin.models.LogEntry.objects.log_action",
+            side_effect=RuntimeError("admin log table on fire"),
+        ):
+            out = StringIO()
+            call_command(
+                "oidc_create_app",
+                "--name=Audit Failure Recovery",
+                f"--user-id={self.user1.pk}",
+                "--format=json",
+                stdout=out,
+            )
+        # App was created and rendered despite the audit failure.
+        result = json.loads(out.getvalue())
+        self.assertEqual(1, len(result))
+        self.assertEqual("Audit Failure Recovery", result[0]["name"])
+        self.assertEqual(before + 1, Application.objects.count())
+
 
 class TestOIDCRotateSecretCommand(OIDCTestCase):
     def test_dry_run_does_not_change_secret(self) -> None:
