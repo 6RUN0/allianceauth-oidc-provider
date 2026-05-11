@@ -152,6 +152,92 @@ repos:
         additional_dependencies: ["bandit[toml]"]
         files: ^allianceauth_oidc/.*\.py$
 
+  # Conventional Commits gate on commit subjects. The project's
+  # global rules require ``type(scope): description``; this hook
+  # enforces it at write time so a malformed message is caught
+  # before the commit lands.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - docs
+          - style
+          - refactor
+          - perf
+          - test
+          - build
+          - ci
+          - chore
+          - revert
+
+  # Secret scanning. ``detect-private-key`` (above) only flags RSA /
+  # SSH keys; this hook catches API tokens, JWT, webhook URLs with
+  # embedded credentials, AWS keys, and high-entropy base64 strings.
+  # The ``.secrets.baseline`` file records intentional fixtures
+  # (the JWT test key under ``tests/oidc-test.key``, the redacted
+  # ``hexlify('test')`` literals in test files, etc.) so the scan
+  # focuses on new findings only. Regenerate after intentional
+  # fixture edits:
+  #   uv run --with detect-secrets detect-secrets scan \
+  #     --exclude-files '^uv\.lock$|^\.secrets\.baseline$|\.po$|\.mo$' \
+  #     > .secrets.baseline
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: |
+          (?x)(
+            ^uv\.lock$|
+            ^\.secrets\.baseline$
+          )
+
+  # Dependency hygiene: deptry walks the AST and compares actual
+  # imports to ``pyproject.toml::dependencies``. Catches three
+  # classes of errors the type-checker cannot:
+  #   - DEP001/002: a runtime import not declared in dependencies
+  #     (works in dev because AA pulls it transitively, fails in
+  #     an isolated wheel).
+  #   - DEP003/004: a declared dependency that no code imports
+  #     (stale pin from a removed feature).
+  #   - DEP005: misplaced dep (production import landing in a
+  #     dev-only group).
+  # Runs through ``uvx`` so deptry is fetched on demand without
+  # polluting the project's dev-group; matches the local-hook
+  # pattern used by ruff / mypy / vulture above.
+  - repo: local
+    hooks:
+      - id: deptry
+        name: deptry (uvx)
+        entry: uvx
+        language: system
+        pass_filenames: false
+        types: [python]
+        args: ["deptry", "."]
+
+  # Docstring coverage threshold. The project's ruff config selects
+  # the ``D`` rules (missing-docstring per-file enforce/ignore), so
+  # individual files are gated. ``interrogate`` measures the overall
+  # *percentage* of documented public surface and ``--fail-under``
+  # (configured under ``[tool.interrogate]``) turns it into a
+  # regression gate.
+  - repo: https://github.com/econchick/interrogate
+    rev: 1.7.0
+    hooks:
+      - id: interrogate
+        pass_filenames: false
+        # Explicit ``allianceauth_oidc`` scope: without a positional
+        # path interrogate defaults to ``.`` and walks the env trees
+        # (``.nox/``, ``.venv/``) even though the TOML ``exclude``
+        # list mentions them — the matcher is a path-prefix, not a
+        # regex, and a partial match silently fails for nested
+        # site-packages files.
+        args: ["--config", "pyproject.toml", "allianceauth_oidc"]
+
   # pip-audit is opt-in (stage: manual) because Alliance Auth pins old
   # transitive deps with public CVEs that cannot be upgraded from this repo.
   # Run on demand:

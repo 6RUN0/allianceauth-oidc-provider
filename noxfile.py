@@ -5,25 +5,27 @@ Default (no args): lint + tests.
 
 Examples::
 
-    uv run nox                                     # default (lint + tests)
-    uv run nox -s lint                             # pre-commit hooks
-    uv run nox -s tests                            # Django test suite
-    uv run nox -s tests -- tests.test_token        # subset of tests
-    uv run nox -s tests -- --keepdb                # forward extra args
-    uv run nox -s tests -- --parallel 1            # disable parallelism
-    uv run nox -s typecheck                        # mypy + basedpyright
-    uv run nox -s coverage                         # tests + coverage reports
-    uv run nox -s audit                            # pip-audit
-    uv run nox -s makemessages                     # extract -> .po + .pot
-    uv run nox -s compilemessages                  # compile .po -> .mo
-    uv run nox -s makemigrations                   # generate Django migrations
-    uv run nox -s markdown_lint                    # rumdl + lychee + vale
-    uv run nox -s tests_matrix                     # tests on every Python
-    uv run nox -s tests_aa4                        # tests against AA 4.x stack
-    uv run nox -s mutation                         # cosmic-ray mutation sweep
-    uv run nox -s mutation_parallel -- 4           # parallel workers
-    uv run nox -s mutation_html                    # render mutation report
-    AA_USE_FAKE_REDIS=0 uv run nox -s tests        # run against real Redis
+    uv run nox                                  # default (lint + tests)
+    uv run nox -s preflight                     # lint+typecheck+tests
+    uv run nox -s lint                          # pre-commit hooks
+    uv run nox -s tests                         # Django test suite
+    uv run nox -s tests -- tests.test_token     # subset of tests
+    uv run nox -s tests -- --keepdb             # forward extra args
+    uv run nox -s tests -- --parallel 1         # disable parallelism
+    uv run nox -s typecheck                     # mypy + basedpyright
+    uv run nox -s coverage                      # tests + coverage reports
+    uv run nox -s audit                         # pip-audit
+    uv run nox -s makemessages                  # extract -> .po + .pot
+    uv run nox -s compilemessages               # compile .po -> .mo
+    uv run nox -s makemigrations                # generate Django migrations
+    uv run nox -s migrations_check              # makemigrations --check
+    uv run nox -s markdown_lint                 # rumdl + lychee + vale
+    uv run nox -s tests_matrix                  # tests on every Python
+    uv run nox -s tests_aa4                     # tests against AA 4.x stack
+    uv run nox -s mutation                      # cosmic-ray mutation sweep
+    uv run nox -s mutation_parallel -- 4        # parallel workers
+    uv run nox -s mutation_html                 # render mutation report
+    AA_USE_FAKE_REDIS=0 uv run nox -s tests     # run against real Redis
 """
 
 from __future__ import annotations
@@ -77,6 +79,29 @@ PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
 def lint(session: nox.Session) -> None:
     """Run all linters and formatters via pre-commit."""
     session.run("pre-commit", "run", "--all-files")
+
+
+@nox.session
+def preflight(session: nox.Session) -> None:
+    """
+    Run lint + typecheck + tests + migrations_check sequentially.
+
+    The default ``uv run nox`` session set is ``lint + tests`` (fast
+    local feedback loop). ``preflight`` is the heavier "ready to push"
+    pass that also enforces the type signature and the migrations
+    sync — the same set CI would otherwise run as four jobs.
+
+    Sessions are notified, not invoked inline, so nox stops at the
+    first failure (a typecheck regression should not get masked by
+    a downstream test pass that papers over it).
+    """
+    session.notify("lint")
+    session.notify("typecheck")
+    session.notify("tests")
+    session.notify("migrations_check")
+    session.log(
+        "preflight queued: lint -> typecheck -> tests -> migrations_check"
+    )
 
 
 @nox.session
@@ -351,6 +376,30 @@ def makemigrations(session: nox.Session) -> None:
         "allianceauth_oidc",
         f"--settings={TEST_SETTINGS}",
         *session.posargs,
+        env=test_env(session),
+    )
+
+
+@nox.session
+def migrations_check(session: nox.Session) -> None:
+    """
+    Verify migrations are in sync with the model state (CI-safe).
+
+    Runs ``makemigrations --check --dry-run``: writes nothing, exits
+    non-zero if the model layer would generate a fresh migration. Use
+    in CI before tests so an unsynced model change fails fast — the
+    same guard the sibling ``aa_discord_audit`` plugin uses to keep
+    the model + migration set tightly coupled.
+    """
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "makemigrations",
+        "allianceauth_oidc",
+        "--check",
+        "--dry-run",
+        f"--settings={TEST_SETTINGS}",
         env=test_env(session),
     )
 

@@ -450,6 +450,91 @@ exclude_dirs = [ "tests", "allianceauth_oidc/migrations" ]
 # Adding a function with complexity > 30 or letting a module's average
 # drift past 10 is a regression that pre-commit will catch.
 
+[tool.deptry]
+# Tests + nox + migrations import dev / framework things that production
+# code does not — exclude them from the production-import scan.
+extend_exclude = [
+    "tests",
+    "_nox",
+    "noxfile\\.py",
+    "allianceauth_oidc/migrations",
+]
+
+# Import-name → distribution-name overrides. ``django-oauth-toolkit``
+# installs the ``oauth2_provider`` package, not ``django_oauth_toolkit``;
+# without this hint deptry can't link the declared dependency to the
+# import sites and falsely raises DEP002 (declared-but-unused).
+[tool.deptry.package_module_name_map]
+django-oauth-toolkit = "oauth2_provider"
+
+# Frameworks pulled in transitively by ``allianceauth`` and
+# ``django-oauth-toolkit`` (the plugin never pins them directly to
+# avoid drift from whatever the upstream constraint resolves to):
+#   - DEP001 (missing): we import these without declaring them. AA's
+#     dep graph is the single source of truth — pinning them here
+#     would risk a version skew against whatever the host AA install
+#     actually ships.
+#   - DEP004 (dev-only declared): ``requests`` lives in the ``dev``
+#     group for HTTP fixtures, but ``tasks.py`` / ``logout.py``
+#     legitimately import it in production (AA pulls it transitively
+#     via ``esi-py``). Declaring it as a direct prod dep would
+#     duplicate the constraint.
+#   - ``aa_skip_email`` is a runtime-optional AA extension probed via
+#     ``import aa_skip_email`` inside a defensive ``try`` block — by
+#     design absent in most deployments.
+[tool.deptry.per_rule_ignores]
+DEP001 = [
+    "django",
+    "celery",
+    "asgiref",
+    "oauth2_provider",
+    "oauthlib",
+    "jwcrypto",
+    "cryptography",
+    "prometheus_client",
+    "typing_extensions",
+    "aa_skip_email",
+]
+DEP004 = ["requests"]
+
+[tool.interrogate]
+# Threshold reflects current baseline (84.1% as of 2026-05-11). The
+# 80 floor turns this hook into a no-regression gate while leaving
+# ~4% headroom so a single new helper without a docstring does not
+# break the build. Lift it 5% at a time once a refactor pushes the
+# headroom up — mirrors the ``aa_discord_audit`` strategy.
+fail-under = 80
+# Coverage scope: production code only. Tests, migrations (Django-
+# generated), and the per-package ``__init__.py`` carry their own
+# rules (or no rules) under ruff D-codes already.
+ignore-init-module = true
+ignore-init-method = true
+ignore-magic = true  # __repr__ / __str__ are covered by ruff D105
+ignore-nested-functions = true
+ignore-private = true  # underscore-prefixed helpers
+ignore-property-decorators = true  # property docstrings duplicate getter name
+ignore-semiprivate = false
+ignore-setters = true
+exclude = [
+    # Direct path-prefix excludes for the rare manual invocation
+    # (``uv run --with interrogate interrogate --config pyproject.toml``).
+    # Pre-commit passes ``allianceauth_oidc`` as a positional path so
+    # these never trigger via the hook — they exist as a safety net.
+    ".nox",
+    ".venv",
+    "htmlcov",
+    "docs",
+    "tests",
+    "_nox",
+    "noxfile.py",
+    "allianceauth_oidc/migrations",
+    "allianceauth_oidc/admin.py",  # ModelAdmin docstrings are framework-shape
+    "allianceauth_oidc/apps.py",
+]
+quiet = false
+verbose = 0
+omit-covered-files = true
+
 [tool.vulture]
 # 80% strikes the right balance for this codebase: 60% drowns in Django
 # framework boilerplate (ModelAdmin attrs, has_*_permission hooks); 100%
