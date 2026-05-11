@@ -27,6 +27,7 @@ from oauth2_provider.models import (
     get_application_model,
     get_refresh_token_model,
 )
+from oauth2_provider.settings import oauth2_settings
 
 from allianceauth_oidc.management.commands._format import render_rows
 
@@ -918,6 +919,192 @@ class TestOIDCAuditTokensCommand(OIDCTestCase):
         )
         rows_default = json.loads(out_default.getvalue())
         self.assertNotIn("reasons", rows_default[0])
+
+    def test_ttl_anomaly_skew_constant_is_five_seconds(self) -> None:
+        # Pin ``_TTL_ANOMALY_SKEW = timedelta(seconds=5)``.
+        # ``NumberReplacer`` flipping the literal changes the
+        # boundary at which the ``ttl_anomaly`` check fires; the
+        # constant is documented as "narrow enough not to mask a
+        # token issued under a stale TTL config" and tests below
+        # rely on its exact value as the boundary discriminator.
+        from allianceauth_oidc.management.commands.oidc_audit_tokens import (
+            _TTL_ANOMALY_SKEW,
+        )
+
+        self.assertEqual(timedelta(seconds=5), _TTL_ANOMALY_SKEW)
+
+    def test_suspicious_only_does_not_break_after_clean_token(self) -> None:
+        # Pin ``if not reasons: continue`` against
+        # ``ReplaceContinueWithBreak``. The dedup-style loop walks
+        # tokens; ``break`` on the first normal token (empty
+        # reasons list) stops listing and silently drops every
+        # subsequent suspicious row.
+        #
+        # Fixture: ONE normal token + ONE disabled-app token. With
+        # ``continue`` (correct), the suspicious-only output
+        # contains the disabled-app row. With ``break``, the loop
+        # halts at the normal row first and the suspicious row
+        # never makes it into ``rows``.
+        from ._factories import make_app
+
+        # Normal token (active app, default TTL) — must be skipped.
+        self._seed_token()
+        # Disabled-app token (active=False) — must surface.
+        creds = make_app(owner=self.user1)
+        creds.app.active = False
+        creds.app.save()
+        AccessToken = get_access_token_model()
+        AccessToken.objects.create(
+            user=self.user1,
+            application=creds.app,
+            token="audit-disabled",  # nosec B106
+            expires=timezone.now() + timedelta(hours=1),
+            scope="openid",
+        )
+        out = StringIO()
+        call_command(
+            "oidc_audit_tokens",
+            "--suspicious",
+            "--format=json",
+            stdout=out,
+        )
+        rows = json.loads(out.getvalue())
+        # Iteration order is ``order_by("-expires")`` so the two
+        # tokens may arrive in either order depending on the test
+        # clock. What pins ``continue`` against ``break`` is that
+        # the disabled-app row IS present regardless of position.
+        # In test settings, ``ACCESS_TOKEN_EXPIRE_SECONDS`` is short
+        # (60s), so the 1-hour seed expiry above also flags
+        # ``ttl_anomaly`` — the row may carry "disabled_app" alone
+        # or combined with "ttl_anomaly".
+        reasons_seen = " ".join(row.get("reasons", "") for row in rows)
+        self.assertIn("disabled_app", reasons_seen)
+
+    def test_classify_suspicious_returns_empty_for_missing_active_attr(
+        self,
+    ) -> None:
+        # Pin ``getattr(app, "active", True)`` default. The default
+        # ``True`` means "absent attribute looks like an active
+        # app" — a defensive choice so orphaned tokens whose
+        # application row was deleted (or test stubs with partial
+        # surface) don't get flagged as ``disabled_app``.
+        # ``ReplaceFalseWithTrue`` on the literal would let an
+        # attribute-less mock fall through as if active=False and
+        # spuriously flag every such token.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.management.commands.oidc_audit_tokens import (
+            _classify_suspicious,
+        )
+
+        # Token with a future expiry (no ttl_anomaly) and an app
+        # that lacks the ``active`` attribute entirely. The result
+        # must be ``[]`` — no spurious disabled_app reason.
+        now = timezone.now()
+        stub_app = SimpleNamespace()  # no ``active`` attribute
+        stub_token = SimpleNamespace(
+            expires=now + timedelta(seconds=60),
+            application=stub_app,
+        )
+        self.assertEqual([], _classify_suspicious(stub_token, now=now))
+
+    def test_classify_suspicious_active_true_is_not_disabled(self) -> None:
+        # Pin ``getattr(app, "active", True) is False`` against the
+        # ``Is_Eq`` mutant. For a real ``active=True`` token the
+        # production code's ``True is False`` is False (not
+        # flagged). The mutant ``True == False`` is also False —
+        # they agree on this single shape. So this test alone does
+        # NOT discriminate; pair with the companion below.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.management.commands.oidc_audit_tokens import (
+            _classify_suspicious,
+        )
+
+        now = timezone.now()
+        stub_app = SimpleNamespace(active=True)
+        stub_token = SimpleNamespace(
+            expires=now + timedelta(seconds=60),
+            application=stub_app,
+        )
+        self.assertEqual([], _classify_suspicious(stub_token, now=now))
+
+    def test_classify_suspicious_active_false_yields_disabled_app(
+        self,
+    ) -> None:
+        # Companion to the previous test — the actually-disabled
+        # path. With ``Is_Eq`` flip, ``False == False`` is True
+        # (same as ``False is False``) so this pair stays
+        # equivalent; the test exists to lock in the documented
+        # behaviour and prevent future regressions from silently
+        # dropping the ``disabled_app`` reason entirely.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.management.commands.oidc_audit_tokens import (
+            _classify_suspicious,
+        )
+
+        now = timezone.now()
+        stub_app = SimpleNamespace(active=False)
+        stub_token = SimpleNamespace(
+            expires=now + timedelta(seconds=60),
+            application=stub_app,
+        )
+        self.assertEqual(
+            ["disabled_app"], _classify_suspicious(stub_token, now=now)
+        )
+
+    def test_classify_suspicious_token_at_ttl_ceiling_is_not_anomaly(
+        self,
+    ) -> None:
+        # Pin ``if expires > ceiling`` against ``>=``. Boundary:
+        # ``expires`` exactly at ``ceiling`` (``now +
+        # ACCESS_TOKEN_EXPIRE_SECONDS + skew``) must NOT flag
+        # ``ttl_anomaly``. ``>=`` mutation would erroneously flag
+        # every freshly-issued token sitting at the ceiling.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.management.commands.oidc_audit_tokens import (
+            _TTL_ANOMALY_SKEW,
+            _classify_suspicious,
+        )
+
+        now = timezone.now()
+        ttl_seconds = int(oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        ceiling = now + timedelta(seconds=ttl_seconds) + _TTL_ANOMALY_SKEW
+        stub_app = SimpleNamespace(active=True)
+        stub_token = SimpleNamespace(
+            expires=ceiling,
+            application=stub_app,
+        )
+        reasons = _classify_suspicious(stub_token, now=now)
+        self.assertNotIn("ttl_anomaly", reasons)
+
+    def test_classify_suspicious_token_one_second_above_ceiling_flagged(
+        self,
+    ) -> None:
+        # Companion: one second past the ceiling fires the
+        # ``ttl_anomaly`` reason. Together with the at-ceiling
+        # test, the ``>``/``>=`` operator is pinned.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.management.commands.oidc_audit_tokens import (
+            _TTL_ANOMALY_SKEW,
+            _classify_suspicious,
+        )
+
+        now = timezone.now()
+        ttl_seconds = int(oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+        ceiling = now + timedelta(seconds=ttl_seconds) + _TTL_ANOMALY_SKEW
+        stub_app = SimpleNamespace(active=True)
+        stub_token = SimpleNamespace(
+            expires=ceiling + timedelta(seconds=1),
+            application=stub_app,
+        )
+        self.assertIn(
+            "ttl_anomaly",
+            _classify_suspicious(stub_token, now=now),
+        )
 
 
 class TestOIDCJwksRotateCommand(OIDCTestCase):
