@@ -402,6 +402,43 @@ class TestOIDCRotateSecretCommand(OIDCTestCase):
                 stdout=StringIO(),
             )
 
+    def test_missing_client_id_argument_is_rejected(self) -> None:
+        # Pin ``required=True`` on ``--client-id``.
+        # ``ReplaceTrueWithFalse`` would make argparse accept an
+        # empty invocation, and the command would crash downstream
+        # on ``Application.objects.get(client_id=None)``.
+        with self.assertRaises(CommandError):
+            call_command(
+                "oidc_rotate_secret",
+                stdout=StringIO(),
+            )
+
+    def test_dry_run_secret_prefix_is_exactly_four_characters(self) -> None:
+        # Pin ``new_secret[:4] + "…"`` against ``NumberReplacer``
+        # flipping the slice bound to 3 or 5. The existing
+        # ``test_dry_run_does_not_change_secret`` reads the row but
+        # never inspects the prefix length; a flip would silently
+        # leak more or fewer characters of the about-to-be-set
+        # secret.
+        out = StringIO()
+        call_command(
+            "oidc_rotate_secret",
+            f"--client-id={self.oauth_id}",
+            "--dry-run",
+            "--format=json",
+            stdout=out,
+        )
+        rendered = json.loads(out.getvalue())[0]["would_set_secret_prefix"]
+        # Trailing ellipsis ``"…"`` plus exactly 4 prefix characters.
+        self.assertTrue(rendered.endswith("…"))
+        prefix = rendered[:-1]
+        self.assertEqual(
+            4,
+            len(prefix),
+            f"prefix length {len(prefix)} differs from expected 4 — "
+            "NumberReplacer on the slice bound?",
+        )
+
 
 class TestOIDCRevokeUserTokensCommand(OIDCTestCase):
     def _seed_tokens(self) -> tuple[int, int]:
