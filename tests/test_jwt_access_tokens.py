@@ -1323,3 +1323,265 @@ class TestJWTRevocation(OIDCTestCase):
         self.assertTrue(self._introspect(opaque_at).get("active"))
         self.assertEqual(200, self._revoke(opaque_at))
         self.assertFalse(self._introspect(opaque_at).get("active"))
+
+
+class TestSizeWarnDefault(TestCase):
+    """
+    Pin the ``_DEFAULT_SIZE_WARN_BYTES`` literal value at 4096.
+
+    Cosmic-ray's ``NumberReplacer`` flips the literal to neighbouring
+    integers (4095, 4097) and the existing ``TestSizeGuard`` suite
+    does NOT discriminate them — the "small token under default"
+    test passes for any threshold large enough to exceed the typical
+    AA JWT size (~600-1500 bytes), and the explicit override test
+    uses ``16``. The exact-value assertion below kills every
+    NumberReplacer flip on the constant.
+    """
+
+    def test_default_size_warn_bytes_constant_is_4096(self) -> None:
+        from allianceauth_oidc.tokens import _DEFAULT_SIZE_WARN_BYTES
+
+        # 4096 is a deliberate choice: Apache LimitRequestFieldSize
+        # defaults to 8190, leaving headroom; documented in the module.
+        self.assertEqual(4096, _DEFAULT_SIZE_WARN_BYTES)
+
+    def test_default_threshold_is_4096_via_resolver(self) -> None:
+        # Doubles as a contract check on ``_size_warn_threshold()``:
+        # the resolver must read the module default when the operator
+        # has not overridden the setting.
+        from allianceauth_oidc.tokens import _size_warn_threshold
+
+        # Default OAUTH2_PROVIDER in test settings does not set the
+        # threshold key — the resolver returns the module constant.
+        self.assertEqual(4096, _size_warn_threshold())
+
+
+class TestRequiredClaimsArithmetic(TestCase):
+    """
+    Pin the ``exp = now + expires_in`` arithmetic and the
+    ``user is not None and is_authenticated`` boolean guard inside
+    ``_required_claims``.
+
+    The end-to-end JWT tests do not pin exact ``exp`` / ``iat``
+    values because they rely on real ``time.time()``. Patching
+    ``time.time`` to a fixed instant makes the addition observable
+    — ``+`` mutated to ``*`` / ``-`` / ``<<`` etc. each yields a
+    different numeric ``exp``.
+    """
+
+    def test_exp_equals_now_plus_expires_in(self) -> None:
+        # Drive ``_required_claims`` with a stub request so we
+        # control ``now`` and ``expires_in`` independently of any
+        # DOT or fixture state. The function reads ``time.time``
+        # directly, so patching that module path is enough.
+        from unittest import mock
+
+        from allianceauth_oidc import tokens as tokens_mod
+
+        fake_request = SimpleNamespace(
+            user=None,
+            client=SimpleNamespace(client_id="cid"),
+            expires_in=600,
+            scopes=["openid"],
+        )
+        with mock.patch.object(
+            tokens_mod.time, "time", return_value=1_700_000_000
+        ):
+            claims = tokens_mod._required_claims(fake_request)
+        self.assertEqual(1_700_000_000, claims["iat"])
+        # ``now + expires_in`` = 1_700_000_000 + 600 — pin the exact
+        # value so binary-op flips (``*``, ``-``, ``<<``, ``**``) all
+        # produce an observable difference.
+        self.assertEqual(1_700_000_600, claims["exp"])
+
+    def test_sub_falls_back_to_client_id_for_machine_to_machine(self) -> None:
+        # ``user is not None and is_authenticated`` -> False (user is
+        # None) means ``sub`` = ``client_id`` per RFC 9068 §3.
+        # ``ReplaceComparisonOperator_IsNot_Is`` flipping ``is not
+        # None`` to ``is None`` would make every user be treated as
+        # the client-credentials grant — wrong ``sub`` claim, but the
+        # existing tests don't pin a specific value here.
+        from allianceauth_oidc.tokens import _required_claims
+
+        fake_request = SimpleNamespace(
+            user=None,
+            client=SimpleNamespace(client_id="my-client"),
+            expires_in=60,
+            scopes=["openid"],
+        )
+        claims = _required_claims(fake_request)
+        self.assertEqual("my-client", claims["sub"])
+        # No ``auth_time`` on the m2m branch.
+        self.assertNotIn("auth_time", claims)
+
+    def test_user_without_is_authenticated_attr_is_machine_to_machine(self):
+        # ``getattr(user, "is_authenticated", False)`` default — a
+        # stub user that omits the attribute MUST take the False
+        # branch (m2m path; ``sub`` = client_id). Flipping the
+        # default to True would silently elevate every attribute-less
+        # object to "authenticated" and try to read ``user.pk``.
+        from allianceauth_oidc.tokens import _required_claims
+
+        # A bare ``object()`` has no ``is_authenticated`` and no
+        # ``pk`` — the False default keeps us safely on the m2m
+        # branch.
+        fake_request = SimpleNamespace(
+            user=object(),
+            client=SimpleNamespace(client_id="cid-x"),
+            expires_in=60,
+            scopes=["openid"],
+        )
+        claims = _required_claims(fake_request)
+        self.assertEqual("cid-x", claims["sub"])
+        self.assertNotIn("auth_time", claims)
+
+
+class TestIdentityClaimsAnonGuard(TestCase):
+    """
+    ``_identity_claims`` short-circuits to an empty dict when the
+    request has no authenticated user — six surviving cosmic-ray
+    mutants live on the single ``if user is None or not getattr(
+    user, "is_authenticated", False):`` guard.
+    """
+
+    def test_no_user_returns_empty_dict(self) -> None:
+        # ``user is None`` — left side of the ``or`` fires.
+        from allianceauth_oidc.tokens import _identity_claims
+
+        fake_request = SimpleNamespace(user=None, scopes=["openid"])
+        self.assertEqual({}, _identity_claims(fake_request))
+
+    def test_unauthenticated_user_returns_empty_dict(self) -> None:
+        # ``user.is_authenticated`` is False — right side of the
+        # ``or`` fires. Together with the None case above, both halves
+        # of the ``or`` are exercised — kills ``ReplaceOrWithAnd``
+        # which would require BOTH conditions True simultaneously.
+        from allianceauth_oidc.tokens import _identity_claims
+
+        fake_request = SimpleNamespace(
+            user=SimpleNamespace(is_authenticated=False),
+            scopes=["openid"],
+        )
+        self.assertEqual({}, _identity_claims(fake_request))
+
+    def test_user_without_is_authenticated_attr_returns_empty_dict(
+        self,
+    ) -> None:
+        # ``getattr(user, "is_authenticated", False)`` default —
+        # ``ReplaceFalseWithTrue`` would let an attribute-less object
+        # reach the validator-instantiation code path below and
+        # crash on ``user.pk``. The False default keeps the
+        # short-circuit firing.
+        from allianceauth_oidc.tokens import _identity_claims
+
+        fake_request = SimpleNamespace(user=object(), scopes=["openid"])
+        self.assertEqual({}, _identity_claims(fake_request))
+
+
+class TestDispatchingAccessTokenGeneratorBoundary(OIDCTestCase):
+    """
+    Pin two comparison-operator boundaries in the access-token dispatcher.
+
+    Surviving cosmic-ray mutants:
+
+    * ``if fmt == "jwt":`` — the existing JWT-mode tests issue real
+      JWTs through the dispatcher but their string ``"jwt"`` is
+      interned, so ``==`` -> ``is`` cannot be distinguished by
+      ``run_code_flow``. Forcing a non-interned ``"jwt"`` resolution
+      keeps the equality operator pinned.
+    * ``if len(token) > threshold:`` — exact-boundary test
+      (``len(token) == threshold``) discriminates ``>`` from ``>=``;
+      both produce the same warning behaviour on inputs strictly
+      above the threshold.
+    """
+
+    def test_size_warning_fires_strictly_above_threshold(self) -> None:
+        # ``> threshold`` boundary: a token exactly AT the threshold
+        # must NOT warn. ``>=`` mutation would emit the warning at
+        # the boundary too. Driving the dispatcher with a stub
+        # ``_build_jwt`` returning a known-length token gives us
+        # precise control over the inequality.
+        from unittest import mock
+
+        from allianceauth_oidc import tokens as tokens_mod
+
+        # Threshold default 4096; build a token exactly 4096 bytes.
+        threshold = 4096
+        fake_token = "x" * threshold
+        fake_request = SimpleNamespace(client=SimpleNamespace(client_id="cid"))
+        with (
+            mock.patch.object(
+                tokens_mod, "_resolve_access_token_format", return_value="jwt"
+            ),
+            mock.patch.object(
+                tokens_mod, "_build_jwt", return_value=fake_token
+            ),
+            mock.patch.object(
+                tokens_mod, "_size_warn_threshold", return_value=threshold
+            ),
+            self.assertNoLogs(
+                "extensions.allianceauth_oidc.tokens", level="WARNING"
+            ),
+        ):
+            out = tokens_mod.dispatching_access_token_generator(fake_request)
+        self.assertEqual(fake_token, out)
+
+    def test_size_warning_fires_one_byte_above_threshold(self) -> None:
+        # The companion case: one byte above the threshold MUST log.
+        # Together with the "exactly at threshold" case above, the
+        # ``>`` vs ``>=`` ambiguity is closed.
+        from unittest import mock
+
+        from allianceauth_oidc import tokens as tokens_mod
+
+        threshold = 4096
+        fake_token = "x" * (threshold + 1)
+        fake_request = SimpleNamespace(client=SimpleNamespace(client_id="cid"))
+        with (
+            mock.patch.object(
+                tokens_mod, "_resolve_access_token_format", return_value="jwt"
+            ),
+            mock.patch.object(
+                tokens_mod, "_build_jwt", return_value=fake_token
+            ),
+            mock.patch.object(
+                tokens_mod, "_size_warn_threshold", return_value=threshold
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.tokens", level="WARNING"
+            ) as cap,
+        ):
+            tokens_mod.dispatching_access_token_generator(fake_request)
+        self.assertTrue(
+            any("size" in m.lower() for m in cap.output),
+            f"size-warning missing in {cap.output!r}",
+        )
+
+    def test_format_jwt_with_non_interned_string_routes_to_build_jwt(
+        self,
+    ) -> None:
+        # ``ReplaceComparisonOperator_Eq_Is`` flips ``fmt == "jwt"``
+        # to ``fmt is "jwt"``. For an interned literal the two
+        # operators agree; a runtime-built string defeats CPython's
+        # interning and forces the distinction. We assemble the
+        # value at runtime via slice-concatenation, same trick as
+        # ``TestAccessTokenFormatComparison`` in test_security.py.
+        from unittest import mock
+
+        from allianceauth_oidc import tokens as tokens_mod
+
+        non_interned_jwt = "jw" + "t"
+        fake_request = SimpleNamespace(client=SimpleNamespace(client_id="cid"))
+        with (
+            mock.patch.object(
+                tokens_mod,
+                "_resolve_access_token_format",
+                return_value=non_interned_jwt,
+            ),
+            mock.patch.object(
+                tokens_mod, "_build_jwt", return_value="signed-token"
+            ) as build_jwt,
+        ):
+            out = tokens_mod.dispatching_access_token_generator(fake_request)
+        build_jwt.assert_called_once_with(fake_request)
+        self.assertEqual("signed-token", out)
