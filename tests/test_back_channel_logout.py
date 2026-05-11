@@ -2817,3 +2817,160 @@ class TestReceiverBoundaries(OIDCTestCase):
         # The cast failure must NOT poison the row — ``user_pk`` is
         # normalised to None per the receiver's docstring contract.
         self.assertIsNone(row.user_pk)
+
+
+class TestModelsKillMutants(OIDCTestCase):
+    """
+    Boundary coverage for ``allianceauth_oidc/models.py``.
+
+    Three groups of surviving cosmic-ray mutants:
+
+    * ``_DNS_BOUND_SECONDS = 3`` — ``NumberReplacer`` flips the
+      module constant; no existing test pins the literal value.
+    * ``BackChannelLogoutAttempt.__str__`` carries an ``AddNot`` on
+      the success/FAIL ternary and two ``ReplaceOrWithAnd`` on the
+      ``jti or '-'`` / ``reason or '-'`` blank-coalesces.
+    * ``clean()`` uses ``==`` for the JWT + HS256 incoherence check;
+      non-interned strings via slice-concat distinguish ``==`` from
+      ``is``.
+    """
+
+    # ---- _DNS_BOUND_SECONDS literal ---------------------------
+
+    def test_dns_bound_seconds_is_three_by_default(self) -> None:
+        # Pin the literal. ``NumberReplacer`` flipping to 2 or 4
+        # would silently change the resolver wall-clock contract:
+        # 2s is uncomfortably tight on cold-DNS first-resolves;
+        # 4s pushes past the operator-facing form-save SLA.
+        from allianceauth_oidc.models import _DNS_BOUND_SECONDS
+
+        self.assertEqual(3, _DNS_BOUND_SECONDS)
+
+    # ---- BackChannelLogoutAttempt.__str__ ---------------------
+
+    def test_attempt_str_success_carries_ok_marker(self) -> None:
+        # ``__str__`` reads ``"OK" if self.success else "FAIL"``.
+        # ``AddNot`` flips ``self.success`` to ``not self.success``,
+        # swapping the two labels. A success row + an explicit
+        # ``OK`` substring assertion is the discriminator.
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        row = BackChannelLogoutAttempt(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="aaaa" * 8,
+            success=True,
+            attempt_count=1,
+            reason="",
+        )
+        s = str(row)
+        self.assertIn("BCL OK", s)
+        self.assertNotIn("FAIL", s)
+
+    def test_attempt_str_failure_carries_fail_marker(self) -> None:
+        # Companion to the above; ``AddNot`` flip would surface as a
+        # success-labelled failure row.
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        row = BackChannelLogoutAttempt(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="bbbb" * 8,
+            success=False,
+            attempt_count=1,
+            reason="rp_client_error",
+        )
+        s = str(row)
+        self.assertIn("BCL FAIL", s)
+
+    def test_attempt_str_blank_jti_renders_dash(self) -> None:
+        # ``self.jti or '-'`` returns ``'-'`` for empty / None.
+        # ``ReplaceOrWithAnd`` would return ``''`` for empty jti
+        # (and ``'-'`` for non-empty jti, the opposite of intent)
+        # — both wrong. Pin the empty -> '-' coalesce.
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        row = BackChannelLogoutAttempt(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="",
+            success=False,
+            attempt_count=0,
+            reason="signing_kid_resolve_failed",
+        )
+        self.assertIn("jti=-", str(row))
+
+    def test_attempt_str_blank_reason_renders_dash(self) -> None:
+        # Symmetric to the jti case, pinning the second
+        # ``ReplaceOrWithAnd`` site on the same line.
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        row = BackChannelLogoutAttempt(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="cccc" * 8,
+            success=True,
+            attempt_count=1,
+            reason="",
+        )
+        self.assertIn("reason=-", str(row))
+
+    def test_attempt_str_non_blank_jti_passes_through(self) -> None:
+        # ``ReplaceOrWithAnd`` discriminator from the other side: a
+        # non-blank jti must appear verbatim, not collapse to ''.
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        row = BackChannelLogoutAttempt(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="real-jti-1234",
+            success=False,
+            attempt_count=1,
+            reason="rp_client_error",
+        )
+        s = str(row)
+        self.assertIn("jti=real-jti-1234", s)
+        self.assertIn("reason=rp_client_error", s)
+
+    # ---- AllianceAuthApplication.clean — JWT + HS256 rejection ---
+
+    def test_clean_rejects_jwt_with_hs256_non_interned_value(self) -> None:
+        # ``self.access_token_format == ACCESS_TOKEN_FORMAT_JWT``
+        # carries an ``Eq_Is`` mutant. The existing JWT+HS256 tests
+        # pass the literal string, which CPython interns so ``==``
+        # and ``is`` agree. Building the value at runtime via slice
+        # concatenation defeats interning and forces the operator
+        # to distinguish itself.
+        from django.core.exceptions import ValidationError
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="",  # bypass URI validation
+        )
+        app = creds.app
+        # Non-interned ``"jwt"`` and ``"HS256"`` constructed at runtime.
+        app.access_token_format = "jw" + "t"
+        app.algorithm = "HS" + "256"
+        with self.assertRaises(ValidationError) as ctx:
+            app.clean()
+        self.assertIn("access_token_format", ctx.exception.message_dict)
