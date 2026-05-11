@@ -1254,3 +1254,46 @@ class TestOIDCJwksRotateCommand(OIDCTestCase):
                 "1024",
                 stdout=StringIO(),
             )
+
+    def test_min_key_size_constant_is_exactly_2048(self) -> None:
+        # Pin ``_MIN_KEY_SIZE = 2048``. ``NumberReplacer`` flipping
+        # the literal to neighbours (2047 / 2049) would silently
+        # shift the FIPS 186-4 floor — a regression that
+        # ``test_rejects_below_minimum_keysize`` does not catch
+        # because 1024 < 2049 still fails. Only the exact literal
+        # assertion pins it.
+        from allianceauth_oidc.management.commands.oidc_jwks_rotate import (
+            _MIN_KEY_SIZE,
+        )
+
+        self.assertEqual(2048, _MIN_KEY_SIZE)
+
+    def test_outfile_written_with_mode_0o600(self) -> None:
+        # Pin ``0o600`` (owner read+write only) on the ``os.open``
+        # call. ``NumberReplacer`` flipping to 0o601 would silently
+        # grant world-execute on a secret file. The existing
+        # ``--out`` test verifies the bytes land in the file but
+        # never inspects POSIX permissions.
+        import os
+        import stat
+        import tempfile
+        from pathlib import Path
+
+        fd, path_str = tempfile.mkstemp(suffix=".pem")
+        os.close(fd)
+        out_path = Path(path_str)
+        out_path.unlink()
+        self.addCleanup(lambda: out_path.unlink(missing_ok=True))
+
+        call_command("oidc_jwks_rotate", "--out", path_str, stdout=StringIO())
+        mode = stat.S_IMODE(out_path.stat().st_mode)
+        # Apply the standard umask the OS may impose; the command
+        # opens with mode 0o600 which on a sensible umask (022 or
+        # narrower) produces exactly 0o600. Any wider mode would
+        # signal a regression on the literal.
+        self.assertEqual(
+            0o600,
+            mode,
+            f"file mode {oct(mode)} differs from expected 0o600; "
+            "NumberReplacer on the literal?",
+        )
