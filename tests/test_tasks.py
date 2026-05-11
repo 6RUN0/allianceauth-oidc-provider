@@ -156,6 +156,99 @@ class TestClearExpiredTokensTask(OIDCTestCase):
         self.assertEqual(before_at, AccessToken.objects.count())
         self.assertEqual(before_grant, Grant.objects.count())
 
+    def test_log_reports_exact_removed_access_count(self):
+        # The existing log-shape test only checked that
+        # ``removed_access=`` appears in the message — both
+        # ``removed_access=0`` and ``removed_access=99`` satisfy that
+        # assertion. Cosmic-ray's ``NumberReplacer`` on the ``max(..., 0)``
+        # floor and binary-op flips on the ``before - after`` subtraction
+        # therefore all survived. Pinning the exact value distinguishes
+        # ``before - after`` from ``before + after`` / ``before * after``
+        # / ``max(..., 1)`` etc.
+        AccessToken = get_access_token_model()
+        now = timezone.now()
+        # Three expired access tokens — DOT removes them.
+        for i in range(3):
+            AccessToken.objects.create(
+                user=self.user1,
+                application=self.oauth_app,
+                token=f"orphan-expired-{i}",  # nosec B106
+                expires=now - timedelta(hours=1),
+                scope="openid",
+            )
+
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.tasks", level="INFO"
+        ) as cm:
+            clear_expired_tokens()
+        joined = "\n".join(cm.output)
+        # Whitespace-bounded match so ``removed_access=3`` doesn't
+        # also accept ``removed_access=33``.
+        self.assertIn("removed_access=3 ", joined + " ")
+
+    def test_clean_database_log_reports_zero_removed(self):
+        # The ``max(expired_before - expired_after, 0)`` floor: when
+        # nothing was expired, ``removed`` is exactly 0. ``NumberReplacer``
+        # flipping the floor to 1 would log ``removed_access=1`` on
+        # every clean-DB run, polluting dashboards with phantom work.
+        AccessToken = get_access_token_model()
+        # Reset any baseline rows from prior class setup.
+        AccessToken.objects.filter(expires__lt=timezone.now()).delete()
+
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.tasks", level="INFO"
+        ) as cm:
+            clear_expired_tokens()
+        joined = "\n".join(cm.output)
+        self.assertIn("removed_access=0 ", joined + " ")
+
+    def test_duration_log_bounded_in_real_time(self):
+        # ``duration_ms = (time.monotonic() - started) * 1000`` carries
+        # ten BinaryOperator mutants (``-`` → ``+``/``*``/``/``...,
+        # ``*`` → ``+``/``-``/...) plus ``NumberReplacer`` on the
+        # ``1000`` constant. Most flips throw the duration outside any
+        # plausible range — addition of two large monotonic timestamps,
+        # subtraction yielding a huge negative number, ``*0`` collapsing
+        # to zero. A loose upper-bound assertion catches them all.
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.tasks", level="INFO"
+        ) as cm:
+            clear_expired_tokens()
+        joined = "\n".join(cm.output)
+        # Extract the duration value from the log line.
+        import re
+
+        match = re.search(r"duration=([\d.]+) ms", joined)
+        self.assertIsNotNone(match, f"duration token missing in {joined!r}")
+        duration_ms = float(match.group(1))
+        # The whole task wall-clock is well under one minute even on
+        # CI; tighter bound (e.g. 5_000 ms) would risk flakes.
+        self.assertGreaterEqual(duration_ms, 0.0)
+        self.assertLess(
+            duration_ms,
+            60_000.0,
+            (
+                f"duration_ms={duration_ms} outside plausible range — "
+                "binary-op mutation on (now - started) * 1000?"
+            ),
+        )
+
+    def test_function_is_registered_as_celery_task(self):
+        # ``@shared_task(name=...)`` wraps the function so it gains
+        # ``.delay`` / ``.apply``. ``RemoveDecorator`` strips the
+        # wrapper; the resulting bare function survives every test
+        # that calls it as a plain Python function (which is most of
+        # this file). Probing the celery-task surface kills the
+        # mutant cleanly.
+        self.assertTrue(
+            hasattr(clear_expired_tokens, "delay"),
+            (
+                "clear_expired_tokens has lost the @shared_task wrapper "
+                "— Celery Beat will silently fail to schedule it."
+            ),
+        )
+        self.assertTrue(hasattr(clear_expired_tokens, "apply"))
+
 
 class TestSendLogoutTokenRetryEnvelope(SimpleTestCase):
     """
