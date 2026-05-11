@@ -32,6 +32,7 @@ from oauth2_provider.views.mixins import OAuthLibMixin
 from oauth2_provider.views.oidc import ConnectDiscoveryInfoView
 from typing_extensions import assert_never
 
+from ._metrics import authorize_denied
 from .security import (
     DEFAULT_POLICY,
     AllowedDecision,
@@ -484,6 +485,7 @@ class AuthAuthorizationView(AuthorizationView):
                 return super().dispatch(request, *args, **kwargs)
 
             case GlobalDeny():
+                authorize_denied.labels(reason="global").inc()
                 logger.warning(
                     "OIDC DENIED: global access user=%s path=%s method=%s",
                     user,
@@ -497,6 +499,7 @@ class AuthAuthorizationView(AuthorizationView):
                 )
 
             case AppDeny():
+                authorize_denied.labels(reason="app").inc()
                 denied_app = decision.app  # AppLike (non-None)
                 logger.warning(
                     "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501

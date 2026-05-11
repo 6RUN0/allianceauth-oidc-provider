@@ -33,6 +33,16 @@ classifiers = [
 
 dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.2,<4" ]
 
+# Optional extras. ``metrics`` opts the operator into Prometheus
+# integration via ``django-prometheus``: when installed (whether
+# through this extra or pulled in by another AA module) our
+# ``_metrics`` module starts emitting counters/histograms/gauges
+# into the default Prometheus REGISTRY, and django-prometheus'
+# /metrics endpoint exports them alongside its own HTTP metrics.
+# Without it, every metric call resolves to a no-op stub at
+# near-zero runtime cost — see ``allianceauth_oidc/_metrics.py``.
+optional-dependencies.metrics = [ "django-prometheus>=2.3" ]
+
 urls.Homepage = "https://github.com/6RUN0/allianceauth-oidc-provider"
 urls.Source = "https://github.com/6RUN0/allianceauth-oidc-provider"
 urls.Tracker = "https://github.com/6RUN0/allianceauth-oidc-provider/issues"
@@ -68,6 +78,14 @@ dev = [
     # is plugged in via ``cosmic-ray.toml::test-command``), and is
     # actively maintained.
     "cosmic-ray>=8.3",
+    # Tests exercise the real ``prometheus_client.Counter`` /
+    # ``Histogram`` / ``Gauge`` paths under the assumption that
+    # operators who care about observability will install the
+    # ``[metrics]`` extra. A dedicated smoke test
+    # (``tests/test_metrics.py::TestMetricsNoOpWithoutDjangoPrometheus``)
+    # patches ``sys.modules`` to exercise the fallback path so the
+    # no-op contract stays covered even when the dep is present.
+    "django-prometheus>=2.3",
     "django-stubs>=5.2.9",
     "docformatter>=1.7",
     "fakeredis>=2.33",
@@ -340,6 +358,14 @@ module = [
     "aa_skip_email.*",
     "requests",
     "requests.*",
+    # ``django_prometheus`` ships without ``py.typed`` and no
+    # third-party stub package is published. We import it once in
+    # ``_metrics.py`` purely for the side effect of confirming
+    # availability (the optional ``[metrics]`` extra gate); the
+    # API surface we touch is exactly zero, so suppressing the
+    # missing-import error does not weaken type coverage.
+    "django_prometheus",
+    "django_prometheus.*",
 ]
 ignore_missing_imports = true
 

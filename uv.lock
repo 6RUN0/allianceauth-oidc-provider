@@ -249,6 +249,11 @@ dependencies = [
     { name = "django-oauth-toolkit" },
 ]
 
+[package.optional-dependencies]
+metrics = [
+    { name = "django-prometheus" },
+]
+
 [package.dev-dependencies]
 aa4 = [
     { name = "allianceauth", version = "4.13.1", source = { registry = "https://pypi.org/simple" } },
@@ -263,6 +268,7 @@ dev = [
     { name = "basedpyright" },
     { name = "cosmic-ray" },
     { name = "coverage" },
+    { name = "django-prometheus" },
     { name = "django-stubs" },
     { name = "docformatter" },
     { name = "fakeredis" },
@@ -281,7 +287,9 @@ dev = [
 requires-dist = [
     { name = "allianceauth", specifier = ">=4,<6" },
     { name = "django-oauth-toolkit", specifier = ">=3.2,<4" },
+    { name = "django-prometheus", marker = "extra == 'metrics'", specifier = ">=2.3" },
 ]
+provides-extras = ["metrics"]
 
 [package.metadata.requires-dev]
 aa4 = [
@@ -297,6 +305,7 @@ dev = [
     { name = "basedpyright", specifier = ">=1.31" },
     { name = "cosmic-ray", specifier = ">=8.3" },
     { name = "coverage", specifier = ">=7.6" },
+    { name = "django-prometheus", specifier = ">=2.3" },
     { name = "django-stubs", specifier = ">=5.2.9" },
     { name = "docformatter", specifier = ">=1.7" },
     { name = "fakeredis", specifier = ">=2.33" },
@@ -1287,6 +1296,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a7/95/efd83b35c34b86eb2249d2b54c5eaf383c48f3f19034aa6f3807e37471b6/django_oauth_toolkit-3.2.0.tar.gz", hash = "sha256:c36761ae6810083d95a652e9c820046cde0d45a2e2a5574bbe7202656ec20bb6", size = 114211, upload-time = "2026-01-08T22:03:13.311Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/cc/f27a784c0ecd13335abd9ef85ebb80dbc04945f919da5f496f56e3562751/django_oauth_toolkit-3.2.0-py3-none-any.whl", hash = "sha256:bd2cd2719b010231a2f370f927dbcc740454fb1d0dd7e7f4138f36227363dc26", size = 87077, upload-time = "2026-01-08T22:03:12.123Z" },
+]
+
+[[package]]
+name = "django-prometheus"
+version = "2.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django", version = "4.2.30", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "django", version = "5.2.14", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-32-allianceauth-oidc-provider-eveo7-aa5' or extra != 'group-32-allianceauth-oidc-provider-eveo7-aa4'" },
+    { name = "prometheus-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/f4/cb39ddd2a41e07a274c4e162c076e906ae232d63b66bbabdea0300878877/django_prometheus-2.4.1.tar.gz", hash = "sha256:073628243d2a6de6a8a8c20e5b512872dfb85d66e1b60b28bcf1eca0155dad95", size = 24464, upload-time = "2025-06-25T15:45:37.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/50/9c5e022fa92574e5d20606687f15a2aa255e10512a17d11a8216fa117f72/django_prometheus-2.4.1-py2.py3-none-any.whl", hash = "sha256:7fe5af7f7c9ad9cd8a429fe0f3f1bf651f0e244f77162147869eab7ec09cc5e7", size = 29541, upload-time = "2025-06-25T15:45:35.433Z" },
 ]
 
 [[package]]
@@ -2480,6 +2503,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8e/22/2de9408ac81acbb8a7d05d4cc064a152ccf33b3d480ebe0cd292153db239/pre_commit-4.6.0.tar.gz", hash = "sha256:718d2208cef53fdc38206e40524a6d4d9576d103eb16f0fec11c875e7716e9d9", size = 198525, upload-time = "2026-04-21T20:31:41.613Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/80/6e/4b28b62ecb6aae56769c34a8ff1d661473ec1e9519e2d5f8b2c150086b26/pre_commit-4.6.0-py2.py3-none-any.whl", hash = "sha256:e2cf246f7299edcabcf15f9b0571fdce06058527f0a06535068a86d38089f29b", size = 226472, upload-time = "2026-04-21T20:31:40.092Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/fb/d9aa83ffe43ce1f19e557c0971d04b90561b0cfd50762aafb01968285553/prometheus_client-0.25.0.tar.gz", hash = "sha256:5e373b75c31afb3c86f1a52fa1ad470c9aace18082d39ec0d2f918d11cc9ba28", size = 86035, upload-time = "2026-04-09T19:53:42.359Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/9b/d4b1e644385499c8346fa9b622a3f030dce14cd6ef8a1871c221a17a67e7/prometheus_client-0.25.0-py3-none-any.whl", hash = "sha256:d5aec89e349a6ec230805d0df882f3807f74fd6c1a2fa86864e3c2279059fed1", size = 64154, upload-time = "2026-04-09T19:53:41.324Z" },
 ]
 
 [[package]]

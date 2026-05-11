@@ -114,6 +114,7 @@ class AllianceAuthOIDC(AppConfig):
             checks,
             receivers,
         )
+        from ._metrics import connect_metrics_receivers
         from .app_settings import connect_invalidator
         from .logout import dispatch_backchannel_logout
         from .signals import (
@@ -131,4 +132,9 @@ class AllianceAuthOIDC(AppConfig):
         connect_default_logout_receiver(dispatch_backchannel_logout)
         receivers.connect_all()
         connect_invalidator()
+        # Always wire the metrics receivers — when django-prometheus
+        # is absent the receivers run but every metric call is a
+        # no-op stub, which preserves a single startup path and keeps
+        # the receiver chain testable without conditional fixtures.
+        connect_metrics_receivers()
         _check_jwt_wiring()

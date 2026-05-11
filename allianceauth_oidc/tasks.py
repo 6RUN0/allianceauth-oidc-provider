@@ -16,7 +16,27 @@ from oauth2_provider.models import (
 )
 
 from . import __version__
+from ._metrics import bcl_delivery_seconds, tokens_cleaned
 from .constants import TASK_CLEAR_EXPIRED_TOKENS, TASK_SEND_LOGOUT_TOKEN
+
+
+def _bcl_outcome_for_status(status: int) -> str:
+    """
+    Map an RP HTTP status to the histogram ``outcome`` label.
+
+    Values mirror the ``reason`` vocabulary on
+    :data:`oidc_logout_dispatched` so dashboards joining the
+    histogram with the dead-letter counter use a single label
+    namespace.
+    """
+    if 200 <= status < 300:
+        return "success"
+    if 300 <= status < 400:
+        return "redirect_blocked"
+    if 400 <= status < 500:
+        return "rp_client_error"
+    return "rp_server_error"
+
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
@@ -48,9 +68,11 @@ def clear_expired_tokens() -> None:
     # counting those is best-effort and would mislead operators if the
     # numbers diverged across DOT versions. Field naming makes the
     # scope explicit so dashboards do not over-promise.
+    removed = max(expired_before - expired_after, 0)
+    tokens_cleaned.inc(removed)
     logger.info(
         "OIDC cleanup: removed_access=%d (before_access=%d, after_access=%d, duration=%.1f ms)",  # noqa: E501
-        max(expired_before - expired_after, 0),
+        removed,
         expired_before,
         expired_after,
         duration_ms,
@@ -153,6 +175,17 @@ def send_logout_token(
             reason="signing_kid_retired",
         )
         return
+    # Histogram-friendly span: ``time.monotonic`` is immune to
+    # wall-clock drift so the observation reflects true HTTP latency
+    # even under NTP adjustment. Measured only across the
+    # request/response round-trip — JWT building above is fast and
+    # exception-free in practice, and including it would conflate
+    # network performance with crypto throughput. ``requests.post``
+    # raising a ``RequestException`` triggers Celery autoretry
+    # before this body resumes, so network errors do not contribute
+    # to the histogram by design (they show up via the dead-letter
+    # counter on ``retries_exhausted`` instead).
+    _bcl_started = time.monotonic()
     response = requests.post(
         application.backchannel_logout_uri,
         data={"logout_token": token},
@@ -167,6 +200,10 @@ def send_logout_token(
         status = response.status_code
     finally:
         response.close()
+    bcl_delivery_seconds.labels(
+        client_id=application.client_id,
+        outcome=_bcl_outcome_for_status(status),
+    ).observe(time.monotonic() - _bcl_started)
     if 300 <= status < 400:
         logger.warning(
             "OIDC BCL: RP returned redirect, blocked per spec meta=%s",
