@@ -2524,3 +2524,146 @@ class TestBackChannelLogoutAttemptDocs(OIDCTestCase):
         # resilient to title wording variants
         # ("Журнал неудачных доставок", "Журнал dead-letter", ...).
         self.assertIn("Журнал", content)
+
+
+class TestLogoutHelperBoundaries(OIDCTestCase):
+    """
+    Boundary coverage for ``logout.py`` helpers.
+
+    Survivors fall in three groups:
+
+    * ``_resolve_signing_key`` compares thumbprints with ``==``. The
+      existing tests pass either the active kid (matches both ``==``
+      and ``>=``) or a random kid that triggers the retired branch.
+      Both inputs satisfy the boundary check the same way under ``>=``
+      or ``<=``, so the ``Eq_*`` mutants survive. A kid that is a
+      *prefix* of the active thumbprint (``actual_kid[:-1]``) is the
+      discriminator: ``==`` returns False (continue and ultimately
+      raise), ``>=`` returns True for ``"abcd" >= "abc"``.
+
+    * ``dispatch_backchannel_logout`` skips when
+      ``backchannel_logout_on_revoke_only`` is set AND
+      ``reason != "user_revoked"``. Existing tests use reasons that
+      are lexicographically LESS than ``"user_revoked"`` (e.g.
+      ``"user_deactivated"`` — ``d`` < ``r``), so ``!=`` and ``<``
+      agree on every covered case. A reason that lex-sorts ABOVE
+      ``"user_revoked"`` (e.g. ``"zztop"``) discriminates the two.
+
+    * The ``getattr(..., False)`` default on the on_revoke_only flag
+      survives because the flag is always set explicitly on the
+      fixture. A stub application missing the attribute exercises
+      the default-False path.
+    """
+
+    def _stub_user(self):
+        # Real user from the OIDCTestCase fixture; the dispatcher
+        # reads ``user.pk`` to enqueue but otherwise treats user as
+        # opaque.
+        return self.user1
+
+    def _build_app_without_flag(self):
+        # AllianceAuthApplication always carries the on_revoke_only
+        # field (default False), so the production guard's default
+        # is only exercised on synthetic shapes. Use a SimpleNamespace
+        # that omits the attribute entirely to force getattr's
+        # ``False`` fallback.
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            pk=12345,
+            client_id="cid-stub",
+            backchannel_logout_uri="https://rp.example.com/bcl",
+            # NO backchannel_logout_on_revoke_only attribute.
+        )
+
+    def test_app_without_revoke_only_attr_defaults_to_dispatch(self) -> None:
+        # ``getattr(application, "backchannel_logout_on_revoke_only",
+        # False)`` defaults to False ⇒ the dispatcher continues even
+        # for non-revoke reasons. Mutating the default to True would
+        # silently skip every dispatch for any app shape lacking the
+        # attribute (e.g. legacy DB rows pre-migration, custom
+        # operator-defined shapes).
+        from allianceauth_oidc.logout import dispatch_backchannel_logout
+
+        app = self._build_app_without_flag()
+        with (
+            mock.patch(
+                "allianceauth_oidc.tasks.send_logout_token.apply_async"
+            ) as apply_async,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_backchannel_logout(
+                sender=type(self._stub_user()),
+                user=self._stub_user(),
+                application=app,
+                reason="groups_changed",
+            )
+        apply_async.assert_called_once()
+
+    def test_flag_true_skips_lex_greater_reason(self) -> None:
+        # Pin ``!=`` against ``<`` on the reason check.
+        #
+        # ``test_flag_true_skips_user_deactivated`` etc. use reasons
+        # lexicographically LESS than ``"user_revoked"`` (the four
+        # lifecycle reasons all start with ``user_d``, ``groups_``,
+        # ``state_``, all < ``"user_revoked"``). With ``<``, those
+        # cases agree with ``!=``. A reason lex-greater than
+        # ``"user_revoked"`` is the discriminator: ``!=`` is True
+        # (skip), ``<`` is False (would NOT skip).
+        from allianceauth_oidc.logout import dispatch_backchannel_logout
+
+        app = _make_app_with_flag(self, on_revoke_only=True)
+        with (
+            mock.patch(
+                "allianceauth_oidc.tasks.send_logout_token.apply_async"
+            ) as apply_async,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_backchannel_logout(
+                sender=type(self.user1),
+                user=self.user1,
+                application=app,
+                reason="zztop_event",  # lex > "user_revoked"
+            )
+        apply_async.assert_not_called()
+
+    def test_resolve_signing_key_prefix_match_raises_retired(self) -> None:
+        # Pin ``==`` against ``>=`` on the thumbprint comparison.
+        #
+        # ``test_ac29a_signing_kid_retired`` passes a random string
+        # ``"not-a-real-kid"`` which is much shorter than the actual
+        # thumbprint and lex-sorts LESS than it ("n" < "0" or "a"
+        # depending on the actual thumbprint's first byte). ``<=``
+        # would happen to fire same as ``==`` for that input. A kid
+        # that is a strict PREFIX of the active thumbprint is the
+        # discriminator: ``actual >= prefix`` is True (lex), but
+        # ``actual == prefix`` is False.
+        from allianceauth_oidc.logout import (
+            SigningKeyRetiredError,
+            _active_signing_kid,
+            _resolve_signing_key,
+        )
+
+        actual = _active_signing_kid()
+        # A prefix is strictly less than the full thumbprint; the
+        # ``>=`` mutant would not match here either, but the ``Eq_LtE``
+        # / ``Eq_GtE`` flips swap the operator entirely. With the
+        # prefix shape, ``actual_thumbprint >= prefix`` is True
+        # (lex), so the ``>=`` mutant accepts the prefix as a match
+        # and returns the active key. The original ``==`` rejects.
+        prefix = actual[:-1]
+        with self.assertRaises(SigningKeyRetiredError):
+            _resolve_signing_key(prefix)
+
+    def test_resolve_signing_key_exact_match_returns_active(self) -> None:
+        # Companion happy-path: the exact thumbprint resolves to the
+        # active key without raising. Pins the lower bound of the
+        # boundary set the previous test pins from the upper.
+        from allianceauth_oidc.logout import (
+            _active_signing_kid,
+            _resolve_signing_key,
+        )
+
+        actual = _active_signing_kid()
+        key = _resolve_signing_key(actual)
+        self.assertEqual(actual, str(key.thumbprint()))
