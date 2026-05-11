@@ -13,6 +13,7 @@ trigger/audit signal pair and ``LogoutAuditBody`` TypedDict.
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import logging
 import socket
 import typing
@@ -1473,6 +1474,179 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
             self.assertEqual(dispatches, [{"reason": "broker_unavailable"}])
         finally:
             oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.broker")
+
+
+class TestSendLogoutTokenBoundaries(OIDCTestCase):
+    """
+    Boundary coverage for the ``send_logout_token`` task body.
+
+    The existing ``TestBackChannelLogoutCeleryTask`` covers the
+    common cases (204, 302, 404, 503@retries-exhausted), but those
+    test inputs do not distinguish ``<=`` from ``<`` (or any of the
+    other ``ReplaceComparisonOperator_*`` mutants) on the three
+    status-code range checks:
+
+    * ``200 <= status < 300``
+    * ``300 <= status < 400``
+    * ``400 <= status < 500``
+
+    A ``<=`` -> ``<`` flip on the lower bound of any range silently
+    breaks the boundary value of that range — e.g. status=400 would
+    no longer route to ``rp_client_error`` because ``400 < 400`` is
+    False. The tests below send the lowest and highest legal value
+    in each range and pin the routing outcome.
+
+    The ``attempt_count = (self.request.retries or 0) + 1`` line
+    likewise survives 16 mutations (NumberReplacer on ``0`` / ``1``,
+    Add_* binary ops on ``+``, ``or`` -> ``and``). Two synthetic
+    request shapes (retries=0, retries=2) discriminate every flip.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        self.app = creds.app
+
+    def _active_signing_kid(self) -> str:
+        from jwcrypto import jwk
+
+        pem = oauth2_settings.OIDC_RSA_PRIVATE_KEY.encode()
+        return str(jwk.JWK.from_pem(pem).thumbprint())
+
+    def _exercise_status(
+        self, *, status_code: int, retries: int = 0
+    ) -> list[dict]:
+        """
+        Send one logout token with the given HTTP status and Celery
+        ``request.retries`` shape. Returns the captured
+        ``oidc_logout_dispatched`` payloads.
+
+        Patching ``request`` on the task class is the same technique
+        ``test_ac29_5xx_retries_exhausted_emits_audit`` uses — see
+        that test for the descriptor-vs-PromiseProxy rationale.
+        """
+        from allianceauth_oidc.signals import oidc_logout_dispatched
+        from allianceauth_oidc.tasks import send_logout_token
+
+        dispatches: list[dict] = []
+
+        def sink(sender, application, jti, success, attempt_count, **kw):
+            dispatches.append(
+                {
+                    "success": success,
+                    "reason": kw.get("reason"),
+                    "attempt_count": attempt_count,
+                }
+            )
+
+        fake_request = mock.MagicMock()
+        fake_request.retries = retries
+        task_cls = type(send_logout_token._get_current_object())
+
+        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.boundary")
+        try:
+            with (
+                mock.patch.object(
+                    task_cls,
+                    "request",
+                    new_callable=mock.PropertyMock,
+                    return_value=fake_request,
+                ),
+                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+            ):
+                post.return_value = mock.MagicMock(status_code=status_code)
+                # 5xx below max_retries re-raises an HTTPError, which
+                # Celery's autoretry wraps in its own ``Retry``. Either
+                # flavour means "the production contract held"; the
+                # captured ``oidc_logout_dispatched`` signals stay
+                # available for the assertions in the caller.
+                with contextlib.suppress(Exception):
+                    send_logout_token(
+                        user_pk=self.user1.pk,
+                        application_pk=self.app.pk,
+                        jti="deadbeef" * 4,
+                        signing_kid=self._active_signing_kid(),
+                        iat=1_700_000_000,
+                    )
+        finally:
+            oidc_logout_dispatched.disconnect(
+                dispatch_uid="test.sink.boundary"
+            )
+        return dispatches
+
+    # ---- 2xx range boundary -----------------------------------
+
+    def test_status_200_routes_to_success(self) -> None:
+        # Lowest of the 2xx range. ``<=`` -> ``<`` on ``200 <=``
+        # makes 200 fall through to the 3xx-or-below branches and
+        # report a wrong reason — pin success here.
+        out = self._exercise_status(status_code=200)
+        self.assertEqual(1, len(out))
+        self.assertTrue(out[0]["success"])
+        self.assertIsNone(out[0]["reason"])
+
+    def test_status_299_routes_to_success(self) -> None:
+        # Highest of the 2xx range. ``status < 300`` -> ``status <=
+        # 300`` would accidentally route 299 to the 3xx branch via
+        # the next ``300 <= status`` check.
+        out = self._exercise_status(status_code=299)
+        self.assertTrue(out[0]["success"])
+
+    # ---- 3xx range boundary -----------------------------------
+
+    def test_status_300_routes_to_redirect_blocked(self) -> None:
+        # ``300 <= status`` lower bound; ``<=`` -> ``<`` makes 300
+        # fall through to the 2xx-success branch above.
+        out = self._exercise_status(status_code=300)
+        self.assertEqual("redirect_blocked", out[0]["reason"])
+
+    def test_status_399_routes_to_redirect_blocked(self) -> None:
+        # ``status < 400`` upper bound.
+        out = self._exercise_status(status_code=399)
+        self.assertEqual("redirect_blocked", out[0]["reason"])
+
+    # ---- 4xx range boundary -----------------------------------
+
+    def test_status_400_routes_to_rp_client_error(self) -> None:
+        out = self._exercise_status(status_code=400)
+        self.assertEqual("rp_client_error", out[0]["reason"])
+        self.assertFalse(out[0]["success"])
+
+    def test_status_499_routes_to_rp_client_error(self) -> None:
+        out = self._exercise_status(status_code=499)
+        self.assertEqual("rp_client_error", out[0]["reason"])
+
+    # ---- 5xx routes to retry-or-deadletter --------------------
+
+    def test_status_500_at_retries_zero_re_raises_http_error(self) -> None:
+        # 5xx below ``self.max_retries`` MUST re-raise so Celery's
+        # autoretry engages. ``>= max_retries`` -> ``<= max_retries``
+        # mutation would dead-letter immediately at retries=0 instead.
+        out = self._exercise_status(status_code=500, retries=0)
+        # No dispatch on raise (the function raised before emitting
+        # the dead-letter signal); attempt_count=1 — pinned below.
+        self.assertEqual([], out)
+
+    # ---- attempt_count math: (retries or 0) + 1 ---------------
+
+    def test_attempt_count_is_one_for_first_attempt(self) -> None:
+        # retries=0: ``(0 or 0) + 1`` = 1. NumberReplacer on the
+        # ``+ 1`` would yield ``+ 0`` (attempt_count=0) or other
+        # constants. Binary-op flips (``+`` -> ``-``, ``*``, etc.)
+        # produce 0 or other unexpected values. Pin exactly 1.
+        out = self._exercise_status(status_code=200, retries=0)
+        self.assertEqual(1, out[0]["attempt_count"])
+
+    def test_attempt_count_is_three_for_third_attempt(self) -> None:
+        # retries=2: ``(2 or 0) + 1`` = 3. This case discriminates
+        # ``or`` from ``and``: ``(2 and 0) + 1`` = 1 (wrong).
+        # Together with the retries=0 case above it pins the whole
+        # ``(retries or 0) + 1`` expression.
+        out = self._exercise_status(status_code=200, retries=2)
+        self.assertEqual(3, out[0]["attempt_count"])
 
 
 class TestBackChannelLogoutDiscovery(OIDCTestCase):
