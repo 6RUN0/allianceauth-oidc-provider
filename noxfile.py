@@ -23,7 +23,8 @@ Examples::
     uv run nox -s tests_matrix                  # tests on every Python
     uv run nox -s tests_aa4                     # tests against AA 4.x stack
     uv run nox -s mutation                      # cosmic-ray mutation sweep
-    uv run nox -s mutation_parallel -- 4        # parallel workers
+    uv run nox -s mutation_parallel -- 4        # parallel workers (resume)
+    uv run nox -s mutation_parallel -- --reinit 8  # fresh sweep, N workers
     uv run nox -s mutation_html                 # render mutation report
     AA_USE_FAKE_REDIS=0 uv run nox -s tests     # run against real Redis
 """

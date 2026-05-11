@@ -49,10 +49,71 @@ _TEST_SETTINGS = "tests.test_settingsAA4"
 
 def _test_env(session: nox.Session) -> dict[str, str]:
     """Build the env mutation sessions need (mirrors ``noxfile._test_env``)."""
+    # ``session.env.get(...)`` is typed ``str | None`` (nox treats
+    # env vars as nullable internally), so the two-arg form does not
+    # narrow back to ``str``. ``or "1"`` coalesces both ``None`` and
+    # an explicit empty string to the default — empty env values are
+    # equivalent to unset for AA_USE_FAKE_REDIS's bool-ish semantics.
     return {
         "DJANGO_SETTINGS_MODULE": _TEST_SETTINGS,
-        "AA_USE_FAKE_REDIS": session.env.get("AA_USE_FAKE_REDIS", "1"),
+        "AA_USE_FAKE_REDIS": session.env.get("AA_USE_FAKE_REDIS") or "1",
     }
+
+
+def _backup_sqlite(
+    session: nox.Session, sqlite_path: pathlib.Path
+) -> pathlib.Path | None:
+    """
+    Copy ``sqlite_path`` to a timestamped ``.bak_<unix>`` sibling.
+
+    Returns the backup path, or ``None`` if the source did not exist
+    (fresh run, nothing to preserve). Backups are gitignored via the
+    ``mutation.sqlite.bak_*`` pattern in ``.gitignore`` so they pile
+    up on disk only — comparing two sweeps is then ``sqlite3 <bak>``
+    vs ``sqlite3 mutation.sqlite``.
+    """
+    if not sqlite_path.is_file():
+        return None
+    backup = sqlite_path.parent / f"{sqlite_path.name}.bak_{int(time.time())}"
+    shutil.copy2(sqlite_path, backup)
+    session.log(f"backed up {sqlite_path.name} -> {backup.name}")
+    return backup
+
+
+def _parse_reinit_and_n(
+    session: nox.Session, *, default_n: str = "4"
+) -> tuple[int, bool]:
+    """
+    Pull ``--reinit`` flag out of posargs; remaining positional is N.
+
+    ``CR_PARALLEL_N`` env var is the fallback for the worker count
+    when no positional was supplied; the flag has no env-var twin —
+    re-initialising the queue is destructive enough that an explicit
+    CLI flag is the right ergonomics. ``session.error`` (which raises)
+    fires on a non-integer or sub-1 ``N`` so this helper never
+    returns invalid state.
+    """
+    reinit = False
+    positional: list[str] = []
+    for arg in session.posargs:
+        if arg in ("--reinit", "--fresh"):
+            reinit = True
+        else:
+            positional.append(arg)
+    # Same nullable-env caveat as ``_test_env``: ``.get(key, fallback)``
+    # is typed ``str | None`` so ``or default_n`` re-narrows to ``str``.
+    n_arg = (
+        positional[0]
+        if positional
+        else (session.env.get("CR_PARALLEL_N") or default_n)
+    )
+    try:
+        n_workers = int(n_arg)
+    except ValueError as exc:
+        session.error(f"N must be a positive integer, got: {n_arg!r} ({exc})")
+    if n_workers < 1:
+        session.error(f"N must be >= 1, got: {n_workers}")
+    return n_workers, reinit
 
 
 @nox.session
@@ -88,6 +149,11 @@ def mutation(session: nox.Session) -> None:
     is safe: cosmic-ray resumes from where the queue stood.
     """
     session_file = "mutation.sqlite"
+    # Back up any prior sweep before ``init`` overwrites the queue.
+    # The backup is gitignored (``mutation.sqlite.bak_*``) but stays
+    # on disk so an operator can diff verdicts between sweeps via
+    # ``sqlite3 mutation.sqlite.bak_<unix>`` against the active file.
+    _backup_sqlite(session, pathlib.Path(session_file))
     # Re-init wipes the queue if a prior partial run exists, so the
     # tally below corresponds to a complete current sweep rather than
     # a mix of old + new mutants.
@@ -145,9 +211,18 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
 
     Args::
 
-        nox -s mutation_parallel -- 4       # 4 workers (default)
-        nox -s mutation_parallel -- 8       # 8 workers
+        nox -s mutation_parallel -- 4              # 4 workers, resume
+        nox -s mutation_parallel -- 8              # 8 workers, resume
+        nox -s mutation_parallel -- --reinit 4     # back up + init + run
         CR_BASE_PORT=10000 nox -s mutation_parallel -- 4
+
+    ``--reinit`` (alias ``--fresh``) backs up ``mutation.sqlite`` to
+    a timestamped sibling, runs ``cosmic-ray init`` to rebuild the
+    queue from ``cosmic-ray.toml`` (picking up scope edits like
+    ``excluded-modules`` since the previous sweep), applies the
+    annotation-noise filter, and then proceeds with the parallel
+    sweep. Without the flag the session strictly resumes — required
+    behaviour when continuing a partial run.
 
     Why baseline first: the worker subprocess invokes
     ``shlex.split(test_command)`` and ``subprocess.run`` with no
@@ -162,36 +237,58 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
     venv_bin = project_dir / ".venv" / "bin"
     session_file = project_dir / "mutation.sqlite"
     base_config = project_dir / "cosmic-ray.toml"
-    base_port = int(session.env.get("CR_BASE_PORT", "9876"))
+    base_port = int(session.env.get("CR_BASE_PORT") or "9876")
 
-    n_arg = (
-        session.posargs[0]
-        if session.posargs
-        else session.env.get("CR_PARALLEL_N", "4")
-    )
-    try:
-        n_workers = int(n_arg)
-    except ValueError as exc:
-        session.error(f"N must be a positive integer, got: {n_arg!r} ({exc})")
-    if n_workers < 1:
-        session.error(f"N must be >= 1, got: {n_workers}")
+    n_workers, reinit = _parse_reinit_and_n(session)
 
     if not (venv_bin / "cosmic-ray").is_file():
         session.error(
             f"{venv_bin}/cosmic-ray not found — run 'make dev' first"
         )
-    if not session_file.is_file():
-        session.error(
-            f"{session_file} missing — run "
-            f"'uv run cosmic-ray init cosmic-ray.toml mutation.sqlite' "
-            "first",
-        )
     if not base_config.is_file():
         session.error(f"{base_config} missing")
 
+    if reinit:
+        # Destructive path: back up, drop, then init. Mirrors what
+        # ``mutation`` does in serial mode but keeps a recoverable
+        # snapshot of the prior verdicts. The init runs against the
+        # current ``cosmic-ray.toml``, so any scope edits (e.g.
+        # ``excluded-modules``) made between sweeps take effect here.
+        _backup_sqlite(session, session_file)
+        if session_file.is_file():
+            session_file.unlink()
+        session.run(
+            "cosmic-ray",
+            "--verbosity=INFO",
+            "init",
+            str(base_config),
+            str(session_file),
+        )
+        # Mirror the serial-mode filter step: skip annotation-BitOr
+        # mutations before workers start consuming the queue, so
+        # they never pay the test-run cost for noise. Resume runs
+        # (the ``elif`` branch below) skip the filter — its prior
+        # SKIPPED verdicts persist across resumes.
+        session.run(
+            "python",
+            "_nox/cr_filter_annotations.py",
+            str(session_file),
+        )
+    elif not session_file.is_file():
+        session.error(
+            f"{session_file} missing — run "
+            f"'uv run cosmic-ray init cosmic-ray.toml mutation.sqlite' "
+            f"first, or pass ``-- --reinit N`` to do the init as part "
+            f"of this session.",
+        )
+
     # Lazy import — see the top-of-file comment for why tomllib is
-    # not at module scope.
-    import tomllib
+    # not at module scope. ``# type: ignore[import-not-found]`` because
+    # mypy targets Python 3.10 (where tomllib is missing) per
+    # ``[tool.mypy].python_version``; in practice the project venv
+    # always uses 3.12+ where the stdlib module is available, so the
+    # runtime never trips the import.
+    import tomllib  # type: ignore[import-not-found]
 
     # Read the base config so we can extract the test-command for the
     # baseline check and rewrite the distributor section for parallel.
@@ -466,10 +563,20 @@ def mutation_html(session: nox.Session) -> None:
     # file at all) is preserved.
     final = html_dir / "mutation-report.html"
     staging = html_dir / "mutation-report.html.partial"
+    # ``cr-html`` writes binary HTML to stdout; ``session.run`` is
+    # typed for ``IO[str]`` only, so we drive ``subprocess.run``
+    # directly (it accepts any file-like). We lose nox's stdout
+    # capture / log integration here, but ``cr-html`` is a stdout
+    # firehose anyway — capturing it would just defeat the
+    # atomic-rename pattern. The same trade-off is in the sibling
+    # ``aa_discord_audit`` plugin.
     with staging.open("wb") as out:
-        session.run(
-            "cr-html",
-            str(session_file),
+        rc = subprocess.run(
+            ["cr-html", str(session_file)],
             stdout=out,
-        )
+            check=False,
+        ).returncode
+    if rc != 0:
+        staging.unlink(missing_ok=True)
+        session.error(f"cr-html exited with rc={rc}")
     staging.replace(final)
