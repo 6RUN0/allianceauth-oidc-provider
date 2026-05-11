@@ -667,15 +667,15 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
             msgs = check_oidc_iss_endpoint_when_bcl_enabled(None)
         self.assertEqual(msgs, [])
         # ``exc_info=True`` on the warning call attaches the
-        # traceback to the LogRecord. Mutated to False would emit
-        # the line without the traceback — observable via the
-        # ``exc_info`` attribute of the captured record (a tuple
-        # ``(type, value, tb)`` when ``exc_info=True``, ``None``
-        # otherwise).
-        self.assertIsNotNone(
+        # traceback to the LogRecord as a ``(type, value, tb)``
+        # tuple. ``exc_info=False`` leaves ``cap.records[0].exc_info``
+        # equal to ``False`` (NOT ``None``) — ``assertIsInstance``
+        # against ``tuple`` is the discriminating assertion.
+        self.assertIsInstance(
             cap.records[0].exc_info,
+            tuple,
             (
-                "WARNING log lacks exc_info — "
+                "WARNING log lacks exc_info tuple — "
                 "``ReplaceFalseWithTrue`` mutation on exc_info=True?"
             ),
         )

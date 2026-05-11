@@ -171,3 +171,102 @@ class TestValidatorClassCheck(TestCase):
             with self.assertRaises(SystemCheckError) as ctx:
                 call_command("check", stdout=out, stderr=out)
         self.assertIn("allianceauth_oidc.E003", str(ctx.exception))
+
+
+class TestChecksBootstrapPaths(TestCase):
+    """
+    Pin the ``except _BOOTSTRAP_EXCEPTIONS as exc:`` branches in
+    ``check_application_model`` and ``check_validator_class``.
+
+    Symmetric counterpart to the E001 bootstrap test in
+    ``test_back_channel_logout.py`` — these two checks carry the
+    same defensive catch + ``exc_info=True`` log. The catch lets
+    ``manage.py migrate`` invoke the checks before the app registry
+    is fully populated; narrowing it would block migration on its
+    own check call, and dropping ``exc_info=True`` would hide the
+    underlying error from operator logs.
+    """
+
+    def test_e002_bootstrap_lookup_error_yields_deferred_no_error(
+        self,
+    ) -> None:
+        from unittest import mock
+
+        from allianceauth_oidc.checks import check_application_model
+
+        with (
+            mock.patch(
+                "allianceauth_oidc.checks.apps.get_model",
+                side_effect=LookupError("App registry not ready"),
+            ),
+            override_settings(
+                OAUTH2_PROVIDER_APPLICATION_MODEL=(
+                    "allianceauth_oidc.AllianceAuthApplication"
+                )
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.checks", level="WARNING"
+            ) as cap,
+        ):
+            msgs = check_application_model(None)
+        self.assertEqual(msgs, [])
+        # ``exc_info=True`` populates ``LogRecord.exc_info`` with a
+        # ``(type, value, tb)`` tuple. ``exc_info=False`` leaves the
+        # attribute as ``False`` (NOT None), so the narrower
+        # ``assertIsInstance(..., tuple)`` is required to discriminate.
+        self.assertIsInstance(
+            cap.records[0].exc_info,
+            tuple,
+            "E002 deferred log lacks exc_info tuple — "
+            "ReplaceFalseWithTrue mutation?",
+        )
+
+    def test_e003_bootstrap_import_error_yields_deferred_no_error(
+        self,
+    ) -> None:
+        # ``check_validator_class`` reads through ``import_string``;
+        # patch it to raise an importable subset of
+        # ``_BOOTSTRAP_EXCEPTIONS``. ``ImportError`` is a member,
+        # so the catch must absorb it.
+        from unittest import mock
+
+        from allianceauth_oidc.checks import check_validator_class
+
+        cfg = _override_oauth2_provider(
+            OAUTH2_VALIDATOR_CLASS=(
+                "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"
+            ),
+        )
+        with (
+            mock.patch(
+                "allianceauth_oidc.checks.import_string",
+                side_effect=ImportError("module not ready"),
+            ),
+            override_settings(OAUTH2_PROVIDER=cfg),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.checks", level="WARNING"
+            ) as cap,
+        ):
+            msgs = check_validator_class(None)
+        # The check falls through and returns the E003 error message
+        # for "configured but not resolvable" — this is the
+        # documented "deferred" outcome that's actually [E003] when
+        # ``import_string`` fails but the setting was set. Compare
+        # with the in-source comment: ``return []`` is reached only
+        # after the bootstrap catch absorbs the exception. We
+        # observe that the WARNING log fired (catch was entered) —
+        # if narrowed to a non-matching exception type, the
+        # ``ImportError`` would have propagated out instead and
+        # ``assertLogs`` would fail.
+        self.assertTrue(
+            any("E003" in r.message for r in cap.records),
+            f"WARNING log missing for E003 bootstrap: {cap.output}",
+        )
+        self.assertIsInstance(
+            cap.records[0].exc_info,
+            tuple,
+            "E003 deferred log lacks exc_info tuple — "
+            "ReplaceFalseWithTrue mutation?",
+        )
+        # And the check returns [] (deferred), not a hard error.
+        self.assertEqual(msgs, [])
