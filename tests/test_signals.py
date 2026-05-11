@@ -355,3 +355,104 @@ class TestAuditReceiverErrorPath(SimpleTestCase):
                 token=BoomToken(),  # type: ignore[arg-type]
                 body=None,
             )
+
+
+class TestSignalsKillMutants(SimpleTestCase):
+    """
+    Surface tests for the surviving cosmic-ray mutants in
+    ``allianceauth_oidc/signals.py``.
+
+    * ``Signal(use_caching=True)`` on ``oidc_token_issued`` —
+      mirror of the existing AC-7 / AC-10 pins on
+      ``oidc_logout_required`` / ``oidc_logout_dispatched``. Same
+      ``ReplaceTrueWithFalse`` mutant, same kill technique.
+
+    * Inside ``audit_oidc_token_issued`` the line
+      ``meta = {k: v for k, v in meta.items() if v is not None}
+      or None`` carries two mutants on one expression:
+      - ``v is not None`` -> ``v is None``: keeps None-valued
+        fields and drops real values; the test below pins both
+        directions.
+      - ``... or None`` -> ``... and None``: ``and`` would collapse
+        every non-empty dict to ``None`` (truthy short-circuit
+        flipped); pinned by the populated-dict test below.
+    """
+
+    def test_oidc_token_issued_signal_uses_caching(self):
+        # AC-7 mirror: ``use_caching=True`` lets Django cache the
+        # receiver list — important for hot signal paths like the
+        # token endpoint. Mutation ``ReplaceTrueWithFalse`` would
+        # silently disable the cache and let every send walk the
+        # receiver registry.
+        self.assertTrue(oidc_token_issued.use_caching)
+
+    def test_audit_meta_filters_none_values_keeping_real_values(self):
+        # The comprehension ``{k: v for k, v in meta.items() if v
+        # is not None}`` keeps fields with values and drops Nones.
+        # Combined with the ``or None`` fallback (next test),
+        # ``meta`` ends up as ``None`` when EVERY field was None,
+        # and a dict containing ONLY the non-None fields otherwise.
+        #
+        # Pin both: a body where ``grant_type`` carries a value
+        # and ``scope`` is None must yield a meta dict containing
+        # ``grant_type`` but NOT ``scope``.
+        from types import SimpleNamespace
+        from unittest import mock
+
+        token = SimpleNamespace(
+            application=SimpleNamespace(client_id="cid", id=1),
+            user=SimpleNamespace(id=2, username="u"),
+            scope="openid",
+        )
+        body = {
+            "grant_type": "authorization_code",
+            "scope": None,  # explicitly None — must be filtered out
+        }
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.signals", level="INFO"
+        ) as cap:
+            audit_oidc_token_issued(
+                sender=None,
+                request=mock.MagicMock(),
+                token=token,  # type: ignore[arg-type]
+                body=body,  # type: ignore[arg-type]
+            )
+        # Log emits ``meta=`` followed by the dict repr. The
+        # filtered dict contains only ``grant_type``.
+        joined = "\n".join(cap.output)
+        self.assertIn("'grant_type': 'authorization_code'", joined)
+        # ``scope`` must NOT appear inside the ``meta`` dict
+        # (it appears as a token attribute earlier in the line —
+        # constrain the match to the ``meta=`` segment).
+        meta_segment = joined.split("meta=", 1)[1]
+        self.assertNotIn("'scope'", meta_segment)
+
+    def test_audit_meta_collapses_empty_dict_to_none(self):
+        # Both fields None ⇒ filtered dict is empty ⇒
+        # ``{} or None`` evaluates to None. ``or`` flipped to
+        # ``and`` would short-circuit on the falsy empty dict and
+        # return ``{}`` instead — observable as ``meta={}`` in the
+        # log line.
+        from types import SimpleNamespace
+        from unittest import mock
+
+        token = SimpleNamespace(
+            application=SimpleNamespace(client_id="cid", id=1),
+            user=SimpleNamespace(id=2, username="u"),
+            scope="openid",
+        )
+        body = {"grant_type": None, "scope": None}
+        with self.assertLogs(
+            "extensions.allianceauth_oidc.signals", level="INFO"
+        ) as cap:
+            audit_oidc_token_issued(
+                sender=None,
+                request=mock.MagicMock(),
+                token=token,  # type: ignore[arg-type]
+                body=body,  # type: ignore[arg-type]
+            )
+        joined = "\n".join(cap.output)
+        # ``meta=None`` per the ``or None`` short-circuit; with
+        # ``and None`` the log would render ``meta={}``.
+        self.assertIn("meta=None", joined)
+        self.assertNotIn("meta={}", joined)
