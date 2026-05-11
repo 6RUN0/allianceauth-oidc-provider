@@ -98,6 +98,15 @@ def mutation(session: nox.Session) -> None:
         "cosmic-ray.toml",
         session_file,
     )
+    # PEP 604 union annotations (``X | Y``) parse as ``BinOp(BitOr())``
+    # in the AST and would be mutated like ordinary binary operators.
+    # Under ``from __future__ import annotations`` (in use across the
+    # package), the annotation never runs and the mutant survives
+    # trivially — pure noise that hides real test gaps. The filter
+    # marks those mutants as ``SKIPPED`` before ``exec`` runs them.
+    # See ``_nox/cr_filter_annotations.py`` for the AST scan and
+    # ``docs/mutation-testing.md`` for the rationale.
+    session.run("python", "_nox/cr_filter_annotations.py", session_file)
     # ``exec`` runs the full queue. Exit code is nonzero if any
     # mutant survived — that is the diagnostic signal we want to
     # surface, NOT a session failure. ``success_codes`` accepts the

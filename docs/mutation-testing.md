@@ -44,10 +44,19 @@ Internally this:
 
 1. `cosmic-ray init cosmic-ray.toml mutation.sqlite` — seeds the
    work-queue with one mutant per AST mutation site.
-2. `cosmic-ray exec cosmic-ray.toml mutation.sqlite` — drains the
+2. `python _nox/cr_filter_annotations.py mutation.sqlite` —
+   marks `BinOp(BitOr)` mutants inside PEP 604 type annotations
+   (`int | None`, `def f() -> bool | None:` etc.) as `SKIPPED`.
+   Under `from __future__ import annotations` the union is stored
+   as a string and never evaluated, so `int | None` → `int + None`
+   produces equivalent code; counting these as survivors drops
+   the effective score from ~76% to a misleading ~52% and masks
+   real test gaps. See *Annotation filter* below for the
+   correctness argument.
+3. `cosmic-ray exec cosmic-ray.toml mutation.sqlite` — drains the
    queue, runs the test command for each mutant, and records the
    verdict.
-3. `cr-report mutation.sqlite` — prints the killed / survived /
+4. `cr-report mutation.sqlite` — prints the killed / survived /
    timed-out tally.
 
 Render the HTML survivor browser:
@@ -206,6 +215,67 @@ Edit `cosmic-ray.toml::module-path` to widen the root, or trim
 - `apps.py` / `__init__.py` — module-loader scaffolding.
 - `urls.py` — URL routing table; few testable mutations.
 - `tests/` — never mutate the tests themselves.
+
+---
+
+## Annotation filter
+
+Cosmic-ray's AST-based mutators treat PEP 604 type unions
+(`int | None`, `def f(x: User | None) -> bool | None:`) as ordinary
+`BinOp(BitOr())` nodes and emit one mutation per variant
+(`BitOr→Add`, `BitOr→Sub`, …) — eleven mutants per `|`. Under
+`from __future__ import annotations` (in use across every module),
+annotations are stored as strings at runtime and never evaluated;
+the mutation has no observable effect and the mutant always
+survives. With ~50 annotated signatures in the package, this
+single class of mutants accounts for roughly 65% of the survivor
+population and shifts the reported mutation score from a truthful
+~76% to a misleading ~52%.
+
+`_nox/cr_filter_annotations.py` is invoked between `cosmic-ray
+init` and `cosmic-ray exec`. It parses each mutated module's AST,
+collects the `(lineno, column)` of every `BinOp` lying inside an
+annotation context (`FunctionDef.returns`, arg annotations,
+`AnnAssign.annotation`, including nested forms like
+`list[int | None]`), and marks matching pending mutants as
+`WorkerOutcome.SKIPPED`. They are listed under `skipped` in
+`cr-report` and excluded from the kill/survive ratio.
+
+Correctness boundaries the filter respects:
+
+- **Expression-level `|` is *not* filtered.** Real bitwise OR like
+  `os.O_WRONLY | os.O_CREAT | os.O_EXCL` in `oidc_jwks_rotate` is
+  outside any annotation context. Its `BitOr→Add`, `BitOr→Mod`,
+  etc. mutants remain in the queue and must still be killed by
+  tests. Equivalent mutants on POSIX-flag composition
+  (`O_WRONLY + O_CREAT == O_WRONLY | O_CREAT` because the flags
+  are bit-disjoint) are reported as plain survivors; that is the
+  signal that the test should assert flag *behaviour* (e.g.
+  attempting to overwrite an existing file fails because `O_EXCL`
+  is set) rather than the mask value.
+- **Operator-centric coordinates.** Cosmic-ray records mutation
+  positions at the column of the operator token (`|`), not the
+  start of the BinOp expression. The filter recovers the operator
+  column by locating `|` in the source between
+  `left.end_col_offset` and `right.col_offset`, which is robust to
+  any surrounding whitespace.
+- **No-op on a completed session.** `pending_work_items` is empty
+  after `exec`, so re-running the filter never alters recorded
+  verdicts.
+
+If `from __future__ import annotations` is ever removed from a
+module, the assumption breaks: PEP 604 unions on assignments
+(`x: int | None = None` at module scope, function default values
+with annotated parameters) get evaluated at import / call time,
+and a mutated `int + None` raises `TypeError` — which an import
+test *would* kill. Drop the future-import only when you have
+confirmed that test coverage exercises the import path.
+
+The filter has unit-test coverage in
+`tests/test_cr_filter_annotations.py`. The critical regression to
+guard against is a column-off-by-N — symptom: filter reports
+"Skipped 0 / N" on a fresh session, leaving the queue full of
+noise.
 
 ---
 
