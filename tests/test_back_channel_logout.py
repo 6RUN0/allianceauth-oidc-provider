@@ -567,6 +567,46 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
         msgs = check_oidc_iss_endpoint_when_bcl_enabled(None)
         self.assertEqual(msgs, [])
 
+    def test_bootstrap_lookup_error_yields_deferred_no_error(self) -> None:
+        # Pin ``except _BOOTSTRAP_EXCEPTIONS`` against
+        # ``ExceptionReplacer``. The catch handles the bootstrap
+        # case where ``apps.get_model`` raises before migrations
+        # run; narrowing the catch (e.g. dropping ``LookupError``)
+        # would let migration itself crash on its own check call.
+        # No existing test simulates this — bootstrap state is hard
+        # to reach naturally inside a test that runs after migrate.
+        from allianceauth_oidc.checks import (
+            check_oidc_iss_endpoint_when_bcl_enabled,
+        )
+
+        # Patch ``apps.get_model`` to raise the canonical bootstrap
+        # exception. The check must return ``[]`` (deferred) and
+        # emit a WARNING log; raising would propagate to migrate.
+        with (
+            mock.patch(
+                "allianceauth_oidc.checks.apps.get_model",
+                side_effect=LookupError("App registry not ready"),
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.checks", level="WARNING"
+            ) as cap,
+        ):
+            msgs = check_oidc_iss_endpoint_when_bcl_enabled(None)
+        self.assertEqual(msgs, [])
+        # ``exc_info=True`` on the warning call attaches the
+        # traceback to the LogRecord. Mutated to False would emit
+        # the line without the traceback — observable via the
+        # ``exc_info`` attribute of the captured record (a tuple
+        # ``(type, value, tb)`` when ``exc_info=True``, ``None``
+        # otherwise).
+        self.assertIsNotNone(
+            cap.records[0].exc_info,
+            (
+                "WARNING log lacks exc_info — "
+                "``ReplaceFalseWithTrue`` mutation on exc_info=True?"
+            ),
+        )
+
 
 class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
     """
