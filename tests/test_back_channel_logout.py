@@ -2667,3 +2667,153 @@ class TestLogoutHelperBoundaries(OIDCTestCase):
         actual = _active_signing_kid()
         key = _resolve_signing_key(actual)
         self.assertEqual(actual, str(key.thumbprint()))
+
+
+class TestReceiverBoundaries(OIDCTestCase):
+    """
+    Boundary coverage for ``allianceauth_oidc.receivers``.
+
+    Three groups of surviving cosmic-ray mutants:
+
+    * ``on_user_pre_save`` wraps the prior-row fetch in
+      ``try / except sender.DoesNotExist``. The existing tests
+      always save against an existing user, so the catch never
+      fires. ``ExceptionReplacer`` narrowing the catch to e.g.
+      ``LookupError`` would let DoesNotExist propagate into the
+      pre_save signal handler and break legitimate saves.
+
+    * ``on_user_post_save``'s ``was_active == bool(instance.is_active)``
+      guard is exercised end-to-end via the deactivation flow, but
+      no test specifically pins the EQUAL branch (transition was
+      observed but no value flip). Mutating ``==`` to ``<=`` /
+      ``<`` / ``is`` would silently fire ``user_deactivated``
+      on every post_save where ``was_active`` happened to match
+      ``is_active`` (a no-op save).
+
+    * ``record_backchannel_logout_attempt`` casts ``user_pk`` to
+      int with ``try / except (TypeError, ValueError)``. The
+      existing tests cover ``None`` (skips the cast) and ints
+      (succeeds); a non-numeric string (``"abc"``) is the only
+      input that exercises the exception handler. ``ExceptionReplacer``
+      narrowing the catch would let ``int("abc")`` propagate into
+      the receiver and crash the dispatcher's signal send.
+    """
+
+    def test_pre_save_user_not_in_db_sets_was_active_none(self) -> None:
+        # ``on_user_pre_save`` reads the persisted row to snapshot
+        # ``is_active`` before the save. If the row vanished between
+        # then and now (race window, manual DELETE), the
+        # ``DoesNotExist`` branch must set
+        # ``_allianceauth_oidc_was_active = None``. Narrowing the
+        # catch silently re-raises.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.receivers import on_user_pre_save
+
+        # ``SimpleNamespace`` instance with a pk that no real row
+        # carries forces ``sender.objects.get(pk=...)`` to raise.
+        # Use a real User model as ``sender`` so the typed ``.objects``
+        # manager is wired correctly; the actual user row is wiped.
+        User = type(self.user1)
+        ghost_pk = 9_999_999_999
+        # Confirm pk is truly absent.
+        self.assertFalse(User.objects.filter(pk=ghost_pk).exists())
+        instance = SimpleNamespace(pk=ghost_pk)
+        on_user_pre_save(sender=User, instance=instance)
+        self.assertIsNone(instance._allianceauth_oidc_was_active)
+
+    def test_post_save_no_transition_does_not_dispatch(self) -> None:
+        # Pin ``was_active == bool(is_active)`` on the EQUAL branch:
+        # a save that does not flip ``is_active`` MUST NOT fire
+        # ``user_deactivated``. ``Eq_LtE`` / ``Eq_Lt`` flips would
+        # change the guard's truthy region (e.g. ``True <= False`` is
+        # False but ``True == False`` is False — agree here) but the
+        # ``Eq_Is`` mutant survives by accident on intern-of-True,
+        # so we test both the True→True and False→False shapes.
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.receivers import on_user_post_save
+
+        # We can't easily run apps_with_active_tokens against the
+        # synthetic instance; intercept it at the import point.
+        with mock.patch(
+            "allianceauth_oidc.receivers.apps_with_active_tokens"
+        ) as get_apps:
+            for active in (True, False):
+                with self.subTest(active=active):
+                    instance = SimpleNamespace(
+                        _allianceauth_oidc_was_active=active,
+                        is_active=active,
+                    )
+                    on_user_post_save(
+                        sender=type(self.user1),
+                        instance=instance,
+                        created=False,
+                    )
+            # No dispatch path is reached; the apps_with_active_tokens
+            # call gates the signal.send loop.
+            get_apps.assert_not_called()
+
+    def test_post_save_true_to_false_transition_dispatches(self) -> None:
+        # Companion of the above: pin the actual transition path so
+        # the EQUAL test cannot collapse to "never dispatch". The
+        # ``==`` operator on the boundary must distinguish equal
+        # from non-equal Boolean pairs.
+        from types import SimpleNamespace
+        from unittest import mock as _mock
+
+        from allianceauth_oidc.receivers import on_user_post_save
+
+        instance = SimpleNamespace(
+            _allianceauth_oidc_was_active=True,
+            is_active=False,
+        )
+        # Stub the active-tokens lookup and the signal so the
+        # receiver's flow remains observable without a real DB.
+        with (
+            mock.patch(
+                "allianceauth_oidc.receivers.apps_with_active_tokens",
+                return_value=[_mock.MagicMock(pk=1)],
+            ),
+            mock.patch(
+                "allianceauth_oidc.receivers.oidc_logout_required.send"
+            ) as send,
+        ):
+            on_user_post_save(
+                sender=type(self.user1), instance=instance, created=False
+            )
+        send.assert_called_once()
+        self.assertEqual("user_deactivated", send.call_args.kwargs["reason"])
+
+    def test_record_attempt_user_pk_non_castable_string_persisted_as_null(
+        self,
+    ) -> None:
+        # ``int("not-a-number")`` raises ``ValueError`` (a member of
+        # the ``(TypeError, ValueError)`` tuple). The receiver must
+        # catch it and persist ``user_pk=None``. ``ExceptionReplacer``
+        # narrowing the catch to only ``TypeError`` would let the
+        # ValueError escape and crash the dispatcher.
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+        from allianceauth_oidc.receivers import (
+            record_backchannel_logout_attempt,
+        )
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        BackChannelLogoutAttempt.objects.all().delete()
+        # Pass a string that ``int()`` rejects with ValueError.
+        record_backchannel_logout_attempt(
+            sender=object,
+            application=creds.app,
+            user_pk="not-a-number",
+            jti="44444444" * 4,
+            success=False,
+            attempt_count=1,
+            reason="rp_client_error",
+        )
+        row = BackChannelLogoutAttempt.objects.get()
+        # The cast failure must NOT poison the row — ``user_pk`` is
+        # normalised to None per the receiver's docstring contract.
+        self.assertIsNone(row.user_pk)
