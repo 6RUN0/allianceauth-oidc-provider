@@ -11,7 +11,9 @@ gate rules have their own coverage in the HTTP-level
 ``test_authorize`` suite.
 """
 
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
+from unittest import mock
 
 from django.db import connection
 from django.test import SimpleTestCase
@@ -20,8 +22,13 @@ from django.test.utils import CaptureQueriesContext
 from allianceauth_oidc.security import (
     AccessPolicy,
     AllowedDecision,
+    AppDeny,
+    AppLike,
     DenyReason,
     GlobalDeny,
+    OAuthRequestLike,
+    TokenLike,
+    UserLike,
 )
 
 from ._factories import make_app
@@ -233,3 +240,359 @@ class TestSettingsWiring(OIDCTestCase):
         from allianceauth_oidc.pkce import per_app_pkce_required
 
         self.assertIs(oauth2_settings.PKCE_REQUIRED, per_app_pkce_required)
+
+
+class TestAccessDecisionStructuralInvariants(SimpleTestCase):
+    """
+    Pin the structural invariants of the three AccessDecision dataclasses.
+
+    Without these tests, mutating ``frozen=True``, ``slots=True``,
+    ``init=False`` or the ``field(default=True/False, init=False)``
+    defaults all survive the suite: every consumer reads
+    ``decision.allowed``, but no existing test asserts the
+    constructor-set invariants themselves. Cosmic-ray spots that
+    gap immediately.
+
+    Each dataclass advertises three guarantees the rest of the
+    codebase relies on: the boolean ``allowed`` is fixed at class
+    level (not constructor-overridable), the instance is frozen
+    (downstream code can pass decisions around as value objects),
+    and ``slots=True`` keeps the type cheap and forbids stray
+    attribute assignment.
+    """
+
+    @staticmethod
+    def _stub_app():
+        return SimpleNamespace(name="stub")
+
+    # ---- AllowedDecision ------------------------------------------
+
+    def test_allowed_decision_pins_allowed_true(self):
+        # field(default=True): if a mutation flips the default to
+        # ``False`` an "allowed" decision would still report
+        # ``allowed=False``, silently letting denial branches reject
+        # legitimate access.
+        self.assertIs(True, AllowedDecision(app=self._stub_app()).allowed)
+
+    def test_allowed_decision_pins_deny_reason_none(self):
+        # ``init=False`` on deny_reason: constructor must NOT accept
+        # an override. The flip-side flow (caller hand-rolling
+        # ``AllowedDecision(deny_reason=GLOBAL)``) would create an
+        # incoherent decision; the type forbids it by design.
+        self.assertIsNone(AllowedDecision(app=self._stub_app()).deny_reason)
+
+    def test_allowed_decision_rejects_allowed_kwarg(self):
+        # init=False ⇒ TypeError on ``allowed=...`` to __init__.
+        with self.assertRaises(TypeError):
+            AllowedDecision(app=self._stub_app(), allowed=False)  # type: ignore[call-arg]
+
+    def test_allowed_decision_rejects_deny_reason_kwarg(self):
+        with self.assertRaises(TypeError):
+            AllowedDecision(
+                app=self._stub_app(),
+                deny_reason=DenyReason.GLOBAL,  # type: ignore[call-arg]
+            )
+
+    def test_allowed_decision_is_frozen(self):
+        # frozen=True: any field write after construction must raise.
+        # Removing the decorator or flipping ``frozen=True`` to
+        # ``False`` allows in-place mutation and breaks the
+        # "decisions are values, not state" contract validators rely
+        # on.
+        decision = AllowedDecision(app=self._stub_app())
+        with self.assertRaises(FrozenInstanceError):
+            decision.app = None  # type: ignore[misc]
+
+    def test_allowed_decision_uses_slots(self):
+        # slots=True: instance has no __dict__. Mutating slots=True
+        # to False would silently let downstream code attach random
+        # attributes to a decision and rely on them.
+        self.assertFalse(
+            hasattr(AllowedDecision(app=self._stub_app()), "__dict__")
+        )
+
+    # ---- GlobalDeny -----------------------------------------------
+
+    def test_global_deny_pins_allowed_false(self):
+        self.assertIs(False, GlobalDeny().allowed)
+
+    def test_global_deny_pins_deny_reason_global(self):
+        self.assertIs(DenyReason.GLOBAL, GlobalDeny().deny_reason)
+
+    def test_global_deny_pins_app_none(self):
+        # Anti-enumeration: GlobalDeny.app must be None so the
+        # renderer cannot distinguish "client exists, you lack perm"
+        # from "client does not exist". Mutating the field default
+        # would re-introduce the leak.
+        self.assertIsNone(GlobalDeny().app)
+
+    def test_global_deny_rejects_allowed_kwarg(self):
+        with self.assertRaises(TypeError):
+            GlobalDeny(allowed=True)  # type: ignore[call-arg]
+
+    def test_global_deny_rejects_app_kwarg(self):
+        with self.assertRaises(TypeError):
+            GlobalDeny(app=self._stub_app())  # type: ignore[call-arg]
+
+    def test_global_deny_is_frozen(self):
+        with self.assertRaises(FrozenInstanceError):
+            GlobalDeny().app = SimpleNamespace()  # type: ignore[misc]
+
+    def test_global_deny_uses_slots(self):
+        self.assertFalse(hasattr(GlobalDeny(), "__dict__"))
+
+    # ---- AppDeny --------------------------------------------------
+
+    def test_app_deny_pins_allowed_false(self):
+        self.assertIs(False, AppDeny(app=self._stub_app()).allowed)
+
+    def test_app_deny_pins_deny_reason_app(self):
+        self.assertIs(
+            DenyReason.APP, AppDeny(app=self._stub_app()).deny_reason
+        )
+
+    def test_app_deny_echoes_app(self):
+        # Symmetry with AllowedDecision: AppDeny carries the
+        # offending app so the renderer can show its name. The
+        # ``app`` field IS init=True (no default), unlike the
+        # allowed/deny_reason pair.
+        app = self._stub_app()
+        self.assertIs(app, AppDeny(app=app).app)
+
+    def test_app_deny_rejects_allowed_kwarg(self):
+        with self.assertRaises(TypeError):
+            AppDeny(app=self._stub_app(), allowed=True)  # type: ignore[call-arg]
+
+    def test_app_deny_is_frozen(self):
+        decision = AppDeny(app=self._stub_app())
+        with self.assertRaises(FrozenInstanceError):
+            decision.app = None  # type: ignore[misc]
+
+    def test_app_deny_uses_slots(self):
+        self.assertFalse(hasattr(AppDeny(app=self._stub_app()), "__dict__"))
+
+
+class TestAccessPolicyStructure(SimpleTestCase):
+    """
+    ``AccessPolicy`` itself is a ``@dataclass(frozen=True, slots=True)``.
+
+    Three orthogonal invariants worth pinning, all flagged as
+    surviving cosmic-ray mutants when only the decision-paths were
+    tested:
+
+    1. The class is a dataclass at all (``RemoveDecorator`` survives
+       if no test exercises a dataclass-specific behaviour like
+       ``replace()`` or hash-by-value).
+    2. ``frozen=True`` — instances are immutable, so callers can
+       share decisions across threads without defensive copies.
+    3. ``slots=True`` — instances have no ``__dict__``, so a typo'd
+       attribute assignment fails loudly rather than silently shadowing.
+    """
+
+    def test_policy_is_frozen(self):
+        policy = AccessPolicy()
+        with self.assertRaises(FrozenInstanceError):
+            policy.log = mock.Mock()  # type: ignore[misc]
+
+    def test_policy_uses_slots(self):
+        self.assertFalse(hasattr(AccessPolicy(), "__dict__"))
+
+    def test_policy_equality_by_value(self):
+        # Two instances built with the same injected log are equal.
+        # Removing @dataclass strips the value-equality
+        # implementation and equality falls back to ``id``-based
+        # identity, breaking ``policy_a == policy_b``.
+        shared_log = mock.Mock()
+        self.assertEqual(
+            AccessPolicy(log=shared_log), AccessPolicy(log=shared_log)
+        )
+
+
+class TestProtocolsAreRuntimeCheckable(SimpleTestCase):
+    """
+    The four ``@runtime_checkable`` Protocols enable ``isinstance``
+    probes at policy boundaries (the module docstring documents the
+    contract explicitly). Without an actual ``isinstance`` call in
+    the suite, ``RemoveDecorator`` mutants on those four classes
+    survive because the Protocol class works either way at static
+    type-checking time — only the runtime check distinguishes them.
+    """
+
+    def test_userlike_is_runtime_checkable(self):
+        # ``UserLike`` also requires a callable ``has_perm`` —
+        # ``SimpleNamespace`` doesn't auto-add methods, so wire a
+        # lambda explicitly.
+        user_stub = SimpleNamespace(
+            is_authenticated=True,
+            is_superuser=False,
+            has_perm=lambda perm: False,
+        )
+        # ``isinstance(x, Protocol)`` raises TypeError unless the
+        # Protocol carries ``@runtime_checkable``; the assertion
+        # succeeding == decorator is present.
+        self.assertIsInstance(user_stub, UserLike)
+
+    def test_applike_is_runtime_checkable(self):
+        app_stub = SimpleNamespace(
+            states=mock.Mock(),
+            groups=mock.Mock(),
+            debug_mode=False,
+            pkce_required=True,
+            access_token_format="opaque",
+        )
+        self.assertIsInstance(app_stub, AppLike)
+
+    def test_tokenlike_is_runtime_checkable(self):
+        token_stub = SimpleNamespace(
+            application=None, user=None, id=1, scope="openid"
+        )
+        self.assertIsInstance(token_stub, TokenLike)
+
+    def test_oauthrequestlike_is_runtime_checkable(self):
+        request_stub = SimpleNamespace(
+            user=None,
+            client=None,
+            application=None,
+            POST={},
+        )
+        self.assertIsInstance(request_stub, OAuthRequestLike)
+
+
+class TestIsSuperuserDefault(SimpleTestCase):
+    """
+    ``AccessPolicy.is_superuser`` reads ``user.is_superuser`` with a
+    safe-by-default of ``False`` for missing attributes. Mutating
+    that ``False`` default to ``True`` (cosmic-ray's
+    ``ReplaceFalseWithTrue``) would silently grant superuser
+    privilege to any object that doesn't expose the attribute —
+    e.g. an unauthenticated stub or a malformed mock.
+    """
+
+    def test_user_without_is_superuser_attr_is_not_superuser(self):
+        # ``object()`` has no ``is_superuser``; ``getattr(..., False)``
+        # falls back to False. Flipping the default lets the function
+        # return True for any attribute-less object.
+        self.assertFalse(AccessPolicy.is_superuser(object()))
+
+
+class TestAccessTokenFormatComparison(SimpleTestCase):
+    """
+    The per-app override compares against the literal strings
+    ``"jwt"`` and ``"opaque"`` using ``==``. Cosmic-ray emits a
+    ``ReplaceComparisonOperator_Eq_Is`` mutation that swaps ``==``
+    for ``is``. For string literals embedded in source code CPython
+    typically interns them and ``is`` happens to return the same
+    truth value, masking the mutation.
+
+    Forcing the comparison to run against a **non-interned** value
+    (built at runtime via concatenation) distinguishes the two
+    operators: ``==`` returns True (same characters), ``is`` returns
+    False (different object identity). The mutation now produces an
+    observable behaviour change and is killed.
+    """
+
+    @staticmethod
+    def _non_interned(literal: str) -> str:
+        # Concatenating two halves of a literal at runtime yields a
+        # fresh string object, defeating CPython's compile-time
+        # interning of literal constants.
+        half = len(literal) // 2
+        return literal[:half] + literal[half:]
+
+    def test_per_app_jwt_via_non_interned_string(self):
+        app = SimpleNamespace(access_token_format=self._non_interned("jwt"))
+        self.assertEqual("jwt", AccessPolicy().access_token_format(app))
+
+    def test_per_app_opaque_via_non_interned_string(self):
+        app = SimpleNamespace(access_token_format=self._non_interned("opaque"))
+        self.assertEqual("opaque", AccessPolicy().access_token_format(app))
+
+    def test_global_default_jwt_via_non_interned_string(self):
+        # Force the fallthrough to the OAUTH2_PROVIDER global default.
+        # ``app=None`` skips the per-app override, leaving the
+        # ``global_default == "jwt"`` comparison on the global path
+        # as the only ``Eq_Is`` mutation site that matters.
+        from django.test.utils import override_settings
+
+        with override_settings(
+            OAUTH2_PROVIDER={
+                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": self._non_interned(
+                    "jwt"
+                ),
+            }
+        ):
+            self.assertEqual("jwt", AccessPolicy().access_token_format(None))
+
+
+class TestCheckAppGuards(SimpleTestCase):
+    """
+    Boolean guards inside ``AccessPolicy._check_app`` that survive otherwise.
+
+    * ``if app_states_mgr is None or app_groups_mgr is None:`` —
+      flipping ``or`` to ``and`` lets a half-broken app object slip
+      through (one manager present, one missing → AttributeError
+      downstream). The defensive guard must reject both shapes.
+
+    * The default of ``getattr(app, "debug_mode", False)`` — flipping
+      to ``True`` silently turns debug logging on for any
+      attribute-less application. The default behaviour must stay
+      "quiet unless explicitly opted-in".
+    """
+
+    def test_app_missing_states_manager_is_denied(self):
+        # Mutation ``or → and`` would let this pass (one is non-None
+        # via the groups manager). The guard must trip.
+        from django.core.exceptions import PermissionDenied
+
+        app = SimpleNamespace(
+            states=None,
+            groups=mock.Mock(),
+            debug_mode=False,
+        )
+        user = SimpleNamespace(is_superuser=False)
+        with self.assertRaises(PermissionDenied):
+            AccessPolicy()._check_app(user, app)
+
+    def test_app_missing_groups_manager_is_denied(self):
+        # Symmetric: ``states`` present, ``groups`` missing.
+        from django.core.exceptions import PermissionDenied
+
+        app = SimpleNamespace(
+            states=mock.Mock(),
+            groups=None,
+            debug_mode=False,
+        )
+        user = SimpleNamespace(is_superuser=False)
+        with self.assertRaises(PermissionDenied):
+            AccessPolicy()._check_app(user, app)
+
+    def test_debug_mode_default_silences_log_when_attr_absent(self):
+        # With debug_mode missing from the app object, the
+        # ``getattr(app, "debug_mode", False)`` default keeps logging
+        # silent. Mutating the default to True would flip the
+        # STATE/GROUP info lines on for every app without the
+        # explicit attribute — exactly the regression we're guarding
+        # against.
+        from django.core.exceptions import PermissionDenied
+
+        state_obj = SimpleNamespace(pk=1, name="Blue")
+        states_qs = mock.Mock()
+        states_qs.all.return_value = [state_obj]
+        groups_qs = mock.Mock()
+        groups_qs.all.return_value = []
+        app = SimpleNamespace(
+            states=states_qs,
+            groups=groups_qs,
+            # no debug_mode attribute — getattr default applies
+        )
+        user = SimpleNamespace(
+            is_superuser=False,
+            profile=SimpleNamespace(state=SimpleNamespace(pk=999)),
+            groups=mock.Mock(all=list),
+        )
+        captured_log = mock.Mock()
+        captured_log.isEnabledFor.return_value = True
+        policy_with_log = AccessPolicy(log=captured_log)
+        with self.assertRaises(PermissionDenied):
+            policy_with_log._check_app(user, app)
+        captured_log.info.assert_not_called()
