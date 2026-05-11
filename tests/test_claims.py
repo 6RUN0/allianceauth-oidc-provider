@@ -405,6 +405,29 @@ class TestGroupsClaim(SimpleTestCase):
             out = builder.build()
         self.assertEqual(["a", "b"], out["groups"])
 
+    def test_groups_at_exact_cap_not_truncated_no_warning(self):
+        # Pin ``>`` against ``>=`` (and ``Gt_*`` family) on the cap
+        # check ``if len(groups_list) > self.max_groups:``.
+        #
+        # ``test_oversized_groups_truncated_with_warning`` covers 300
+        # vs cap 256 — both ``>`` and ``>=`` are True for that input.
+        # ``test_custom_cap_honoured`` covers 3 vs cap 2 — same: both
+        # operators agree. The boundary ``len == cap`` is the only
+        # input where the two disagree (``>`` False = keep,
+        # ``>=`` True = truncate / warn).
+        names = [f"g{i:04d}" for i in range(2)]  # exactly 2 groups
+        builder = ClaimsBuilder(
+            user=_user(group_names=names, state_name=None),
+            settings=_settings(),
+            max_groups=2,
+        )
+        with self.assertNoLogs(
+            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+        ):
+            out = builder.build()
+        # All groups kept (no truncation, no state-append).
+        self.assertEqual(names, out["groups"])
+
 
 class TestLocaleClaim(SimpleTestCase):
     def test_omitted_when_blank(self):
