@@ -294,6 +294,28 @@ class TokenView(OAuthLibMixin, View):
         return response
 
 
+class _ForceConsentRequired(Exception):  # noqa: N818
+    """
+    Sentinel raised from
+    :meth:`AuthAuthorizationView.create_authorization_response`
+    when ``prompt=consent`` is in the request and DOT is about to
+    fast-path past the consent screen.
+
+    OIDC Core 1.0 §3.1.2.1 mandates that ``prompt=consent`` force
+    the consent prompt even when the AS would otherwise auto-approve
+    (operator's ``skip_authorization=True``, or the user already
+    granted consent for the requested scopes). DOT funnels both
+    fast paths through ``create_authorization_response(allow=True)``;
+    raising this sentinel there propagates out of DOT's
+    ``except OAuthToolkitError`` (it only catches OAuthToolkit
+    errors) and is caught one frame up in
+    :meth:`AuthAuthorizationView.get`, which re-routes to the
+    consent-form render path. No suffix ``Error`` because this is a
+    control-flow signal, not an error condition — ``noqa: N818``
+    silences the naming convention.
+    """
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class AuthAuthorizationView(AuthorizationView):
     """
@@ -549,6 +571,34 @@ class AuthAuthorizationView(AuthorizationView):
         encoded = query.urlencode()
         return f"{request.path}?{encoded}" if encoded else request.path
 
+    def create_authorization_response(
+        self,
+        request: Any,
+        scopes: Any,
+        credentials: Any,
+        allow: Any = True,
+    ) -> Any:
+        """
+        Pre-empt DOT's auto-approval on ``prompt=consent`` requests.
+
+        Both DOT auto-approve paths (``skip_authorization=True`` and
+        ``approval_prompt=auto`` + existing-token shortcut) funnel
+        through this method on the way to redirecting back to the
+        RP with a freshly minted code. We intercept on GET — i.e.
+        the initial authorize request, before the consent form has
+        been shown — and raise :class:`_ForceConsentRequired` so
+        :meth:`get` can re-route to the consent template. Sentinel
+        does NOT fire on POST (the user clicking "Allow" on the
+        consent form), so the post-consent flow still issues a
+        code normally.
+        """
+        prompts = str(self.request.GET.get("prompt") or "").split()
+        if "consent" in prompts and self.request.method == "GET":
+            raise _ForceConsentRequired()
+        return super().create_authorization_response(
+            request, scopes, credentials, allow
+        )
+
     def dispatch(
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponseBase:
@@ -646,6 +696,29 @@ class AuthAuthorizationView(AuthorizationView):
 
             case _:
                 assert_never(decision)
+
+    def get(
+        self, request: HttpRequest, *args: Any, **kwargs: Any
+    ) -> HttpResponseBase:
+        """
+        Catch :class:`_ForceConsentRequired` raised by our
+        ``create_authorization_response`` override and re-route to
+        the consent form.
+
+        DOT's ``AuthorizationView.get`` populates ``self.oauth2_data``
+        (the kwargs dict consumed by the consent template) BEFORE
+        invoking ``create_authorization_response``, so by the time
+        the sentinel propagates back here every piece of context the
+        render needs is already attached to ``self``. We simply
+        bypass DOT's redirect path and render the consent template
+        with the saved kwargs.
+        """
+        try:
+            return super().get(request, *args, **kwargs)
+        except _ForceConsentRequired:
+            return self.render_to_response(
+                self.get_context_data(**self.oauth2_data)
+            )
 
 
 # OIDC Discovery 1.0 §3 RECOMMENDED fields. ``grant_types_supported``

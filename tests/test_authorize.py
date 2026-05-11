@@ -993,3 +993,125 @@ class TestMaxAgeEnforcement(OIDCTestCase):
                 urlparse(loc).path,
                 f"unexpected redirect to login on malformed max_age: {loc}",
             )
+
+
+class TestPromptConsentEnforcement(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.1 ``prompt=consent`` enforcement.
+
+    The AS MUST prompt the End-User for consent before issuing a
+    code, even when:
+
+    1. The Application has ``skip_authorization=True`` (operator
+       trust marker — normally bypasses the consent screen).
+    2. The user already granted consent (a non-expired token
+       covers the requested scopes — DOT's
+       ``approval_prompt=auto`` fast path).
+
+    Both bypasses are suppressed by an override on
+    ``create_authorization_response`` raising a sentinel
+    exception that ``AuthAuthorizationView.get`` catches and
+    converts into a consent-form render. The post-submit
+    ``allow=true`` POST is unaffected (sentinel only fires on the
+    initial GET path), so the user's "Allow" click continues to
+    issue a code normally.
+    """
+
+    def test_prompt_consent_with_skip_authorization_renders_consent_form(
+        self,
+    ) -> None:
+        creds = make_app(
+            owner=self.user1, skip_authorization=True, pkce_required=False
+        )
+        self.grant_oidc_access(self.user1)
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="consent-skip-auth",
+            extra={"client_id": creds.client_id, "prompt": "consent"},
+        )
+        self.assertEqual(200, resp.status_code)
+        self.assertTemplateUsed(resp, "allianceauth_oidc/authorize.html")
+
+    def test_prompt_consent_with_prior_token_renders_consent_form(
+        self,
+    ) -> None:
+        """
+        Pre-existing access token covering the requested scopes
+        normally trips DOT's ``approval_prompt=auto`` short-circuit.
+        ``prompt=consent`` must override that and force the
+        consent screen anyway.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        self.grant_oidc_access(self.user1)
+        AccessToken = get_access_token_model()
+        AccessToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            token="prior-consent-token",  # nosec B106
+            expires=timezone.now() + timedelta(hours=1),
+            scope=SCOPE_OPENID,
+        )
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="consent-prior-token",
+            extra={"prompt": "consent"},
+        )
+        self.assertEqual(200, resp.status_code)
+        self.assertTemplateUsed(resp, "allianceauth_oidc/authorize.html")
+
+    def test_post_allow_after_consent_form_completes_normally(self) -> None:
+        """
+        Regression — once the user clicks "Allow" on the consent
+        form, the POST (``allow=true``) must NOT re-trigger the
+        sentinel and must issue a code redirect. Sentinel fires
+        only on GET; the consent-form submit is POST.
+        """
+        self.grant_oidc_access(self.user1)
+        data = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": "consent-allow",
+            "prompt": "consent",
+            "allow": True,
+        }
+        resp = self.authorize_post(self.user1, data=data)
+        _, path, qs = self.parse_redirect(resp, (302,))
+        # Redirect target is the RP's redirect_uri, not the login URL —
+        # the consent flow completed.
+        self.assertEqual("/redir/", path)
+        self.assertIn("code", qs)
+
+    def test_no_prompt_consent_with_skip_authorization_still_auto_approves(
+        self,
+    ) -> None:
+        """
+        Regression — without ``prompt=consent``, an app marked
+        ``skip_authorization=True`` must continue to auto-approve.
+        The override only fires on the explicit ``prompt=consent``
+        opt-in.
+        """
+        creds = make_app(
+            owner=self.user1, skip_authorization=True, pkce_required=False
+        )
+        self.grant_oidc_access(self.user1)
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="no-consent-skip-auth",
+            extra={"client_id": creds.client_id},
+        )
+        # Auto-approve redirects to the RP's redirect_uri with a code.
+        _, path, qs = self.parse_redirect(resp, (302,))
+        self.assertEqual("/redir/", path)
+        self.assertIn("code", qs)

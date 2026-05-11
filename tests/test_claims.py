@@ -92,6 +92,8 @@ def _main(
     alliance_id: int | None = None,
     alliance_name: str | None = None,
     alliance_ticker: str | None = None,
+    faction_id: int | None = None,
+    faction_name: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         character_id=character_id,
@@ -102,6 +104,8 @@ def _main(
         alliance_id=alliance_id,
         alliance_name=alliance_name,
         alliance_ticker=alliance_ticker,
+        faction_id=faction_id,
+        faction_name=faction_name,
     )
 
 
@@ -450,11 +454,12 @@ class TestEveClaims(SimpleTestCase):
         self.assertIn("custom_character_id", out)
         self.assertNotIn("eve_character_id", out)
 
-    def test_all_seven_fields_emitted_when_populated(self):
-        # Anti-drift test: the seven EVE claim names declared in
-        # ``_EVE_CLAIM_NAMES`` must all be reachable. If the tuple is
-        # extended without updating the EveCharacter accessor list,
-        # this test will surface the gap.
+    def test_every_eve_claim_name_is_reachable_via_builder(self):
+        # Anti-drift test: every EVE claim name declared in
+        # ``_EVE_CLAIM_NAMES`` must be reachable through the builder.
+        # If the tuple is extended without updating the EveCharacter
+        # accessor list or the ``_main`` test factory, this surfaces
+        # the gap as a missing key in the output dict.
         from allianceauth_oidc.auth_provider import _EVE_CLAIM_NAMES
 
         kwargs = {n: f"v_{n}" for n in _EVE_CLAIM_NAMES}

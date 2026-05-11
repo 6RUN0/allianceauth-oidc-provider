@@ -381,3 +381,130 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertIn("Member", groups)
         # No duplicates from accidental double-append.
         self.assertEqual(len(groups), len(set(groups)))
+
+
+class TestUserinfoEveDeltaClaims(OIDCTestCase):
+    """
+    Extended EVE-specific claim emission: ``main_character_id``
+    alias of ``character_id``, ``faction_id`` / ``faction_name``
+    when the character is a faction warfare pilot, and the
+    composite ``affiliation`` claim for one-shot RP reads.
+
+    All under the same ``eve_claim_scope`` (default ``profile``)
+    and ``eve_claim_prefix`` (default ``eve_``) as the existing
+    EVE claims, so RPs do not need a new scope to receive them.
+    """
+
+    def _userinfo(self, *, scope: str = SCOPE_PROFILE) -> dict:
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, scope=scope, state="eve-delta")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(200, resp.status_code)
+        return json.loads(resp.content.decode("utf-8"))
+
+    def test_main_character_id_alias_equals_character_id(self) -> None:
+        """
+        ``eve_main_character_id`` carries the same value as
+        ``eve_character_id``. RPs that expect the explicit
+        "main" naming receive it without preserving a separate
+        source of truth; both keys point at the user's
+        ``profile.main_character.character_id``.
+        """
+        info = self._userinfo()
+        self.assertEqual(
+            self.char1.character_id, info["eve_main_character_id"]
+        )
+        self.assertEqual(
+            info["eve_main_character_id"], info["eve_character_id"]
+        )
+
+    def test_faction_claims_emitted_when_character_has_faction(
+        self,
+    ) -> None:
+        """
+        EveCharacter carries ``faction_id`` / ``faction_name``
+        when the pilot is enlisted in faction warfare. Both
+        claims surface under the ``eve_`` prefix when set.
+        """
+        # FactionWarfare-style faction values — the actual IDs
+        # (500001-500004 in EVE Online) are not validated, the
+        # claim is emitted as-is from the EveCharacter row.
+        self.char1.faction_id = 500001
+        self.char1.faction_name = "Caldari State"
+        self.char1.save()
+
+        info = self._userinfo()
+        self.assertEqual(500001, info["eve_faction_id"])
+        self.assertEqual("Caldari State", info["eve_faction_name"])
+
+    def test_faction_claims_omitted_when_character_has_no_faction(
+        self,
+    ) -> None:
+        """
+        Mirrors the existing "alliance claims omitted for NPC corp"
+        contract: empty faction fields are OMITTED, not emitted
+        as null. RPs that key off ``claim in payload`` work
+        consistently.
+        """
+        # ``user1.main = char1`` (default fixture) — char1 has no
+        # faction set, so both faction claims must be absent.
+        info = self._userinfo()
+        self.assertNotIn("eve_faction_id", info)
+        self.assertNotIn("eve_faction_name", info)
+
+    def test_affiliation_composite_carries_corp_state(self) -> None:
+        """
+        ``eve_affiliation`` is a dict with the user's current
+        affiliation snapshot: ``corp``, optionally ``alliance``,
+        optionally ``faction``, and ``state``. Saves an RP from
+        composing the same data out of the five flat claims.
+        """
+        info = self._userinfo()
+        aff = info.get("eve_affiliation")
+        self.assertIsInstance(aff, dict)
+        # user1 → char1 → corp1 (NPC corp, no alliance), state "Member".
+        self.assertEqual(self.char1.corporation_id, aff["corp"])
+        self.assertEqual("Member", aff["state"])
+        # NPC corp ⇒ no alliance key in the composite (mirror omit
+        # contract from flat claims).
+        self.assertNotIn("alliance", aff)
+        self.assertNotIn("faction", aff)
+
+    def test_affiliation_includes_alliance_and_faction_when_present(
+        self,
+    ) -> None:
+        """
+        Faction-warfare-enlisted character in a corp belonging to
+        an alliance — the composite carries every key.
+        """
+        self.char1.faction_id = 500001
+        self.char1.faction_name = "Caldari State"
+        self.char1.alliance_id = 99999001
+        self.char1.alliance_name = "Test Alliance"
+        self.char1.alliance_ticker = "TEST"
+        self.char1.save()
+
+        info = self._userinfo()
+        aff = info["eve_affiliation"]
+        self.assertEqual(self.char1.corporation_id, aff["corp"])
+        self.assertEqual(99999001, aff["alliance"])
+        self.assertEqual(500001, aff["faction"])
+        self.assertEqual("Member", aff["state"])
+
+    def test_affiliation_omitted_for_user_without_main(self) -> None:
+        """
+        user4 has no main_character; ``eve_affiliation`` is
+        absent rather than emitted as ``{}`` or ``null``.
+        """
+        self.grant_oidc_access(self.user4)
+        tokens = self.run_code_flow(self.user4, state="eve-delta-no-main")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        info = json.loads(resp.content.decode("utf-8"))
+        self.assertNotIn("eve_affiliation", info)
+        self.assertNotIn("eve_main_character_id", info)

@@ -44,9 +44,12 @@ logger = logging.getLogger(f"extensions.{__name__}")
 
 
 # EVE-domain claim names emitted under the configured prefix/scope.
-# Order matches the natural grouping (character → corp → alliance) and
-# is used both at scope-binding time below and inside
-# `ClaimsBuilder._eve_claims` to assemble the payload.
+# Order matches the natural grouping (character → corp → alliance →
+# faction) and is used both at scope-binding time below and inside
+# ``ClaimsBuilder._eve_claims`` to assemble the payload. Each name
+# is read directly off ``EveCharacter`` as ``getattr(main, name)``
+# — denormalised on the main_character row so a single attribute
+# chain replaces three FK joins.
 _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
     "character_id",
     "corporation_id",
@@ -55,7 +58,26 @@ _EVE_CLAIM_NAMES: Final[tuple[str, ...]] = (
     "alliance_id",
     "alliance_name",
     "alliance_ticker",
+    "faction_id",
+    "faction_name",
 )
+
+
+# Claim name emitted under the EVE prefix as an explicit "this is
+# the main character" alias of ``character_id``. Carries the same
+# value as ``<prefix>character_id``; exists separately because RPs
+# in the EVE ecosystem commonly key off this naming when correlating
+# OIDC identity with EVE-aware data (killboards, fit-sharing).
+_EVE_MAIN_CHARACTER_ID_CLAIM: Final[str] = "main_character_id"
+
+
+# Composite affiliation snapshot. A single dict claim that lets RPs
+# read corp + alliance + faction + AA state in one shot instead of
+# composing four flat claims. ``corp`` and ``state`` are always
+# present (when a main exists); ``alliance`` and ``faction`` are
+# omitted when not applicable, mirroring the omit-not-null
+# convention of the flat claims.
+_EVE_AFFILIATION_CLAIM: Final[str] = "affiliation"
 
 
 # Default cap on the ``groups`` claim payload — see
@@ -180,6 +202,16 @@ def _build_oidc_claim_scope(settings: OIDCSettings) -> dict[str, str]:
             f"{settings.eve_claim_prefix}{n}": settings.eve_claim_scope
             for n in _EVE_CLAIM_NAMES
         }
+    )
+    # The ``main_character_id`` alias and the ``affiliation`` composite
+    # ride the same scope as the flat EVE claims so RPs already
+    # requesting ``profile`` receive them without negotiating a new
+    # scope. Bound under the configured prefix for consistency.
+    scopes[f"{settings.eve_claim_prefix}{_EVE_MAIN_CHARACTER_ID_CLAIM}"] = (
+        settings.eve_claim_scope
+    )
+    scopes[f"{settings.eve_claim_prefix}{_EVE_AFFILIATION_CLAIM}"] = (
+        settings.eve_claim_scope
     )
     return scopes
 
@@ -341,7 +373,44 @@ class ClaimsBuilder:
             value = getattr(main, name, None)
             if value:
                 out[f"{prefix}{name}"] = value
+        main_character_id = getattr(main, "character_id", None)
+        if main_character_id:
+            out[f"{prefix}{_EVE_MAIN_CHARACTER_ID_CLAIM}"] = main_character_id
+        affiliation = self._affiliation(main)
+        if affiliation:
+            out[f"{prefix}{_EVE_AFFILIATION_CLAIM}"] = affiliation
         return out
+
+    def _affiliation(self, main: object | None) -> dict[str, Any] | None:
+        """
+        Compose the ``affiliation`` claim from the main character +
+        AA state.
+
+        Returns ``None`` when no main character exists — mirrors the
+        flat-claims omit contract, so an RP that keys off
+        ``"affiliation" in payload`` sees a consistent absent /
+        present signal. The returned dict ALWAYS carries the
+        ``state`` (a user is in some state, even if it's
+        ``"Guest"`` / blank), drops ``alliance`` / ``faction`` when
+        the main character lacks those fields.
+        """
+        if main is None:
+            return None
+        out: dict[str, Any] = {}
+        corp_id = getattr(main, "corporation_id", None)
+        if corp_id:
+            out["corp"] = corp_id
+        alliance_id = getattr(main, "alliance_id", None)
+        if alliance_id:
+            out["alliance"] = alliance_id
+        faction_id = getattr(main, "faction_id", None)
+        if faction_id:
+            out["faction"] = faction_id
+        profile = getattr(self.user, "profile", None)
+        state_name = getattr(getattr(profile, "state", None), "name", None)
+        if state_name:
+            out["state"] = state_name
+        return out or None
 
 
 class AllianceAuthOAuth2Validator(OAuth2Validator):
