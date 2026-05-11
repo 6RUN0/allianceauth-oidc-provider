@@ -716,14 +716,24 @@ class TestOIDCJwksRotateCommand(OIDCTestCase):
         is the canonical artifact; printing it twice invites
         copy-paste of the wrong copy).
         """
+        import os
         import tempfile
+        from pathlib import Path
 
         from cryptography.hazmat.primitives import serialization
 
-        with tempfile.NamedTemporaryFile(
-            "w", delete=False, suffix=".pem"
-        ) as fh:
-            path = fh.name
+        # The command opens ``--out`` with ``O_EXCL`` to close the
+        # create-then-chmod race; the path must NOT exist when the
+        # call starts. ``mkstemp`` returns a unique path; close +
+        # unlink immediately so the next ``os.open(..., O_EXCL)``
+        # succeeds. ``Path.unlink(missing_ok=True)`` is the
+        # ruff-PTH-friendly idiom for "remove if it still exists".
+        fd, path_str = tempfile.mkstemp(suffix=".pem")
+        os.close(fd)
+        out_path = Path(path_str)
+        out_path.unlink()
+        self.addCleanup(lambda: out_path.unlink(missing_ok=True))
+        path = path_str
 
         out = StringIO()
         call_command("oidc_jwks_rotate", "--out", path, stdout=out)

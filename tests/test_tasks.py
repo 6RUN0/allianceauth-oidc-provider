@@ -1,23 +1,28 @@
 """
-Tests for ``allianceauth_oidc.tasks.clear_expired_tokens``.
+Tests for ``allianceauth_oidc.tasks``.
 
-The task is a thin wrapper around DOT's ``clear_expired()``; the test seeds a
-small mix of expired and live Grant/AccessToken rows, runs the task
-synchronously (``CELERY_TASK_ALWAYS_EAGER=True`` in test settings), and asserts
-that only the expired rows are gone.
+The cleanup task is a thin wrapper around DOT's ``clear_expired()``;
+those tests seed a small mix of expired and live Grant/AccessToken
+rows, run the task synchronously (``CELERY_TASK_ALWAYS_EAGER=True``
+in test settings), and assert that only the expired rows are gone.
 
-The goal is regression — this is not a stress test of DOT's batching.
+The retry-envelope tests pin the BCL dispatch task's Celery
+retry-config knobs — the configuration itself is operational rather
+than logical, but a regression that silently tightens the envelope
+(e.g. dropping ``retry_jitter``) is a production correctness bug for
+RP rolling deploys.
 """
 
 from datetime import timedelta
 
+from django.test import SimpleTestCase
 from django.utils import timezone
 from oauth2_provider.models import (
     get_access_token_model,
     get_grant_model,
 )
 
-from allianceauth_oidc.tasks import clear_expired_tokens
+from allianceauth_oidc.tasks import clear_expired_tokens, send_logout_token
 
 from ._oidc_testcase import REDIRECT_URI, OIDCTestCase
 
@@ -150,3 +155,52 @@ class TestClearExpiredTokensTask(OIDCTestCase):
 
         self.assertEqual(before_at, AccessToken.objects.count())
         self.assertEqual(before_grant, Grant.objects.count())
+
+
+class TestSendLogoutTokenRetryEnvelope(SimpleTestCase):
+    """
+    BCL dispatch retry config must survive a typical RP rolling
+    deploy (~60 seconds of 5xx responses while the new pod warms
+    up). The geometric envelope and the ``retry_jitter`` knob are
+    operational tunables that previously regressed in review.
+    """
+
+    def test_retry_jitter_is_enabled(self) -> None:
+        """
+        Without jitter, fan-out logouts from a single sign-out
+        event would thunder against the RP in lockstep on every
+        retry — exactly the worst case during a recovering RP.
+        Celery's per-attempt jitter is the canonical fix.
+        """
+        self.assertTrue(
+            send_logout_token.retry_jitter,
+            "send_logout_token must enable Celery retry jitter",
+        )
+
+    def test_retry_envelope_covers_60s_rolling_deploy(self) -> None:
+        """
+        Compute the worst-case wall-clock envelope from the task's
+        Celery config and assert it is at least 60 seconds — the
+        canonical lower bound for an RP rolling deploy where the
+        previous pod returned 5xx while the next pod is still
+        booting.
+
+        Envelope formula (Celery exponential backoff): for retry
+        N (1-indexed) the wait is ``min(retry_backoff * 2^(N-1),
+        retry_backoff_max)``. Summed across all ``max_retries``
+        attempts gives the total wall-clock the task can absorb
+        before it dead-letters.
+        """
+        b = send_logout_token.retry_backoff
+        cap = send_logout_token.retry_backoff_max
+        n = send_logout_token.max_retries
+        envelope = sum(min(b * (2**i), cap) for i in range(n))
+        self.assertGreaterEqual(
+            envelope,
+            60,
+            (
+                f"Retry envelope {envelope}s too tight for a 60s "
+                f"RP rolling deploy (backoff={b}, cap={cap}, "
+                f"max_retries={n})"
+            ),
+        )

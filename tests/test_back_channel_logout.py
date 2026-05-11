@@ -808,6 +808,91 @@ class _CapturedDispatches:
         self.calls.append((application.pk, reason))
 
 
+class TestAppsWithActiveTokensFilter(OIDCTestCase):
+    """
+    ``apps_with_active_tokens(user)`` is the fan-out source for the
+    five lifecycle BCL triggers. The name promises *active* tokens
+    — RPs whose tokens have all expired or been revoked must NOT
+    appear, otherwise the dispatcher sends a logout_token to RPs
+    whose session has been dead for hours/days, generating spurious
+    dead-letter rows on the receiving end and wasting worker cycles.
+    """
+
+    def _expired_at(self, *, user, app):
+        """Create an AccessToken whose ``expires`` is in the past."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        AT = get_access_token_model()
+        return AT.objects.create(
+            user=user,
+            application=app,
+            token=f"expired-{user.pk}-{app.pk}",
+            expires=timezone.now() - timedelta(hours=1),
+            scope="openid",
+        )
+
+    def _revoked_rt(self, *, user, app):
+        """Create a RefreshToken with a non-null ``revoked`` timestamp."""
+        from django.utils import timezone
+        from oauth2_provider.models import get_refresh_token_model
+
+        RT = get_refresh_token_model()
+        return RT.objects.create(
+            user=user,
+            application=app,
+            token=f"revoked-rt-{user.pk}-{app.pk}",
+            revoked=timezone.now(),
+        )
+
+    def test_expired_access_token_is_excluded(self) -> None:
+        from allianceauth_oidc.logout import apps_with_active_tokens
+
+        from ._factories import make_app
+
+        user = self.users[0]
+        creds = make_app(owner=user)
+        self._expired_at(user=user, app=creds.app)
+        self.assertEqual(apps_with_active_tokens(user), [])
+
+    def test_revoked_refresh_token_is_excluded(self) -> None:
+        from allianceauth_oidc.logout import apps_with_active_tokens
+
+        from ._factories import make_app
+
+        user = self.users[0]
+        creds = make_app(owner=user)
+        self._revoked_rt(user=user, app=creds.app)
+        self.assertEqual(apps_with_active_tokens(user), [])
+
+    def test_mixed_active_and_dead_returns_only_active_apps(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        from allianceauth_oidc.logout import apps_with_active_tokens
+
+        from ._factories import make_app
+
+        user = self.users[0]
+        live = make_app(owner=user)
+        dead = make_app(owner=user)
+        AT = get_access_token_model()
+        AT.objects.create(
+            user=user,
+            application=live.app,
+            token=f"live-{user.pk}",
+            expires=timezone.now() + timedelta(hours=1),
+            scope="openid",
+        )
+        self._expired_at(user=user, app=dead.app)
+        result = apps_with_active_tokens(user)
+        self.assertEqual([a.pk for a in result], [live.app.pk])
+
+
 class TestBackChannelLogoutTriggers(OIDCTestCase):
     """
     AC-12 / AC-13 / AC-14 / AC-15 / AC-16 — the five v1 trigger
@@ -1431,6 +1516,43 @@ class TestBackChannelLogoutDiscovery(OIDCTestCase):
             "access_token_signing_alg_values_supported",
         ):
             self.assertIn(key, data, msg=key)
+
+    def test_discovery_preserves_upstream_response_headers(self) -> None:
+        """
+        Discovery override must augment the upstream ``JsonResponse``
+        in place rather than constructing a fresh one. Any headers
+        DOT or downstream middleware attached to upstream (Vary,
+        Cache-Control, etc.) must survive the augmentation alongside
+        the ``Access-Control-Allow-Origin`` we add.
+        """
+        from unittest.mock import patch
+
+        from django.http import JsonResponse
+
+        upstream = JsonResponse(
+            {
+                "issuer": "https://x",
+                "authorization_endpoint": "https://x/o/authorize/",
+                "token_endpoint": "https://x/o/token/",
+                "jwks_uri": "https://x/o/.well-known/jwks.json",
+            }
+        )
+        upstream["Vary"] = "Origin"
+        upstream["X-Pinned-By-Test"] = "preserved"
+
+        with patch(
+            "oauth2_provider.views.ConnectDiscoveryInfoView.get",
+            return_value=upstream,
+        ):
+            resp = self.client.get(self.DISCOVERY_URL)
+
+        # ``Vary`` is also touched by Django middleware after our
+        # view returns, so assert *inclusion* of our entry rather
+        # than equality — losing it altogether would mean the
+        # upstream response object was replaced.
+        self.assertIn("Origin", resp["Vary"])
+        self.assertEqual(resp["X-Pinned-By-Test"], "preserved")
+        self.assertEqual(resp["Access-Control-Allow-Origin"], "*")
 
 
 class TestBackChannelLogoutLogging(OIDCTestCase):

@@ -20,7 +20,14 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from django.conf import settings
-from django.test.signals import setting_changed
+
+# ``setting_changed`` is imported lazily inside ``connect_invalidator``
+# below: it lives under ``django.test.signals``, and pulling a
+# test-package symbol at the top level of a production module would
+# couple the runtime to Django's test infrastructure. The signal
+# itself is a documented public hook (Django uses it to power
+# ``@override_settings``), but its import path is internal and may
+# shift across Django majors.
 
 # Setting keys: pin each name in one place so the docstring, the
 # ``getattr`` lookup, and any test using ``override_settings`` cannot
@@ -277,7 +284,13 @@ def connect_invalidator() -> None:
     Called from ``AllianceAuthOIDC.ready()`` so the cache is honest
     under ``@override_settings`` in tests; production never emits
     ``setting_changed`` so the cache lives for the process lifetime.
+
+    ``setting_changed`` is imported here (not at module level) to
+    avoid pulling a symbol from ``django.test.signals`` into the
+    production import graph — see the module-level note.
     """
+    from django.test.signals import setting_changed
+
     setting_changed.connect(
         _invalidate_cached_snapshot,
         dispatch_uid=_INVALIDATOR_DISPATCH_UID,

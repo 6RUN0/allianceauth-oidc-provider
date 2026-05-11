@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 from typing import Any
 
 from cryptography.hazmat.primitives import serialization
@@ -94,15 +94,23 @@ class Command(BaseCommand):
 
         out_path: str | None = options["out"]
         if out_path:
-            target = Path(out_path)
-            # ``write_bytes`` followed by ``chmod`` is racy on hostile
-            # multi-tenant filesystems; on operator-controlled hosts
-            # the open-then-chmod sequence is the standard idiom and
-            # the window is sub-millisecond. Operators with tighter
-            # threat models should pipe stdout to a file under their
-            # own ``umask`` discipline instead.
-            target.write_bytes(pem_bytes)
-            target.chmod(0o600)
+            # ``os.open`` with ``O_CREAT | O_EXCL`` + mode ``0o600``
+            # closes the previous ``write_bytes`` + ``chmod`` race —
+            # the file is created with the restrictive mode in one
+            # syscall before any bytes hit disk. ``O_EXCL`` also
+            # refuses to overwrite an existing file at the target
+            # path, so an operator pointing the command at a
+            # populated location gets a clear error instead of a
+            # silent clobber of a key still in use.
+            fd = os.open(
+                out_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            try:
+                os.write(fd, pem_bytes)
+            finally:
+                os.close(fd)
             self.stdout.write(self._stdout_when_outfile(out_path, kid))
         else:
             self.stdout.write(self._stdout_inline(pem_text, kid))

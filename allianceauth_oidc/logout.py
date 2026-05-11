@@ -157,6 +157,7 @@ def apps_with_active_tokens(user: Any) -> list[Any]:
     deliberate — short-lived clients without refresh tokens still
     deserve a logout signal while their AT is unexpired.
     """
+    from django.utils import timezone
     from oauth2_provider.models import (
         get_access_token_model,
         get_refresh_token_model,
@@ -164,16 +165,22 @@ def apps_with_active_tokens(user: Any) -> list[Any]:
 
     AccessToken = get_access_token_model()
     RefreshToken = get_refresh_token_model()
+    now = timezone.now()
     app_ids: set[int] = set()
+    # ``AccessToken`` rows are deleted on ``.revoke()`` (no ``revoked``
+    # column), so an unexpired row is the right proxy for "active".
     app_ids.update(
-        AccessToken.objects.filter(user=user).values_list(
+        AccessToken.objects.filter(user=user, expires__gt=now).values_list(
             "application_id", flat=True
         )
     )
+    # ``RefreshToken`` keeps a ``revoked`` timestamp after revocation
+    # rather than deleting the row, so an explicit
+    # ``revoked__isnull=True`` filter is required.
     app_ids.update(
-        RefreshToken.objects.filter(user=user).values_list(
-            "application_id", flat=True
-        )
+        RefreshToken.objects.filter(
+            user=user, revoked__isnull=True
+        ).values_list("application_id", flat=True)
     )
     if not app_ids:
         return []

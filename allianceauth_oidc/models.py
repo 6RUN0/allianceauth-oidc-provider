@@ -82,9 +82,38 @@ class AllianceAuthApplication(AbstractApplication):
             "URL to the application's icon (128x128). Can be a local static-file URL or an absolute http(s) URL."  # noqa: E501
         ),
     )
-    states = models.ManyToManyField(State, blank=True)
-    groups = models.ManyToManyField(Group, blank=True)
-    active = models.BooleanField(default=True)
+    states = models.ManyToManyField(
+        State,
+        blank=True,
+        related_name="oidc_applications",
+        help_text=_(
+            "Whitelist of Alliance Auth states allowed to "
+            "authenticate this application. Leave empty (with "
+            "Groups also empty) to open the app to every user "
+            "holding the global OIDC permission."
+        ),
+    )
+    groups = models.ManyToManyField(
+        Group,
+        blank=True,
+        related_name="oidc_applications",
+        help_text=_(
+            "Whitelist of Django groups allowed to authenticate "
+            "this application. A user is granted access if their "
+            "state OR any of their groups appears in either "
+            "whitelist; leave both empty to open the app."
+        ),
+    )
+    active = models.BooleanField(
+        default=True,
+        verbose_name=_("Active"),
+        help_text=_(
+            "Deactivated applications (``Active`` unchecked) cannot "
+            "issue authorization codes or tokens. Toggling this off "
+            "is the operator-facing kill switch for a compromised "
+            "or retired client."
+        ),
+    )
     debug_mode = models.BooleanField(
         default=False,
         help_text=_(
@@ -368,7 +397,6 @@ class BackChannelLogoutAttempt(models.Model):
             models.Index(fields=["success", "-created_at"]),
         ]
 
-    @override
     @override
     def __str__(self) -> str:
         status = "OK" if self.success else "FAIL"

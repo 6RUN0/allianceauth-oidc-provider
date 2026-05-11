@@ -188,5 +188,7 @@ expired tokens accumulate.
   validators with partially-mocked request/user/client objects. Don't replace with attribute access.
 - **Translations**: `allianceauth_oidc/locale/` + `.tx/transifex.yml`. The Transifex project is
   configured; new user-facing strings need to be wrapped in `gettext`.
-- **Migrations**: there are 5 migrations on `AllianceAuthApplication`. DOT periodically alters its
-  `AbstractApplication`, so new migrations may be needed when bumping the DOT version.
+- **Migrations**: the migration set on `AllianceAuthApplication` grows over time — count
+  `allianceauth_oidc/migrations/0*.py` rather than relying on a hard-coded number in this file
+  (which decays whenever a field is added). DOT periodically alters its `AbstractApplication`,
+  so new migrations may be needed when bumping the DOT version.

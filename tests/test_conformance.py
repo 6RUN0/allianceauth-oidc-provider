@@ -21,6 +21,7 @@ regressions in DOT integration, not to replace a formal OIDC test suite.
 import base64
 import json
 import os
+from typing import Any
 
 from jwcrypto import jwk, jwt
 
@@ -338,6 +339,113 @@ class TestIdTokenACRClaim(OIDCTestCase):
         if "acr" not in narrowed and acr_values:
             narrowed["acr"] = "0"
 
+        self.assertNotIn("acr", narrowed)
+
+
+class TestRequestedIdTokenClaimsSelector(OIDCTestCase):
+    """
+    OIDC Core 1.0 §5.5 — the ``claims`` request parameter selects
+    optional id_token claims. The selector must (a) reject malformed
+    inputs without raising (M5: a string or list survives JSON parse
+    when the client sends a quoted string instead of a dict) and
+    (b) treat an essential ``acr`` request as triggering the same
+    ``acr=0`` fallback that ``acr_values`` does (M11, §5.5.1.1).
+    """
+
+    def _stub(self, **overrides):
+        from types import SimpleNamespace
+
+        defaults: dict[str, Any] = {"claims": None, "acr_values": None}
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_selector_returns_empty_when_claims_is_a_string(self) -> None:
+        """A malformed string survives JSON parse as a str — must not crash."""
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        selector = (
+            AllianceAuthOAuth2Validator._select_requested_id_token_claims
+        )
+        request = self._stub(claims="garbage")
+        self.assertEqual(selector(request), {})
+
+    def test_selector_returns_empty_when_id_token_member_is_a_list(
+        self,
+    ) -> None:
+        """Defensive: non-dict ``id_token`` member is ignored."""
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        selector = (
+            AllianceAuthOAuth2Validator._select_requested_id_token_claims
+        )
+        request = self._stub(claims={"id_token": ["unexpected"]})
+        self.assertEqual(selector(request), {})
+
+    def test_selector_returns_id_token_member_when_well_formed(
+        self,
+    ) -> None:
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        selector = (
+            AllianceAuthOAuth2Validator._select_requested_id_token_claims
+        )
+        request = self._stub(claims={"id_token": {"acr": {"essential": True}}})
+        self.assertEqual(selector(request), {"acr": {"essential": True}})
+
+    def test_acr_zero_emitted_for_essential_acr_in_claims_param(
+        self,
+    ) -> None:
+        """
+        OIDC §5.5.1.1 — when the client requests ``acr`` via
+        ``claims.id_token.acr`` (especially with ``essential=True``)
+        but the provider cannot meet a concrete level, ``acr=0``
+        must still appear. The previous override only fired this
+        fallback for the ``acr_values`` request parameter.
+        """
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        request = self._stub(
+            claims={"id_token": {"acr": {"essential": True}}},
+            acr_values=None,
+        )
+        narrowed = AllianceAuthOAuth2Validator._inject_acr_fallback(
+            narrowed={"sub": "1"}, request=request
+        )
+        self.assertEqual(narrowed["acr"], "0")
+
+    def test_acr_zero_still_emitted_for_acr_values_only(self) -> None:
+        """Regression: legacy ``acr_values`` path keeps emitting ``acr=0``."""
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        request = self._stub(
+            claims=None, acr_values="urn:mace:incommon:iap:silver"
+        )
+        narrowed = AllianceAuthOAuth2Validator._inject_acr_fallback(
+            narrowed={"sub": "1"}, request=request
+        )
+        self.assertEqual(narrowed["acr"], "0")
+
+    def test_acr_not_emitted_when_neither_acr_values_nor_claim(
+        self,
+    ) -> None:
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        request = self._stub(claims=None, acr_values=None)
+        narrowed = AllianceAuthOAuth2Validator._inject_acr_fallback(
+            narrowed={"sub": "1"}, request=request
+        )
         self.assertNotIn("acr", narrowed)
 
 

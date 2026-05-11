@@ -1,12 +1,9 @@
 """Django admin registration for ``AllianceAuthApplication``."""
 
 from django.contrib import admin
-from django.contrib.auth import get_user_model
 from typing_extensions import override
 
 from .models import BackChannelLogoutAttempt
-
-has_email = hasattr(get_user_model(), "email")
 
 
 class ApplicationAdmin(admin.ModelAdmin):
@@ -40,8 +37,30 @@ class ApplicationAdmin(admin.ModelAdmin):
         "client_type": admin.HORIZONTAL,
         "authorization_grant_type": admin.VERTICAL,
     }
-    search_fields = ("name",) + (("user__email",) if has_email else ())
     raw_id_fields = ("user",)
+
+    @override
+    def get_search_fields(self, request):
+        """
+        Build ``search_fields`` at request time, not import time.
+
+        ``get_user_model()`` resolves the swappable ``AUTH_USER_MODEL``
+        — if the app registry is not fully populated when this module
+        first imports (a real risk under test bootstrap or circular
+        imports), the resolution can return a half-built class. By
+        deferring the lookup to ``get_search_fields`` we run it after
+        Django has guaranteed the registry is hot.
+        """
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        # ``tuple[str, ...]`` annotation — appending to a literal
+        # ``tuple[str]`` would otherwise trip mypy's invariant
+        # tuple-length inference on the assignment below.
+        fields: tuple[str, ...] = ("name",)
+        if hasattr(user_model, "email"):
+            fields += ("user__email",)
+        return fields
 
 
 @admin.register(BackChannelLogoutAttempt)

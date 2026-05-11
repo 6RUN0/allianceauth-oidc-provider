@@ -141,3 +141,52 @@ class TestEmitShortCircuits(SimpleTestCase):
         # Valid JSON but no access_token field — orchestrator stops
         # before touching the DB or the signal layer.
         _audit('{"scope":"openid"}').emit()  # no exception, no log
+
+
+# Lazy DB-bound imports kept at module tail so the parser-only
+# ``SimpleTestCase`` classes above stay self-contained.
+from datetime import timedelta  # noqa: E402
+
+from django.utils import timezone  # noqa: E402
+from oauth2_provider.models import get_access_token_model  # noqa: E402
+
+from ._factories import make_app  # noqa: E402
+from ._oidc_testcase import OIDCTestCase  # noqa: E402
+
+
+class TestFindTokenByChecksum(OIDCTestCase):
+    """
+    ``TokenAudit._find_token`` must locate the persisted row via
+    ``token_checksum`` (SHA256, indexed in DOT 3.x), not by raw
+    ``token`` equality. The raw lookup misses on hashed-at-rest
+    deployments and is a full-table scan on the unindexed ``token``
+    TextField even on default storage; the checksum lookup is what
+    DOT itself uses in its introspect/refresh paths.
+    """
+
+    def test_find_token_succeeds_when_raw_token_replaced_by_hash(
+        self,
+    ) -> None:
+        AT = get_access_token_model()
+        raw = "raw-token-value-for-checksum-test"
+        creds = make_app(owner=self.users[0])
+        access = AT.objects.create(
+            user=self.users[0],
+            application=creds.app,
+            token=raw,
+            expires=timezone.now() + timedelta(seconds=3600),
+            scope="openid",
+        )
+        # ``token_checksum`` auto-populated by
+        # ``TokenChecksumField.pre_save`` (sha256 of ``token``).
+        # Now break the raw column to ensure the new lookup is
+        # genuinely going through the checksum index.
+        AT.objects.filter(pk=access.pk).update(token="<<hashed at rest>>")
+        audit = TokenAudit(
+            request=None,
+            body=None,
+            sender=type("StubSender", (), {}),
+        )
+        found = audit._find_token(raw)
+        self.assertIsNotNone(found)
+        self.assertEqual(found.pk, access.pk)

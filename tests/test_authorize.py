@@ -10,6 +10,7 @@ exchange flows belong in test_token.py.
 from allianceauth.authentication.models import State
 from django.conf import settings
 from django.shortcuts import resolve_url
+from django.test import TestCase
 
 from ._factories import make_app, make_character, make_user
 from ._oidc_testcase import (
@@ -530,3 +531,208 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         self.assertEqual(200, token_resp.status_code)
         body = json.loads(token_resp.content.decode("utf-8"))
         self.assertIn("access_token", body)
+
+
+class TestAuthAuthorizationViewPromotion(TestCase):
+    """
+    Direct unit tests for the cross-origin POST → GET promotion in
+    ``AuthAuthorizationView.dispatch``. Lives at the view level
+    rather than the HTTP-client level so we can inspect
+    ``request.META`` after promotion — downstream middleware reads
+    that mapping, not the ``request.method`` Python attribute, and
+    keeping the two in sync is the regression this test pins.
+    """
+
+    def test_promote_post_keeps_meta_request_method_in_sync(self) -> None:
+        from django.test import RequestFactory
+
+        from allianceauth_oidc.views import AuthAuthorizationView
+
+        factory = RequestFactory()
+        request = factory.post(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": "irrelevant",
+                "redirect_uri": "https://rp.example/cb",
+                "scope": "openid",
+            },
+        )
+        # Sanity: factory wires REQUEST_METHOD == method == "POST".
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.META.get("REQUEST_METHOD"), "POST")
+
+        AuthAuthorizationView._promote_post_body_to_query(request)
+
+        # Python-level attribute and META mapping must agree;
+        # middleware (request-id, audit, error logging) reads META.
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(
+            request.META.get("REQUEST_METHOD"),
+            "GET",
+            (
+                "META[REQUEST_METHOD] must be kept in sync with "
+                "request.method after the POST→GET promotion, "
+                "otherwise downstream middleware sees a desynced "
+                "request and records a fabricated POST."
+            ),
+        )
+        # And the OIDC parameters end up in the query string,
+        # not duplicated in POST — duplicate-parameter rejection
+        # by oauthlib is the original regression.
+        self.assertIn("response_type=code", request.META["QUERY_STRING"])
+        self.assertEqual(request.POST.urlencode(), "")
+
+    def test_promote_is_a_noop_for_get(self) -> None:
+        """GET request must not be touched by the promotion helper."""
+        from django.test import RequestFactory
+
+        from allianceauth_oidc.views import AuthAuthorizationView
+
+        factory = RequestFactory()
+        request = factory.get(
+            "/o/authorize/",
+            data={"response_type": "code"},
+        )
+        AuthAuthorizationView._promote_post_body_to_query(request)
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(request.META["REQUEST_METHOD"], "GET")
+
+    def test_promote_is_a_noop_when_allow_present(self) -> None:
+        """
+        Consent-form POST carries an ``allow`` field — that path is
+        the same-origin consent flow and must NOT be promoted (it
+        would lose the ``allow`` flag and never reach DOT's
+        ``AllowForm`` validation).
+        """
+        from django.test import RequestFactory
+
+        from allianceauth_oidc.views import AuthAuthorizationView
+
+        factory = RequestFactory()
+        request = factory.post(
+            "/o/authorize/",
+            data={"allow": "Authorize", "response_type": "code"},
+        )
+        AuthAuthorizationView._promote_post_body_to_query(request)
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.META["REQUEST_METHOD"], "POST")
+        self.assertEqual(request.POST.get("allow"), "Authorize")
+
+
+class TestValidateSilentAuthorizationPriorConsent(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.4 — ``prompt=none`` MUST succeed when the
+    end-user has already granted consent for the requested scopes,
+    even if the client is NOT marked ``skip_authorization=True``.
+
+    The prior implementation returned ``True`` only on the
+    ``skip_authorization`` path, breaking the canonical
+    silent-refresh-in-iframe pattern for normal apps the user had
+    already approved. A non-expired ``AccessToken`` covering the
+    requested scopes is the proof-of-prior-consent we accept.
+    """
+
+    @classmethod
+    def setUpTestData(cls) -> None:  # type: ignore[override]
+        super().setUpTestData()
+        # ``make_app`` returns ``AppCredentials`` (NamedTuple); the
+        # persisted model is on ``.app``. Use the model directly so
+        # ``AccessToken.application`` FK accepts it.
+        cls.app = make_app(
+            owner=cls.users[0],
+            skip_authorization=False,
+            pkce_required=False,
+        ).app
+
+    def _build_request(self, *, user, scopes):
+        """Minimal oauthlib-shaped request stand-in for the validator."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(client=self.app, user=user, scopes=list(scopes))
+
+    def _issue_access_token(self, *, user, scope: str, ttl_seconds: int):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        AccessToken = get_access_token_model()
+        return AccessToken.objects.create(
+            user=user,
+            application=self.app,
+            token=f"silent-test-{user.pk}-{scope.replace(' ', '_')}",
+            expires=timezone.now() + timedelta(seconds=ttl_seconds),
+            scope=scope,
+        )
+
+    def test_returns_true_for_active_token_covering_all_scopes(self) -> None:
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        user = self.users[0]
+        self._issue_access_token(
+            user=user, scope="openid profile", ttl_seconds=3600
+        )
+        request = self._build_request(user=user, scopes=["openid", "profile"])
+        validator = AllianceAuthOAuth2Validator()
+        self.assertTrue(validator.validate_silent_authorization(request))
+
+    def test_returns_false_for_expired_token(self) -> None:
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        user = self.users[0]
+        self._issue_access_token(
+            user=user, scope="openid profile", ttl_seconds=-60
+        )
+        request = self._build_request(user=user, scopes=["openid", "profile"])
+        validator = AllianceAuthOAuth2Validator()
+        self.assertFalse(validator.validate_silent_authorization(request))
+
+    def test_returns_false_when_token_scope_does_not_cover_request(
+        self,
+    ) -> None:
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        user = self.users[0]
+        self._issue_access_token(user=user, scope="openid", ttl_seconds=3600)
+        # Request asks for ``profile`` too — not covered, no silent.
+        request = self._build_request(user=user, scopes=["openid", "profile"])
+        validator = AllianceAuthOAuth2Validator()
+        self.assertFalse(validator.validate_silent_authorization(request))
+
+    def test_returns_false_when_no_token_exists(self) -> None:
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        user = self.users[0]
+        request = self._build_request(user=user, scopes=["openid"])
+        validator = AllianceAuthOAuth2Validator()
+        self.assertFalse(validator.validate_silent_authorization(request))
+
+    def test_skip_authorization_still_short_circuits_to_true(self) -> None:
+        """
+        Regression: the legacy ``skip_authorization=True`` path must
+        remain a pure short-circuit — no token lookup required, no
+        per-user state can flip it to ``False``. This is the path the
+        conformance basic-cert suite exercises.
+        """
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        user = self.users[0]
+        skip_app = make_app(
+            owner=user, skip_authorization=True, pkce_required=False
+        ).app
+        from types import SimpleNamespace
+
+        request = SimpleNamespace(client=skip_app, user=user, scopes=[])
+        validator = AllianceAuthOAuth2Validator()
+        self.assertTrue(validator.validate_silent_authorization(request))

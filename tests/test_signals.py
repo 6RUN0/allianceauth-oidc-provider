@@ -131,12 +131,12 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
 
     def test_audit_skipped_when_access_token_not_in_db(self):
         """
-        In hashed-token storage configurations DOT persists a hashed token
-        but returns the raw value in the response body, so the
-        ``objects.get(token=...)`` lookup misses.
-
-        The audit pipeline must skip silently (debug-level log), not crash and
-        not leak the exception to the OAuth client.
+        ``_find_token`` keys off the SHA256 ``token_checksum``
+        (DOT 3.x indexed column). If the lookup misses — e.g.
+        because the row was reaped between issuance and the audit
+        signal — the audit pipeline must skip silently (debug-level
+        log), not crash and not leak the exception to the OAuth
+        client.
         """
         self.grant_oidc_access(self.user1)
 
@@ -159,8 +159,8 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         self.assertEqual([], self.captured)
         # Debug log explains why audit was skipped.
         self.assertTrue(
-            any("hashed-token storage" in msg for msg in cm.output),
-            f"expected hashed-storage mention in logs, got {cm.output}",
+            any("checksum miss" in msg for msg in cm.output),
+            f"expected checksum-miss mention in logs, got {cm.output}",
         )
 
     def test_audit_skipped_when_body_exceeds_size_cap(self):

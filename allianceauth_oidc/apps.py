@@ -70,12 +70,24 @@ def _check_jwt_wiring() -> None:
             actual_name,
             expected,
         )
-    except Exception:
-        # ``logger.exception`` already attaches the traceback; the
-        # explicit message keeps log lines greppable per the existing
-        # ``OIDC: ...`` prefix convention used elsewhere in the
-        # module.
-        logger.exception("OIDC: JWT-wiring check skipped due to exception")
+    except Exception:  # noqa: BLE001
+        # Diagnostic check, not a hard error: an ImportError or a
+        # bogus ACCESS_TOKEN_GENERATOR dotted-path string would land
+        # here. Catching ``Exception`` is intentional: any failure
+        # in a non-blocking startup advisory is preferable to
+        # crashing app load, and a narrower handler would risk
+        # missing the "DOT's ``perform_import`` raised something we
+        # didn't predict" branch. ``logger.warning`` with
+        # ``exc_info=True`` keeps the full traceback for operator
+        # debugging without dumping a red-text exception line into
+        # the startup log for what is supposed to be a non-fatal
+        # advisory. Operators who want JWT-mode misconfiguration
+        # to be a startup-blocker should configure a system check,
+        # not lean on this diagnostic.
+        logger.warning(
+            "OIDC: JWT-wiring check skipped due to exception",
+            exc_info=True,
+        )
 
 
 class AllianceAuthOIDC(AppConfig):

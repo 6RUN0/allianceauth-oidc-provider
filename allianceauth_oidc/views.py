@@ -176,18 +176,29 @@ class TokenAudit:
         return None
 
     def _find_token(self, access_token_str: str) -> TokenLike | None:
-        """Look up the persisted ``AccessToken`` by raw token value."""
+        """
+        Look up the persisted ``AccessToken`` by SHA256 checksum.
+
+        DOT 3.x stores a SHA256 of the raw token in
+        ``AccessToken.token_checksum`` (indexed) and persists the
+        raw value in the unindexed ``token`` TextField. The
+        introspect, revoke and refresh paths in DOT itself all key
+        off ``token_checksum`` — going through the same column here
+        gives O(1) index lookups on default storage and also works
+        on hashed-at-rest deployments where the raw value never
+        reaches the ``token`` column.
+        """
+        import hashlib
+
         access_token_model = get_access_token_model()
+        checksum = hashlib.sha256(access_token_str.encode("utf-8")).hexdigest()
         try:
-            return access_token_model.objects.get(token=access_token_str)
+            return access_token_model.objects.get(token_checksum=checksum)
         except access_token_model.DoesNotExist:
-            # Hashed-token storage configurations don't expose the raw
-            # token in the response body (it's already hashed at
-            # rest), so this lookup misses. Fall back to a debug-level
-            # log; the operator can plug a custom audit hook in
-            # deployments that use such storage.
+            # The audit pipeline is best-effort — a missing row is
+            # not an error worth surfacing to the OAuth client.
             self.log.debug(
-                "OIDC audit: access_token not found in DB (hashed-token storage?)"  # noqa: E501
+                "OIDC audit: access_token not found in DB (checksum miss)"
             )
             return None
 
@@ -309,6 +320,51 @@ class AuthAuthorizationView(AuthorizationView):
 
     template_name = "allianceauth_oidc/authorize.html"
 
+    @staticmethod
+    def _promote_post_body_to_query(request: HttpRequest) -> None:
+        """
+        Promote a cross-origin POST authorize body to a GET-shaped
+        request.
+
+        DOT's ``AuthorizationView`` was written for the same-origin
+        consent flow only — its ``post()`` runs ``AllowForm``
+        validation expecting an ``allow`` field. For a cross-origin
+        OIDC initial-request POST (no ``allow``, x-www-form-urlencoded
+        body carrying the same parameters a GET would put in the
+        query string), copy the body to ``request.GET`` and re-label
+        the method so DOT's ``get`` path renders consent / redirects
+        identically to the GET case.
+
+        Synchronisation invariants (a regression in any of these
+        re-introduces the previously-fixed bugs):
+
+        * ``request.method`` *and* ``request.META["REQUEST_METHOD"]``
+          must both flip to ``"GET"``. Downstream middleware
+          (request-id, audit, error logging) consults ``META`` rather
+          than the Python attribute, so a partial flip leaves the
+          request visible as a fabricated POST that the view never
+          actually executed as a POST.
+        * ``QUERY_STRING`` is updated so any subsequent call to
+          ``get_full_path()`` (login redirect, DOT's oauthlib URI
+          extraction) reflects the promoted parameters.
+        * The POST body is cleared so DOT's ``_extract_params`` (which
+          feeds ``request.POST.items()`` into oauthlib as the request
+          body) does not surface the same parameters twice — once in
+          the URL, once in the body — which oauthlib rejects with
+          ``invalid_request: duplicate parameter``.
+
+        A POST that carries the ``allow`` field is the same-origin
+        consent submit and is left untouched.
+        """
+        if request.method != "POST" or "allow" in request.POST:
+            return
+        promoted = request.POST
+        request.GET = promoted
+        request.META["QUERY_STRING"] = promoted.urlencode()
+        request.POST = QueryDict("", mutable=False)
+        request.method = "GET"
+        request.META["REQUEST_METHOD"] = "GET"
+
     def _get_app(self, request: HttpRequest) -> AllianceAuthApplication | None:
         """
         Retrieve the active OAuth2 Application by ``client_id``.
@@ -384,28 +440,10 @@ class AuthAuthorizationView(AuthorizationView):
         gate lives in ``get()``/``post()`` separately.
         """
         # OIDC Core 1.0 §3.1.2.1 mandates POST support at the
-        # authorize endpoint. DOT's ``AuthorizationView`` was written
-        # for the same-origin consent flow only — its ``post()`` runs
-        # ``AllowForm`` validation expecting an ``allow`` field. For a
-        # cross-origin OIDC initial-request POST (no ``allow``,
-        # x-www-form-urlencoded body carrying the same parameters a
-        # GET would put in the query string), promote the POST body
-        # to ``request.GET`` and re-label the method so DOT's ``get``
-        # path renders consent / redirects identically to the GET
-        # case. ``QUERY_STRING`` is updated as well so any subsequent
-        # call to ``get_full_path()`` (e.g. login redirect or DOT's
-        # oauthlib URI extraction) reflects the promoted parameters.
-        if request.method == "POST" and "allow" not in request.POST:
-            promoted = request.POST
-            request.GET = promoted
-            request.META["QUERY_STRING"] = promoted.urlencode()
-            # Clear the body so DOT's ``_extract_params`` (which feeds
-            # ``request.POST.items()`` into oauthlib as the request
-            # body) does not surface the same parameters twice — once
-            # in the URL, once in the body — which oauthlib rejects
-            # with ``invalid_request: duplicate parameter``.
-            request.POST = QueryDict("", mutable=False)
-            request.method = "GET"
+        # authorize endpoint. The promotion logic is extracted to a
+        # static method so it is unit-testable in isolation (see
+        # ``tests/test_authorize.py::TestAuthAuthorizationViewPromotion``).
+        self._promote_post_body_to_query(request)
 
         # Anonymous users go straight to ``super().dispatch()`` so
         # DOT's ``LoginRequiredMixin`` redirects them to ``LOGIN_URL``
@@ -537,6 +575,14 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         # flag promises ``sid``-scoped logout, which the AS reserves
         # for feature v2.
         data["backchannel_logout_supported"] = True
-        response = JsonResponse(data)
-        response["Access-Control-Allow-Origin"] = "*"
-        return response
+        # Mutate the upstream ``JsonResponse`` in place rather than
+        # constructing a fresh one. ``JsonResponse(data)`` would
+        # silently drop every header DOT or downstream middleware
+        # attached to ``upstream`` (``Vary``, ``Cache-Control``,
+        # custom CSP overrides), leaving only the ones we set below.
+        # ``response.content = ...`` resets ``Content-Length``;
+        # ``Content-Type`` stays ``application/json`` from
+        # ``JsonResponse``.
+        upstream.content = json.dumps(data).encode("utf-8")
+        upstream["Access-Control-Allow-Origin"] = "*"
+        return upstream

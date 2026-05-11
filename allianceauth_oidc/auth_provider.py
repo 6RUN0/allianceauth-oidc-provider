@@ -470,33 +470,64 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
     def validate_silent_authorization(self, request):
         """
-        OIDC Core 1.0 §3.1.2.1 ``prompt=none`` silent-consent gate.
+        OIDC Core 1.0 §3.1.2.4 ``prompt=none`` silent-consent gate.
 
-        Returns True iff the client carries
-        ``skip_authorization=True`` (operator-declared "trusted
-        in-house client" — DOT's
-        ``AuthorizationView.get`` auto-approves these without ever
-        rendering a consent screen, so the silent path is consistent
-        with the GET path).
+        Returns ``True`` in either of two cases:
 
-        Returning False causes oauthlib to raise
+        1. The client is operator-declared trusted
+           (``skip_authorization=True``) — DOT's
+           ``AuthorizationView.get`` auto-approves these without
+           rendering a consent screen, so the silent path is
+           consistent with the GET path.
+
+        2. The user has previously granted consent for the requested
+           scopes on this client — represented by a non-expired
+           ``AccessToken`` covering the requested scope set. This
+           mirrors the ``approval_prompt=auto`` branch in DOT's
+           ``AuthorizationView.get`` and is the canonical
+           silent-refresh-in-iframe pattern from SPAs.
+
+        Returning ``False`` causes oauthlib to raise
         ``ConsentRequired``, which DOT translates into a 302 to
         ``redirect_uri`` with ``error=consent_required`` — the
         spec-prescribed answer when consent would otherwise be
         required but the request forbade UI.
 
-        TODO(prior-grants): a more permissive fallback would also
-        return True when ``request.user`` already holds a non-expired
-        ``AccessToken`` for ``request.client`` covering the requested
-        scopes (mirroring the ``approval_prompt=auto`` branch in
-        ``AuthorizationView.get``). Blocked on attaching the Django
-        user to oauthlib's authorize-time request — out of scope for
-        this fix; the conservative ``skip_authorization``-only path
-        is sufficient for the basic-cert plan, where the seeded
-        conformance client uses ``skip_authorization=True``.
+        Scope coverage uses set inclusion: the requested scopes must
+        be a subset of an existing token's scopes. A prior
+        ``openid`` token does NOT cover a new
+        ``openid profile`` request — the user has not yet consented
+        to the additional claim.
         """
         client = getattr(request, "client", None)
-        return bool(getattr(client, "skip_authorization", False))
+        if getattr(client, "skip_authorization", False):
+            return True
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+        requested = set(getattr(request, "scopes", None) or [])
+        if not requested:
+            # An empty scope set is not a positive proof of consent —
+            # let oauthlib drive the no-scope path.
+            return False
+        # ``AccessToken.application`` FK accepts any concrete
+        # subclass of the swappable model. Filter by ``client_id``
+        # rather than ``application=client`` to dodge any proxy /
+        # cached-instance mismatch between ``request.client`` and
+        # the persisted row.
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        AccessToken = get_access_token_model()  # noqa: N806
+        active = AccessToken.objects.filter(
+            user=user,
+            application__client_id=getattr(client, "client_id", None),
+            expires__gt=timezone.now(),
+        ).only("scope")
+        for token in active:
+            if requested.issubset((token.scope or "").split()):
+                return True
+        return False
 
     # NOTE: ``validate_code`` / ``validate_refresh_token`` /
     # ``save_bearer_token`` / ``get_additional_claims`` keep their
@@ -555,6 +586,19 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 raise oauth_errors.InvalidGrantError(
                     description="Access denied"
                 ) from None
+        elif user is not None and client is None:
+            # The policy gate is intentionally skipped on grant types
+            # that do not carry a client on the oauthlib request
+            # (e.g. password / client_credentials variants that DOT
+            # serves through code paths where ``request.client`` is
+            # populated elsewhere). Emit an INFO marker so an
+            # operator scanning logs after a regression that nulled
+            # out ``client`` upstream can spot the silent skip
+            # instead of guessing why a deny never fired.
+            logger.info(
+                "OIDC policy skipped: save_bearer_token user=%s no_client",
+                user,
+            )
         return super().save_bearer_token(token, request, *args, **kwargs)
 
     def get_additional_claims(self, request):
@@ -576,6 +620,56 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         out.update(builder.build())
         return out
 
+    @staticmethod
+    def _select_requested_id_token_claims(request) -> dict[str, Any]:
+        """
+        Pull the ``id_token`` member of the OIDC ``claims`` request
+        parameter, defensively.
+
+        OIDC Core 1.0 §5.5 — ``claims`` is a JSON-encoded dict the
+        client sends in the authorize request. DOT's request parser
+        runs ``json.loads`` on it, but a malformed payload may
+        survive as a quoted string or a list rather than a dict.
+        ``.get`` on a non-dict raises ``AttributeError`` — which
+        propagates as a 500 to the OAuth client. Returning ``{}``
+        on any non-dict input keeps the override behaving as if the
+        client sent no ``claims`` parameter at all.
+        """
+        claims_param = getattr(request, "claims", None)
+        if not isinstance(claims_param, dict):
+            return {}
+        id_token_member = claims_param.get("id_token")
+        if not isinstance(id_token_member, dict):
+            return {}
+        return id_token_member
+
+    @staticmethod
+    def _inject_acr_fallback(
+        narrowed: dict[str, Any], request
+    ) -> dict[str, Any]:
+        """
+        Emit ``acr=0`` (RFC 6711 "no specific level") when the client
+        asked for ACR but the provider cannot satisfy a concrete
+        level. OIDC §5.5.1.1 lists two equivalent ways for the client
+        to ask: via the ``acr_values`` request parameter or via the
+        ``claims.id_token.acr`` member (with or without
+        ``essential=True``). The previous implementation only fired
+        the fallback for ``acr_values``; both are spec-equivalent.
+
+        Mutates ``narrowed`` in place and returns it so callers can
+        chain.
+        """
+        if "acr" in narrowed:
+            return narrowed
+        requested = (
+            AllianceAuthOAuth2Validator._select_requested_id_token_claims(
+                request
+            )
+        )
+        if getattr(request, "acr_values", None) or "acr" in requested:
+            narrowed["acr"] = "0"
+        return narrowed
+
     def get_id_token_dictionary(self, token, token_handler, request):
         """
         Restrict id_token to OIDC §5.4 reserved claims plus claims
@@ -593,25 +687,11 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         claims, expiration_time = super().get_id_token_dictionary(
             token, token_handler, request
         )
-        # ``request.claims`` is the OIDC ``claims`` parameter (a
-        # JSON-decoded dict) when the client sent one; absent or
-        # malformed inputs fall through to "id_token reserved claims
-        # only".
-        requested = (getattr(request, "claims", None) or {}).get(
-            "id_token"
-        ) or {}
+        requested = self._select_requested_id_token_claims(request)
         narrowed = {
             k: v
             for k, v in claims.items()
             if k in _ID_TOKEN_RESERVED_CLAIMS or k in requested
         }
-        # OIDC Core 1.0 §3.1.2.6: when the client supplied
-        # ``acr_values`` and we could not satisfy any of them, return
-        # ``acr=0`` (RFC 6711 "Authentication Context Class Reference
-        # 0", explicit "no specific level"). Without this the
-        # conformance suite warns via
-        # ``ValidateIdTokenACRClaimAgainstAcrValuesRequest`` —
-        # ``acr`` is only emitted when ``acr_values`` was present.
-        if "acr" not in narrowed and getattr(request, "acr_values", None):
-            narrowed["acr"] = "0"
+        self._inject_acr_fallback(narrowed, request)
         return narrowed, expiration_time

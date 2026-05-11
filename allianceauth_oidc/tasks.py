@@ -68,7 +68,19 @@ _HTTP_TIMEOUT: tuple[int, int] = (5, 10)
     autoretry_for=(requests.RequestException,),
     retry_backoff=5,
     retry_backoff_max=125,
-    max_retries=3,
+    # Envelope sum for max_retries=5 with backoff=5 cap=125 is
+    # 5+10+20+40+80 = 155 seconds — comfortably above the 60-second
+    # RP rolling-deploy lower bound enforced by
+    # ``TestSendLogoutTokenRetryEnvelope`` in ``tests/test_tasks.py``.
+    # Raising further trades faster operator feedback for tolerance
+    # of longer RP outages; 5 is the smallest value that still
+    # tolerates a typical k8s/ECS rollout.
+    max_retries=5,
+    # Without jitter, every queued logout from a single sign-out
+    # event retries in lockstep, so a recovering RP that needs ~10s
+    # to warm up gets hit by N synchronous bursts. Jitter spreads
+    # them across the backoff window.
+    retry_jitter=True,
 )
 def send_logout_token(
     self: Any,
