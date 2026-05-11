@@ -83,22 +83,20 @@ class _NoOpMetric:
     def labels(self, *_: object, **__: object) -> _NoOpMetric:
         return self
 
-    def inc(self, _amount: float = 1.0) -> None:  # noqa: ARG002
+    def inc(self, _amount: float = 1.0) -> None:
         pass
 
-    def observe(self, _amount: float) -> None:  # noqa: ARG002
+    def observe(self, _amount: float) -> None:
         pass
 
-    def set(self, _value: float) -> None:  # noqa: ARG002
+    def set(self, _value: float) -> None:
         pass
 
-    def set_function(self, _fn: Any) -> None:  # noqa: ARG002
+    def set_function(self, _fn: Any) -> None:
         pass
 
 
-def _counter(
-    name: str, doc: str, labelnames: tuple[str, ...] = ()
-) -> Any:
+def _counter(name: str, doc: str, labelnames: tuple[str, ...] = ()) -> Any:
     if not _ENABLED:
         return _NoOpMetric()
     # Lazy-imported inside the gate so the unguarded module body
@@ -232,9 +230,7 @@ def _on_token_issued(
     app = getattr(token, "application", None)
     if app is not None:
         client_id = getattr(app, "client_id", None) or "unknown"
-    tokens_issued.labels(
-        grant_type=grant_type, client_id=client_id
-    ).inc()
+    tokens_issued.labels(grant_type=grant_type, client_id=client_id).inc()
 
 
 def _on_logout_dispatched(

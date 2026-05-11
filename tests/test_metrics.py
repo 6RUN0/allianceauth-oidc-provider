@@ -80,16 +80,12 @@ class TestAuthorizeDeniedCounter(OIDCTestCase):
         counter by one.
         """
         labels = {"reason": "global"}
-        before = _sample_value(
-            "aa_oidc_authorize_denied_total", **labels
-        )
+        before = _sample_value("aa_oidc_authorize_denied_total", **labels)
 
         resp = self.authorize_get_default(self.user1, scope="openid")
         self.assertDeniedGlobal(resp, self.user1)
 
-        after = _sample_value(
-            "aa_oidc_authorize_denied_total", **labels
-        )
+        after = _sample_value("aa_oidc_authorize_denied_total", **labels)
         self.assertEqual(
             1.0,
             after - before,
@@ -111,9 +107,7 @@ class TestAuthorizeDeniedCounter(OIDCTestCase):
         creds = make_app(owner=self.user1, states=["Blue"])
 
         labels = {"reason": "app"}
-        before = _sample_value(
-            "aa_oidc_authorize_denied_total", **labels
-        )
+        before = _sample_value("aa_oidc_authorize_denied_total", **labels)
 
         resp = self.authorize_get_default(
             self.user1,
@@ -122,9 +116,7 @@ class TestAuthorizeDeniedCounter(OIDCTestCase):
         )
         self.assertDeniedApp(resp, self.user1, creds.app)
 
-        after = _sample_value(
-            "aa_oidc_authorize_denied_total", **labels
-        )
+        after = _sample_value("aa_oidc_authorize_denied_total", **labels)
         self.assertEqual(
             1.0,
             after - before,
@@ -178,9 +170,7 @@ class TestBclMetrics(OIDCTestCase):
             "client_id": self.bcl_app.client_id,
             "outcome": "success",
         }
-        before = _sample_value(
-            "aa_oidc_bcl_delivery_seconds_count", **labels
-        )
+        before = _sample_value("aa_oidc_bcl_delivery_seconds_count", **labels)
 
         with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
             post.return_value = mock.MagicMock(status_code=204)
@@ -192,9 +182,7 @@ class TestBclMetrics(OIDCTestCase):
                 iat=1_700_000_000,
             )
 
-        after = _sample_value(
-            "aa_oidc_bcl_delivery_seconds_count", **labels
-        )
+        after = _sample_value("aa_oidc_bcl_delivery_seconds_count", **labels)
         self.assertEqual(
             1.0,
             after - before,
@@ -221,9 +209,7 @@ class TestBclMetrics(OIDCTestCase):
             "client_id": self.bcl_app.client_id,
             "outcome": "success",
         }
-        before = _sample_value(
-            "aa_oidc_bcl_dispatches_total", **labels
-        )
+        before = _sample_value("aa_oidc_bcl_dispatches_total", **labels)
 
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
@@ -234,9 +220,7 @@ class TestBclMetrics(OIDCTestCase):
             attempt_count=1,
         )
 
-        after = _sample_value(
-            "aa_oidc_bcl_dispatches_total", **labels
-        )
+        after = _sample_value("aa_oidc_bcl_dispatches_total", **labels)
         self.assertEqual(
             1.0,
             after - before,
@@ -270,9 +254,7 @@ class TestBclMetrics(OIDCTestCase):
             "client_id": self.bcl_app.client_id,
             "outcome": "signing_kid_retired",
         }
-        before = _sample_value(
-            "aa_oidc_bcl_dispatches_total", **labels
-        )
+        before = _sample_value("aa_oidc_bcl_dispatches_total", **labels)
 
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
@@ -284,9 +266,7 @@ class TestBclMetrics(OIDCTestCase):
             reason="signing_kid_retired",
         )
 
-        after = _sample_value(
-            "aa_oidc_bcl_dispatches_total", **labels
-        )
+        after = _sample_value("aa_oidc_bcl_dispatches_total", **labels)
         self.assertEqual(
             1.0,
             after - before,

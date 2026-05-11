@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
 
+from django.contrib.auth import logout
+from django.contrib.auth.views import redirect_to_login
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -18,6 +20,7 @@ from django.http import (
     QueryDict,
 )
 from django.shortcuts import render
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext as _
 from django.views.decorators.csrf import csrf_exempt
@@ -431,6 +434,121 @@ class AuthAuthorizationView(AuthorizationView):
             status=403,
         )
 
+    @staticmethod
+    def _enforce_reauth(
+        request: HttpRequest, user: UserLike | None
+    ) -> HttpResponseBase | None:
+        """
+        OIDC Core 1.0 §3.1.2.1 reauthentication gate.
+
+        Returns an HTTP redirect to ``LOGIN_URL`` when the
+        authenticated end-user must reauthenticate before the
+        authorize request can proceed; returns ``None`` to let the
+        normal flow continue.
+
+        Triggers:
+
+        * ``prompt=login`` — RP explicitly demands a fresh
+          authentication event. The user is logged out and bounced
+          to login with ``next`` pointing back to the authorize
+          endpoint. ``prompt=login`` is stripped from the ``next``
+          URL so the post-login replay does not retrigger the
+          gate; any other ``prompt`` values
+          (e.g. ``prompt=consent``) survive the strip.
+        * ``max_age=N`` — RP caps the acceptable age (seconds) of
+          the End-User's last authentication. When
+          ``now - user.last_login > N`` (or ``last_login`` is
+          missing entirely), the gate behaves identically to
+          ``prompt=login`` except that ``max_age`` is preserved in
+          the ``next`` URL: after re-auth ``last_login`` is fresh,
+          so the next-iteration check passes naturally.
+          Conformance: dropping ``max_age`` from the replay would
+          remove the spec-mandated requirement that
+          ``auth_time`` be present in the id_token, so it MUST
+          survive the round-trip.
+
+        Malformed ``max_age`` (non-integer, negative) is ignored
+        rather than treated as ``0`` — never bouncing a user to
+        login based on an unparseable, attacker-controlled value.
+        """
+        prompt_raw = str(request.GET.get("prompt") or "")
+        prompt_values = prompt_raw.split()
+        prompt_login = "login" in prompt_values
+        max_age_expired = AuthAuthorizationView._max_age_expired(request, user)
+        if not (prompt_login or max_age_expired):
+            return None
+        next_url = AuthAuthorizationView._reauth_next_url(
+            request, strip_prompt_login=prompt_login
+        )
+        logout(request)
+        return redirect_to_login(next_url)
+
+    @staticmethod
+    def _max_age_expired(request: HttpRequest, user: UserLike | None) -> bool:
+        """
+        Return True when ``max_age`` is present and the End-User's
+        authentication is older than the requested cap.
+
+        ``max_age=0`` is the spec's "always reauthenticate"
+        sentinel: any non-zero elapsed time exceeds it.
+        Malformed values (non-integer or negative) parse to
+        ``None`` and short-circuit to False — see
+        :meth:`_enforce_reauth` for the security rationale.
+        """
+        raw = request.GET.get("max_age")
+        if raw is None:
+            return False
+        try:
+            max_age = int(raw)
+        except (TypeError, ValueError):
+            return False
+        if max_age < 0:
+            return False
+        last_login = getattr(user, "last_login", None)
+        if last_login is None:
+            # Authenticated user without a ``last_login`` row is a
+            # corner case (e.g. created-but-never-logged-in service
+            # accounts); treating it as "infinitely old" matches
+            # the spec's "elapsed time since last authentication"
+            # semantics — the elapsed time is undefined, so any
+            # finite cap is exceeded.
+            return True
+        elapsed = (timezone.now() - last_login).total_seconds()
+        return elapsed > max_age
+
+    @staticmethod
+    def _reauth_next_url(
+        request: HttpRequest, *, strip_prompt_login: bool
+    ) -> str:
+        """
+        Compose the ``next`` URL used by the LOGIN_URL redirect.
+
+        Mutates a copy of ``request.GET`` rather than the live
+        QueryDict (Django guards live request data against
+        accidental edits). When ``strip_prompt_login`` is True,
+        the ``"login"`` token is removed from the space-delimited
+        ``prompt`` parameter; if it was the only value, the
+        parameter is dropped entirely. The path is taken from
+        ``request.path`` so the same builder works for both the
+        GET and the (post-promotion) POST authorize endpoints.
+        """
+        query = request.GET.copy()
+        if strip_prompt_login and "prompt" in query:
+            # ``QueryDict.__getitem__`` is typed as ``str`` in
+            # django-stubs but basedpyright reads it through the
+            # untyped MultiValueDict baseline; the explicit ``str(...)``
+            # cast settles the static-analyser narrowing without
+            # changing runtime behaviour — a missing or empty value
+            # still produces an empty token list.
+            prompt_raw = str(query.get("prompt") or "")
+            remaining = [p for p in prompt_raw.split() if p != "login"]
+            if remaining:
+                query["prompt"] = " ".join(remaining)
+            else:
+                del query["prompt"]
+        encoded = query.urlencode()
+        return f"{request.path}?{encoded}" if encoded else request.path
+
     def dispatch(
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponseBase:
@@ -456,6 +574,16 @@ class AuthAuthorizationView(AuthorizationView):
         user: UserLike | None = getattr(request, "user", None)
         if not getattr(user, "is_authenticated", False):
             return super().dispatch(request, *args, **kwargs)
+
+        # OIDC Core 1.0 §3.1.2.1 ``prompt=login`` / ``max_age``
+        # enforcement. Force re-authentication when the client
+        # requested it, regardless of the existing session — runs
+        # AFTER ``_promote_post_body_to_query`` so the next-URL we
+        # build off ``request.GET`` reflects the canonical OIDC
+        # parameters even on the cross-origin POST initial path.
+        reauth_response = self._enforce_reauth(request, user)
+        if reauth_response is not None:
+            return reauth_response
 
         # IMPORTANT: must run for BOTH GET and POST to prevent POST-bypass.
         # Why in dispatch():

@@ -736,3 +736,260 @@ class TestValidateSilentAuthorizationPriorConsent(OIDCTestCase):
         request = SimpleNamespace(client=skip_app, user=user, scopes=[])
         validator = AllianceAuthOAuth2Validator()
         self.assertTrue(validator.validate_silent_authorization(request))
+
+
+class TestPromptLoginEnforcement(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.1 ``prompt=login`` — when an authenticated
+    user reaches the authorize endpoint with ``prompt=login`` in the
+    request, the AS MUST force re-authentication. Implemented as
+    "logout + redirect to LOGIN_URL with next pointing back to the
+    authorize endpoint, but with ``prompt=login`` stripped from the
+    next URL so the post-login round-trip does not re-trigger
+    indefinitely".
+    """
+
+    def test_authenticated_user_with_prompt_login_redirects_to_login(
+        self,
+    ) -> None:
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "prompt-login-test",
+                "prompt": "login",
+            },
+        )
+        _, path, qs = self.parse_redirect(resp, (302,))
+        self.assertEqual(resolve_url(settings.LOGIN_URL), path)
+        self.assertIn("next", qs)
+        self.assertIn("/o/authorize/", qs["next"][0])
+
+    def test_next_url_strips_prompt_login_to_prevent_infinite_loop(
+        self,
+    ) -> None:
+        """
+        After re-authentication the user lands on the authorize
+        endpoint via ``next``. If ``next`` still carried
+        ``prompt=login``, the dispatch gate would immediately
+        bounce them to login again — an infinite redirect loop.
+        Stripping the ``login`` token from ``prompt`` (and preserving
+        any other prompt values) breaks that loop.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "loop-guard",
+                "prompt": "login",
+            },
+        )
+        _, _, qs = self.parse_redirect(resp, (302,))
+        next_url = qs["next"][0]
+        self.assertNotIn("prompt=login", next_url)
+
+    def test_next_url_preserves_other_oidc_params(self) -> None:
+        """
+        Stripping ``prompt=login`` must not collateral-damage
+        ``client_id`` / ``state`` / ``response_type`` / ``scope``,
+        otherwise the post-login authorize replay fails with
+        ``invalid_request``.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "preserve-test",
+                "prompt": "login",
+            },
+        )
+        _, _, qs = self.parse_redirect(resp, (302,))
+        next_url = qs["next"][0]
+        self.assertIn(f"client_id={self.oauth_id}", next_url)
+        self.assertIn("response_type=code", next_url)
+        self.assertIn("state=preserve-test", next_url)
+
+    def test_prompt_login_combined_with_other_prompts_preserves_them(
+        self,
+    ) -> None:
+        """
+        ``prompt`` is a space-delimited multi-value parameter.
+        ``prompt=login consent`` after stripping ``login`` must
+        leave ``prompt=consent`` intact — both for spec
+        correctness and so a future ``prompt=consent`` handler can
+        rely on the value surviving the redirect.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "multi-prompt",
+                "prompt": "login consent",
+            },
+        )
+        _, _, qs = self.parse_redirect(resp, (302,))
+        next_url = qs["next"][0]
+        self.assertIn("prompt=consent", next_url)
+        self.assertNotIn("login+consent", next_url)
+        self.assertNotIn("login%20consent", next_url)
+
+
+class TestMaxAgeEnforcement(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.1 ``max_age`` — the AS MUST force
+    re-authentication when the elapsed time since the End-User's
+    last authentication exceeds the value of ``max_age`` (in
+    seconds). The source of truth for "last authentication" is
+    ``User.last_login``, set by Django on every successful login.
+    """
+
+    def test_max_age_within_window_proceeds(self) -> None:
+        """
+        A fresh ``force_login`` sets ``last_login`` to now; a
+        ``max_age=3600`` (one hour) request must NOT redirect to
+        login. The exact downstream response is either 200 (consent
+        page) or 302 to the RP redirect_uri; what matters here is
+        that the response is NOT a redirect to ``LOGIN_URL``.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "max-age-fresh",
+                "max_age": "3600",
+            },
+        )
+        if resp.status_code == 302:
+            from urllib.parse import urlparse
+
+            loc = resp.headers["Location"]
+            self.assertNotEqual(
+                resolve_url(settings.LOGIN_URL),
+                urlparse(loc).path,
+                f"unexpected redirect to login: {loc}",
+            )
+
+    def test_max_age_expired_redirects_to_login(self) -> None:
+        """
+        Backdate ``last_login`` by one hour, request with
+        ``max_age=300`` (5 minutes). Elapsed time (~3600s) exceeds
+        the cap (300s) → the AS MUST force re-authentication →
+        redirect to ``LOGIN_URL``.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        # ``force_login`` sets ``last_login=now``; backdate it after
+        # the fact so the request looks like "user authenticated an
+        # hour ago, session still valid".
+        self.user1.last_login = timezone.now() - timedelta(hours=1)
+        self.user1.save()
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "max-age-expired",
+                "max_age": "300",
+            },
+        )
+        _, path, qs = self.parse_redirect(resp, (302,))
+        self.assertEqual(resolve_url(settings.LOGIN_URL), path)
+        # ``max_age`` survives in next: after re-login,
+        # last_login is fresh, so the next-iteration check
+        # passes and the user proceeds. Stripping max_age would
+        # weaken conformance (the spec requires auth_time in the
+        # id_token when max_age is requested).
+        self.assertIn("max_age=300", qs["next"][0])
+
+    def test_max_age_zero_always_redirects_to_login(self) -> None:
+        """
+        ``max_age=0`` is the spec's "always reauthenticate"
+        sentinel — even a user who logged in this very second
+        must re-authenticate before the AS can issue a token.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "max-age-zero",
+                "max_age": "0",
+            },
+        )
+        _, path, _ = self.parse_redirect(resp, (302,))
+        self.assertEqual(resolve_url(settings.LOGIN_URL), path)
+
+    def test_max_age_invalid_value_is_ignored(self) -> None:
+        """
+        ``max_age=notanumber`` is malformed per the spec. The AS
+        SHOULD reject malformed authorize parameters with
+        ``invalid_request``; absent that, the safest practical
+        choice is to ignore the parameter and proceed — never
+        bouncing a user to login based on an unparseable input
+        attacker-controlled value.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "max-age-bogus",
+                "max_age": "notanumber",
+            },
+        )
+        if resp.status_code == 302:
+            from urllib.parse import urlparse
+
+            loc = resp.headers["Location"]
+            self.assertNotEqual(
+                resolve_url(settings.LOGIN_URL),
+                urlparse(loc).path,
+                f"unexpected redirect to login on malformed max_age: {loc}",
+            )

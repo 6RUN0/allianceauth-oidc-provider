@@ -268,6 +268,67 @@ class TestIdTokenScopeFiltering(OIDCTestCase):
         self.assertEqual("1", narrowed["sub"])
 
 
+class TestIdTokenAuthTime(OIDCTestCase):
+    """
+    OIDC Core 1.0 §2 + §3.1.2.1: when the RP includes ``max_age``
+    in the authorize request, the id_token MUST carry an
+    ``auth_time`` claim (numeric epoch). Strictly, ``auth_time``
+    is OPTIONAL outside the ``max_age`` case — but emitting it
+    unconditionally for authenticated users matches DOT's
+    behaviour and lets RPs implement client-side ``max_age``
+    enforcement without negotiating a server config flag.
+    """
+
+    def _decode_id_token(self, id_token: str) -> dict:
+        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        keyset = jwk.JWKSet.from_json(jwks_resp.content.decode("utf-8"))
+        verified = jwt.JWT(jwt=id_token, key=keyset)
+        return json.loads(verified.claims)
+
+    def test_id_token_carries_auth_time_when_max_age_requested(
+        self,
+    ) -> None:
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(
+            self.user1,
+            state="auth-time-test",
+            extra_authorize_params={"max_age": "3600"},
+        )
+        claims = self._decode_id_token(tokens["id_token"])
+        self.assertIn(
+            "auth_time",
+            claims,
+            f"auth_time MUST be present under max_age request; got "
+            f"claims keys={sorted(claims)}",
+        )
+        self.assertIsInstance(
+            claims["auth_time"],
+            int,
+            f"auth_time must be numeric epoch; got {claims['auth_time']!r}",
+        )
+
+    def test_auth_time_matches_user_last_login(self) -> None:
+        """
+        The emitted ``auth_time`` is the integer epoch
+        representation of ``user.last_login`` — that is the
+        source of truth used by ``_max_age_expired``, so the
+        RP-visible value and the AS-side enforcement value must
+        agree.
+        """
+        from django.utils import dateformat
+
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(
+            self.user1,
+            state="auth-time-equality",
+            extra_authorize_params={"max_age": "3600"},
+        )
+        claims = self._decode_id_token(tokens["id_token"])
+        self.user1.refresh_from_db()
+        expected = int(dateformat.format(self.user1.last_login, "U"))
+        self.assertEqual(expected, claims["auth_time"])
+
+
 class TestIdTokenACRClaim(OIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.6: when the client sends ``acr_values``, the
