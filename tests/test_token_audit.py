@@ -118,6 +118,61 @@ class TestParseBody(SimpleTestCase):
             _audit(b'{"access_token":"abc"}').parse_body(),
         )
 
+    def test_body_exactly_at_cap_is_parsed(self):
+        # Pin ``>`` against ``>=`` on the size guard.
+        #
+        # ``parse_body`` skips parsing when
+        # ``body_len > self.max_body_bytes``. The over-cap case
+        # (``test_oversized_body_logged_and_skipped`` above) does
+        # NOT distinguish ``>`` from ``>=`` because both are True
+        # for ``200 >= 10``. The boundary case ``body_len ==
+        # max_body_bytes`` is the discriminator: with ``>`` the
+        # body is exactly at the limit (still parseable), with
+        # ``>=`` the boundary is rejected.
+        body = '{"access_token":"y"}'  # exactly 20 bytes
+        cap = len(body.encode("utf-8"))
+        audit = _audit(body, max_body_bytes=cap)
+        parsed = audit.parse_body()
+        self.assertEqual({"access_token": "y"}, parsed)
+
+
+class TestLogDebugDefault(SimpleTestCase):
+    """
+    ``TokenAudit._log_debug`` reads ``app.debug_mode`` with a
+    ``getattr(..., False)`` default. Flipping the default to
+    ``True`` (cosmic-ray's ``ReplaceFalseWithTrue``) would silently
+    enable the debug log line for every application that simply
+    lacks the attribute. The test forces the function down the
+    log-emit path on a stub application without ``debug_mode`` and
+    asserts the log stayed silent.
+    """
+
+    def test_app_without_debug_mode_attr_does_not_emit(self):
+        from types import SimpleNamespace
+
+        # No ``debug_mode`` attribute — getattr returns the default
+        # (False). The token shape only needs ``application`` /
+        # ``user`` for the log line, neither of which is exercised
+        # here because the short-circuit on ``not debug_mode``
+        # returns before any field is read.
+        token = SimpleNamespace(
+            application=SimpleNamespace(),  # no debug_mode
+            user=SimpleNamespace(id=1),
+        )
+        audit = _audit('{"access_token":"x"}')
+        # ``request`` is None on parser-only audits; ``_log_debug``
+        # short-circuits earlier on that, so feed a synthetic
+        # request via a setattr that ``_log_debug`` will read.
+        from django.test import RequestFactory
+
+        audit.request = RequestFactory().post(
+            "/o/token/", data={"grant_type": "authorization_code"}
+        )
+        with self.assertNoLogs(
+            "extensions.allianceauth_oidc.views", level="INFO"
+        ):
+            audit._log_debug(token, {"access_token": "x"})
+
 
 class TestEmitShortCircuits(SimpleTestCase):
     """

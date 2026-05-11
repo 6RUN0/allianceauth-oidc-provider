@@ -395,6 +395,162 @@ class TestDispatcherFormatResolution(TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestClassifyTokenFormat(TestCase):
+    """
+    Direct tests for ``views.classify_token_format``.
+
+    The classifier flows into ``OIDCAuditBody["format"]`` so audit
+    receivers can route by issued token shape. Until this class
+    landed, the only coverage was indirect (through the audit signal
+    on a JWT-issuing test); cosmic-ray flagged ~10 surviving mutants
+    spread across the ``isinstance`` guard, the length-of-segments
+    check, the base64 padding math, the exception filter, and the
+    ``and``/``==`` pair on the ``typ`` lookup. Each test below pins
+    one of those edges.
+    """
+
+    @staticmethod
+    def _jws_with_header(header: dict | list | str) -> str:
+        """
+        Build a 3-segment JWS whose header decodes to ``header``.
+
+        Payload + signature are placeholders — the classifier only
+        reads the header. The base64 segment is stripped of ``=`` to
+        match real-world JWS encoding and exercise the padding-math
+        branch in ``classify_token_format``.
+        """
+        header_bytes = json.dumps(header).encode()
+        header_b64 = (
+            base64.urlsafe_b64encode(header_bytes).rstrip(b"=").decode()
+        )
+        return f"{header_b64}.payload.sig"
+
+    def test_non_string_returns_none(self) -> None:
+        # The ``isinstance(token_str, str)`` guard short-circuits to
+        # ``None`` for anything but a string. Mutating ``not
+        # isinstance(...)`` to ``isinstance(...)`` (cosmic-ray's
+        # ``AddNot``) would let bytes/dicts reach ``.split(".")``,
+        # which then either crashes (bytes have no .split-with-str
+        # method) or returns a wrong value.
+        from allianceauth_oidc.views import classify_token_format
+
+        for non_str in (b"abc", None, 12345, [], {}, object()):
+            self.assertIsNone(classify_token_format(non_str))
+
+    def test_two_segments_is_opaque(self) -> None:
+        # ``len(parts) != 3`` length check. Mutants:
+        #   * ``!=`` → ``>`` / ``<`` / ``is not``: each lets a
+        #     wrong-segment-count input slip past as if it were a
+        #     valid JWS and crash on base64-decoding a non-base64
+        #     payload.
+        # All three flips MUST take the opaque branch for this input.
+        from allianceauth_oidc.views import classify_token_format
+
+        self.assertEqual("opaque", classify_token_format("a.b"))
+
+    def test_four_segments_is_opaque(self) -> None:
+        # Symmetric: more dots than expected.
+        from allianceauth_oidc.views import classify_token_format
+
+        self.assertEqual("opaque", classify_token_format("a.b.c.d"))
+
+    def test_zero_dot_token_is_opaque(self) -> None:
+        # Edge case: no dot at all (single segment after ``split``).
+        from allianceauth_oidc.views import classify_token_format
+
+        self.assertEqual("opaque", classify_token_format("opaque-token"))
+
+    def test_valid_jws_with_at_jwt_typ_is_jwt(self) -> None:
+        # Happy path: 3-segment JWS, header decodes to a dict, ``typ``
+        # equals ``"at+jwt"``. Both branches of the final ``and``
+        # must succeed for the function to return ``"jwt"``.
+        from allianceauth_oidc.views import classify_token_format
+
+        token = self._jws_with_header({"typ": "at+jwt", "alg": "RS256"})
+        self.assertEqual("jwt", classify_token_format(token))
+
+    def test_valid_jws_with_different_typ_is_opaque(self) -> None:
+        # ``header.get("typ") == "at+jwt"`` — ``Eq_*`` mutants flip
+        # the operator to ``<=`` / ``>=`` / ``is not``: for a plain
+        # ``"JWT"`` value, ``==`` returns False (the only "correct"
+        # answer for this input). Any of the mutated forms would
+        # erroneously return ``"jwt"``.
+        from allianceauth_oidc.views import classify_token_format
+
+        token = self._jws_with_header({"typ": "JWT", "alg": "RS256"})
+        self.assertEqual("opaque", classify_token_format(token))
+
+    def test_valid_jws_without_typ_is_opaque(self) -> None:
+        # ``header.get("typ")`` returns ``None``; ``None != "at+jwt"``
+        # → opaque. Pins the ``.get("typ")`` default behaviour
+        # (cosmic-ray doesn't directly mutate ``.get`` but the test
+        # also closes the "header has typ key" ambiguity).
+        from allianceauth_oidc.views import classify_token_format
+
+        token = self._jws_with_header({"alg": "RS256"})
+        self.assertEqual("opaque", classify_token_format(token))
+
+    def test_header_not_dict_is_opaque(self) -> None:
+        # ``isinstance(header, dict) and ...`` — if the JSON decode
+        # yields a list/string/number, the left side of the ``and``
+        # is False and the whole expression short-circuits. Mutating
+        # ``and`` to ``or`` (``ReplaceAndWithOr``) would unconditionally
+        # evaluate the right side: ``["not", "dict"].get("typ")``
+        # raises AttributeError and the function crashes.
+        from allianceauth_oidc.views import classify_token_format
+
+        token = self._jws_with_header(["not", "a", "dict"])
+        self.assertEqual("opaque", classify_token_format(token))
+
+    def test_malformed_base64_header_is_opaque(self) -> None:
+        # The ``try`` wraps base64 decode + json parse and catches
+        # ``(ValueError, TypeError, binascii.Error)``. Mutants that
+        # narrow the exception set (e.g. drop ``binascii.Error``)
+        # let a malformed-base64 header crash the classifier instead
+        # of falling through to ``"opaque"``.
+        from allianceauth_oidc.views import classify_token_format
+
+        # ``@`` is outside the base64url alphabet; 3-segment shape
+        # makes the input reach the decode.
+        self.assertEqual("opaque", classify_token_format("@@@.@@@.@@@"))
+
+    def test_header_non_json_payload_is_opaque(self) -> None:
+        # base64-decodes fine but yields bytes that aren't valid
+        # JSON. ``json.loads`` raises ValueError → caught → opaque.
+        from allianceauth_oidc.views import classify_token_format
+
+        # Valid base64 for "garbage" (not JSON).
+        bad_header = (
+            base64.urlsafe_b64encode(b"not-json").rstrip(b"=").decode()
+        )
+        token = f"{bad_header}.payload.sig"
+        self.assertEqual("opaque", classify_token_format(token))
+
+    def test_header_padding_math_handles_non_aligned_segment(self) -> None:
+        # ``pad = "=" * (-len(parts[0]) % 4)`` rebuilds the base64
+        # padding stripped from the wire form. ``USub_UAdd`` flips
+        # ``-len(...)`` to ``+len(...)``: for a 22-char segment
+        # ``-22 % 4 == 2`` (correct: add 2 ``=``) versus ``+22 % 4 == 2``
+        # (accidentally equal), so a length of e.g. 23 distinguishes
+        # them (``-23 % 4 == 1``, ``+23 % 4 == 3``). The 14-byte
+        # header below encodes to a 19-char segment (``19 % 4 == 3``,
+        # ``-19 % 4 == 1``) — a length where the two arithmetic
+        # mutations disagree, so a JWT-typed header through this
+        # function only classifies as ``"jwt"`` when the padding is
+        # right.
+        from allianceauth_oidc.views import classify_token_format
+
+        header_bytes = b'{"typ":"at+jwt"}'  # 16 bytes → 22-char b64
+        header_b64 = (
+            base64.urlsafe_b64encode(header_bytes).rstrip(b"=").decode()
+        )
+        # Confirm the segment is NOT already 4-aligned so the
+        # mutation has actual work to disagree on.
+        self.assertNotEqual(0, len(header_b64) % 4)
+        token = f"{header_b64}.payload.sig"
+        self.assertEqual("jwt", classify_token_format(token))
+
+
 class TestSplitJWTHelper(TestCase):
     """Smoke tests for the ``split_jwt`` helper used by other tests."""
 

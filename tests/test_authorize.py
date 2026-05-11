@@ -619,6 +619,55 @@ class TestAuthAuthorizationViewPromotion(TestCase):
         self.assertEqual(request.META["REQUEST_METHOD"], "POST")
         self.assertEqual(request.POST.get("allow"), "Authorize")
 
+    def test_promote_is_a_noop_for_put(self) -> None:
+        """
+        Pin ``!=`` against ``<`` on the method-guard.
+
+        ``request.method != "POST"`` is checked with ``!=`` in the
+        helper. The GET-only noop test does not distinguish ``!=``
+        from ``<`` because ``"GET" < "POST"`` happens to be True
+        (same direction as ``!=``). For ``"PUT"`` the two operators
+        disagree: ``"PUT" != "POST"`` is True (skip promotion),
+        ``"PUT" < "POST"`` is False (the mutant promotes anyway).
+        Sending a PUT here pins ``!=`` against the ``<``/``<=``/
+        ``is not`` family.
+        """
+        from django.test import RequestFactory
+
+        from allianceauth_oidc.views import AuthAuthorizationView
+
+        factory = RequestFactory()
+        request = factory.put(
+            "/o/authorize/",
+            data="response_type=code",
+            content_type="application/x-www-form-urlencoded",
+        )
+        AuthAuthorizationView._promote_post_body_to_query(request)
+        self.assertEqual(request.method, "PUT")
+        self.assertEqual(request.META["REQUEST_METHOD"], "PUT")
+
+    def test_promote_leaves_post_immutable(self) -> None:
+        """
+        After promotion ``request.POST`` is rebound to a
+        ``QueryDict("", mutable=False)`` so downstream code cannot
+        accidentally re-insert the parameters it already moved to
+        the query string. Flipping ``mutable=False`` to ``True``
+        would silently lift the guarantee; a test that mutates the
+        post-promotion ``POST`` and observes the change pins it.
+        """
+        from django.test import RequestFactory
+
+        from allianceauth_oidc.views import AuthAuthorizationView
+
+        factory = RequestFactory()
+        request = factory.post(
+            "/o/authorize/",
+            data={"response_type": "code", "scope": "openid"},
+        )
+        AuthAuthorizationView._promote_post_body_to_query(request)
+        with self.assertRaises(AttributeError):
+            request.POST["response_type"] = "tampered"
+
 
 class TestValidateSilentAuthorizationPriorConsent(OIDCTestCase):
     """
