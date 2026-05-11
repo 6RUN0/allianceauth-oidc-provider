@@ -36,9 +36,7 @@ class Migration(migrations.Migration):
                     "deletion) will NOT fan out to this RP. "
                     "Default is unchecked (all five triggers fire)."
                 ),
-                verbose_name=(
-                    "Back-Channel Logout: explicit revoke only"
-                ),
+                verbose_name=("Back-Channel Logout: explicit revoke only"),
             ),
         ),
     ]

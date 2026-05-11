@@ -176,11 +176,16 @@ class LogoutAuditBody(TypedDict):
     of the issued ``logout_token`` and is the spec-defined
     idempotency key — RPs MUST dedup on it (OIDC BCL 1.0 §2.6), so
     exposing it for audit/correlation is safe and useful.
+    ``user_pk`` is the integer PK of the user whose session is being
+    terminated; carried as a scalar (not a model instance) so the
+    ``user_deleted`` path can still report which user the fan-out
+    was for after the row is gone.
 
     No ``sid`` key in v1 (sub-only logout per plan v5).
     """
 
     application_id: NotRequired[int | None]
+    user_pk: NotRequired[int | None]
     reason: NotRequired[str | None]
     jti: NotRequired[str | None]
 
@@ -208,16 +213,22 @@ oidc_logout_required = Signal(use_caching=True)
 #
 #     def auditor(
 #         sender, application, jti, success, attempt_count,
-#         reason=None, **kwargs,
+#         user_pk=None, reason=None, **kwargs,
 #     ):
 #         ...
 #
-# Default receiver is the structured logger inside
-# ``logout.py`` / ``tasks.py``; SIEM forwarders can connect a custom
-# receiver under a different ``dispatch_uid``. Spec §2.6 makes the
-# RP responsible for ``jti`` idempotency, so the AS may emit
-# multiple ``oidc_logout_dispatched`` events for the same
-# ``(user, application)`` pair — receivers MUST tolerate that.
+# ``user_pk`` is an integer PK rather than a model instance so the
+# ``user_deleted`` trigger can still report which user the fan-out
+# was for after the User row has been deleted. Receivers that need
+# the model can ``User.objects.filter(pk=user_pk).first()``.
+#
+# Default receivers: the structured logger inside ``logout.py`` /
+# ``tasks.py`` AND the dead-letter recorder
+# (``receivers.record_backchannel_logout_attempt``). SIEM forwarders
+# can connect a custom receiver under a different ``dispatch_uid``.
+# Spec §2.6 makes the RP responsible for ``jti`` idempotency, so the
+# AS may emit multiple ``oidc_logout_dispatched`` events for the
+# same ``(user, application)`` pair — receivers MUST tolerate that.
 oidc_logout_dispatched = Signal(use_caching=True)
 
 

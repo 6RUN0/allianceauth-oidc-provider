@@ -197,9 +197,10 @@ convention = "pep257"
 ]
 # Django ModelAdmin and Model.Meta use class-level mutable attributes by
 # design (admin lists, Meta.permissions, etc.) and the nested Meta class
-# is a Django convention without docstring.
+# is a Django convention without docstring. ``N806`` allows the Django
+# idiom ``User = get_user_model()`` inside helper methods.
 "allianceauth_oidc/admin.py" = [ "D106", "RUF012" ]
-"allianceauth_oidc/models.py" = [ "D106", "RUF012" ]
+"allianceauth_oidc/models.py" = [ "D106", "N806", "RUF012" ]
 # Django ``setting_changed`` signal handler must accept
 # ``(sender, **kwargs)`` per the dispatcher contract; the body only
 # branches on ``setting`` extracted from ``kwargs``.

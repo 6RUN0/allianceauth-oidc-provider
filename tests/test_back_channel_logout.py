@@ -328,7 +328,11 @@ class TestBackChannelLogoutSignals(TestCase):
 
     def test_ac9_logout_audit_body_has_exact_keys(self) -> None:
         keys = set(typing.get_type_hints(oidc_signals.LogoutAuditBody).keys())
-        self.assertEqual(keys, {"application_id", "reason", "jti"})
+        # ``user_pk`` joined the contract with the dead-letter audit
+        # feature: SIEM receivers need to correlate failures with the
+        # affected user, including in the ``user_deleted`` flow where
+        # the user model is gone by the time the signal arrives.
+        self.assertEqual(keys, {"application_id", "user_pk", "reason", "jti"})
 
     def test_ac9_logout_audit_body_excludes_sid_key(self) -> None:
         """
@@ -1896,3 +1900,331 @@ class TestBackChannelLogoutOnRevokeOnlyDocs(OIDCTestCase):
         # variations like "Фильтрация триггеров" / "Фильтрация по
         # reason" / "Фильтрация для RP".
         self.assertIn("Фильтрация", content)
+
+
+# ============================================================
+# Dead-letter audit feature (BCL-DL)
+# ============================================================
+#
+# US-BCLDL-001 — model exists with the expected shape.
+# US-BCLDL-002 — receiver records failure events by default.
+# US-BCLDL-003 — receiver skips successes by default; opts in via setting.
+# US-BCLDL-004 — receiver wired in apps.py:ready() under the documented UID.
+# US-BCLDL-005 — admin registration is read-only.
+# US-BCLDL-006 — signal contract exposes ``user_pk``.
+# US-BCLDL-007 — EN + RU docs describe the feature.
+
+
+class TestBackChannelLogoutAttemptModel(OIDCTestCase):
+    """US-BCLDL-001 — ``BackChannelLogoutAttempt`` model shape."""
+
+    def test_model_fields_present_with_expected_attributes(self) -> None:
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        names = {f.name for f in BackChannelLogoutAttempt._meta.get_fields()}
+        # ``application`` is the FK; ``user_pk`` is a plain int (not
+        # FK — see model docstring); ``jti``, ``success``,
+        # ``attempt_count``, ``reason``, ``created_at`` round out the
+        # per-event audit row.
+        self.assertTrue(
+            {
+                "application",
+                "user_pk",
+                "jti",
+                "success",
+                "attempt_count",
+                "reason",
+                "created_at",
+            }.issubset(names),
+            f"Expected dead-letter fields missing; got {names!r}",
+        )
+
+    def test_model_ordering_newest_first(self) -> None:
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        self.assertEqual(
+            BackChannelLogoutAttempt._meta.ordering, ("-created_at",)
+        )
+
+    def test_user_pk_is_nullable_int_not_fk(self) -> None:
+        """
+        Crucial for the ``user_deleted`` trigger: by the time the
+        dead-letter row lands, ``User`` is already gone, so an FK
+        would either crash or set NULL on cascade. A plain
+        ``PositiveIntegerField`` keeps history honest.
+        """
+        from django.db.models import (
+            ForeignKey,
+            PositiveIntegerField,
+        )
+
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        field = BackChannelLogoutAttempt._meta.get_field("user_pk")
+        self.assertIsInstance(field, PositiveIntegerField)
+        self.assertNotIsInstance(field, ForeignKey)
+        self.assertTrue(field.null)
+
+
+class TestBackChannelLogoutAttemptReceiver(OIDCTestCase):
+    """
+    US-BCLDL-002 / US-BCLDL-003 — receiver records failures by
+    default, skips successes unless opted in.
+    """
+
+    def _send_signal(
+        self,
+        *,
+        application,
+        user_pk,
+        jti: str,
+        success: bool,
+        reason: str | None = None,
+        attempt_count: int = 1,
+    ) -> None:
+        """Direct signal emit — bypasses the dispatcher to keep tests focused."""
+        from allianceauth_oidc.signals import (
+            BackChannelLogoutSender,
+            oidc_logout_dispatched,
+        )
+
+        oidc_logout_dispatched.send(
+            sender=BackChannelLogoutSender,
+            application=application,
+            user_pk=user_pk,
+            jti=jti,
+            success=success,
+            attempt_count=attempt_count,
+            reason=reason,
+        )
+
+    def test_failure_event_creates_row_with_all_fields(self) -> None:
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        BackChannelLogoutAttempt.objects.all().delete()
+        self._send_signal(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="cafebabe" * 4,
+            success=False,
+            reason="rp_client_error",
+            attempt_count=2,
+        )
+        rows = list(BackChannelLogoutAttempt.objects.all())
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.application_id, creds.app.pk)
+        self.assertEqual(row.user_pk, self.user1.pk)
+        self.assertEqual(row.jti, "cafebabe" * 4)
+        self.assertFalse(row.success)
+        self.assertEqual(row.reason, "rp_client_error")
+        self.assertEqual(row.attempt_count, 2)
+        self.assertIsNotNone(row.created_at)
+
+    def test_success_event_is_skipped_by_default(self) -> None:
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        BackChannelLogoutAttempt.objects.all().delete()
+        self._send_signal(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="deadbeef" * 4,
+            success=True,
+        )
+        self.assertEqual(BackChannelLogoutAttempt.objects.count(), 0)
+
+    @override_settings(ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS=True)
+    def test_success_event_recorded_when_setting_true(self) -> None:
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        BackChannelLogoutAttempt.objects.all().delete()
+        self._send_signal(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="11111111" * 4,
+            success=True,
+            reason="user_revoked",
+        )
+        self.assertEqual(BackChannelLogoutAttempt.objects.count(), 1)
+        row = BackChannelLogoutAttempt.objects.get()
+        self.assertTrue(row.success)
+
+    def test_user_pk_none_is_persisted_as_null(self) -> None:
+        """``user_deleted`` flow may emit signals with ``user_pk=None``."""
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        BackChannelLogoutAttempt.objects.all().delete()
+        self._send_signal(
+            application=creds.app,
+            user_pk=None,
+            jti="22222222" * 4,
+            success=False,
+            reason="broker_unavailable",
+        )
+        row = BackChannelLogoutAttempt.objects.get()
+        self.assertIsNone(row.user_pk)
+
+    def test_empty_jti_recorded_as_blank(self) -> None:
+        """signing_kid_resolve_failed fires before a jti is minted."""
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        BackChannelLogoutAttempt.objects.all().delete()
+        self._send_signal(
+            application=creds.app,
+            user_pk=self.user1.pk,
+            jti="",
+            success=False,
+            reason="signing_kid_resolve_failed",
+            attempt_count=0,
+        )
+        row = BackChannelLogoutAttempt.objects.get()
+        self.assertEqual(row.jti, "")
+        self.assertEqual(row.attempt_count, 0)
+
+    def test_receiver_swallows_db_errors(self) -> None:
+        """
+        Audit MUST NOT break the dispatcher. If row insertion fails
+        for any reason, the receiver logs and returns normally —
+        otherwise a flaky DB would propagate up into the Celery task
+        and turn a logged failure into an unhandled exception.
+        """
+        from allianceauth_oidc.receivers import (
+            record_backchannel_logout_attempt,
+        )
+
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        with mock.patch(
+            "allianceauth_oidc.models.BackChannelLogoutAttempt.objects.create",
+            side_effect=RuntimeError("DB on fire"),
+        ):
+            # Must not raise.
+            record_backchannel_logout_attempt(
+                sender=object,
+                application=creds.app,
+                user_pk=self.user1.pk,
+                jti="33333333" * 4,
+                success=False,
+                attempt_count=1,
+                reason="rp_client_error",
+            )
+
+
+class TestBackChannelLogoutAttemptWiring(OIDCTestCase):
+    """US-BCLDL-004 — receiver is connected by ``apps.ready()``."""
+
+    def test_receiver_connected_under_documented_uid(self) -> None:
+        """
+        Idempotent re-connect under the documented UID MUST be a
+        no-op (Django dedups receivers by ``dispatch_uid``). A delta
+        of 0 proves the AppConfig already wired
+        ``record_backchannel_logout_attempt`` under
+        ``BCL_AUDIT_DISPATCH_UID``; any drift in the UID constant
+        would let the connect call insert a fresh receiver, making
+        the delta non-zero.
+        """
+        from allianceauth_oidc.constants import BCL_AUDIT_DISPATCH_UID
+        from allianceauth_oidc.receivers import (
+            record_backchannel_logout_attempt,
+        )
+        from allianceauth_oidc.signals import oidc_logout_dispatched
+
+        receivers_list = (
+            oidc_logout_dispatched.receivers  # type: ignore[attr-defined]
+        )
+        before = len(receivers_list)
+        oidc_logout_dispatched.connect(
+            record_backchannel_logout_attempt,
+            dispatch_uid=BCL_AUDIT_DISPATCH_UID,
+            weak=False,
+        )
+        after = len(receivers_list)
+        self.assertEqual(
+            before, after, "duplicate receiver registration (UID drift?)"
+        )
+
+
+class TestBackChannelLogoutAttemptAdmin(OIDCTestCase):
+    """US-BCLDL-005 — admin is registered and read-only."""
+
+    def test_admin_registered(self) -> None:
+        from django.contrib import admin as django_admin
+
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        self.assertIn(BackChannelLogoutAttempt, django_admin.site._registry)
+
+    def test_admin_is_read_only(self) -> None:
+        from django.contrib import admin as django_admin
+
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        admin_cls = django_admin.site._registry[BackChannelLogoutAttempt]
+        # ``request=None`` is fine — both methods are constant in
+        # this admin and do not inspect the request.
+        self.assertFalse(admin_cls.has_add_permission(None))
+        self.assertFalse(admin_cls.has_change_permission(None))
+
+    def test_admin_lists_failure_diagnostics(self) -> None:
+        from django.contrib import admin as django_admin
+
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        admin_cls = django_admin.site._registry[BackChannelLogoutAttempt]
+        for column in ("success", "reason", "user_pk", "application"):
+            self.assertIn(
+                column,
+                admin_cls.list_display,
+                f"{column!r} missing from list_display",
+            )
+
+
+class TestBackChannelLogoutAttemptDocs(OIDCTestCase):
+    """US-BCLDL-007 — EN + RU docs describe the dead-letter feature."""
+
+    _DOCS_EN = "docs/BACK_CHANNEL_LOGOUT.md"
+    _DOCS_RU = "docs/BACK_CHANNEL_LOGOUT.ru.md"
+
+    def _read_doc(self, relpath: str) -> str:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        return (root / relpath).read_text(encoding="utf-8")
+
+    def test_docs_describe_dead_letter_en(self) -> None:
+        content = self._read_doc(self._DOCS_EN)
+        self.assertIn("BackChannelLogoutAttempt", content)
+        self.assertIn("Dead-letter", content)
+        self.assertIn("ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS", content)
+
+    def test_docs_describe_dead_letter_ru(self) -> None:
+        content = self._read_doc(self._DOCS_RU)
+        self.assertIn("BackChannelLogoutAttempt", content)
+        self.assertIn("ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS", content)
+        # ``"Журнал"`` is the section-title keyword for the
+        # dead-letter section; matching the noun keeps the test
+        # resilient to title wording variants
+        # ("Журнал неудачных доставок", "Журнал dead-letter", ...).
+        self.assertIn("Журнал", content)

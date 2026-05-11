@@ -225,12 +225,66 @@ Default расписание retry — exponential backoff (5s, 10s, 20s, 40s,
   Celery task в очередь; кастомные receivers могут подключаться
   под другим `dispatch_uid` для SIEM-forwarding.
 
-- `oidc_logout_dispatched(sender, application, jti, success, attempt_count, reason=None)`
+- `oidc_logout_dispatched(sender, application, jti, success, attempt_count, user_pk=None, reason=None)`
   — эмитится `tasks.send_logout_token` на каждой попытке (success,
   3xx, 4xx, kid-retired, retries-exhausted), а также dispatcher-ом
   когда broker недоступен. Receivers могут форвардить
   `LogoutAuditBody` (curated audit payload) в log-aggregator без
-  утечки секретов.
+  утечки секретов. `user_pk` — это целое число (не модель),
+  поэтому flow `user_deleted` корректно отчитывается о
+  пострадавшем пользователе даже после удаления его строки.
+
+## 7.1 Журнал неудачных доставок (dead-letter)
+
+`BackChannelLogoutAttempt` фиксирует каждое терминальное событие
+`oidc_logout_dispatched` как одну неизменяемую audit-строку.
+Просматривается из Django admin → **Alliance Auth OIDC →
+Back-Channel Logout attempts**.
+
+| Колонка         | Поле сигнала    | Заметки                                                  |
+|-----------------|-----------------|----------------------------------------------------------|
+| `application`   | `application`   | FK на `AllianceAuthApplication`. `CASCADE` при удалении. |
+| `user_pk`       | `user_pk`       | Целое число; `NULL`, если строка пользователя уже удалена. |
+| `jti`           | `jti`           | 32-байтовый hex из `uuid4().hex`. Пустой для отказов до выдачи токена. |
+| `success`       | `success`       | `True` = HTTP 2xx; `False` = любой другой терминальный исход. |
+| `attempt_count` | `attempt_count` | Номер попытки Celery (1-based). `0` для отказов на стороне dispatcher. |
+| `reason`        | `reason`        | Trigger reason при успехе, failure mode при провале.     |
+| `created_at`    | wall clock      | `auto_now_add`; индекс для сортировки `-created_at`.     |
+
+**Что записывается.** По умолчанию — **только провалы**:
+`success=False` со значениями `reason` из набора
+`redirect_blocked`, `rp_client_error`, `retries_exhausted`,
+`signing_kid_retired`, `signing_kid_resolve_failed`,
+`broker_unavailable`. Успешные доставки молча отбрасываются —
+чтобы таблица оставалась сфокусированной на том, что требует
+внимания оператора.
+
+Установите `ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS=True` в Django
+settings, чтобы также записывать успехи (полная SIEM-корреляция,
+compliance-аудит). Флаг влияет только на новые события —
+исторические строки не бэкфилятся.
+
+**Read-only by design.** Admin отключает add и change; audit-row
+есть честная запись того, что произошло на проводе, и её НЕЛЬЗЯ
+редактировать. Delete оставлен, чтобы суперюзеры могли вручную
+почистить таблицу (или через периодический Celery task с
+retention-политикой).
+
+**Retention.** Автоматическая очистка не поставляется — таблица
+растёт линейно вместе с числом провалов. Для среднестатистического
+инстанса это «несколько строк в неделю». Если объём провалов
+большой (или есть compliance-ограничение по сроку хранения),
+заведите Celery beat-задачу с
+`BackChannelLogoutAttempt.objects.filter(
+created_at__lt=cutoff).delete()` — по аналогии с
+`clear_expired_tokens` из §2.
+
+**Forwarding в SIEM.** Подключите второй receiver к
+`oidc_logout_dispatched` под другим `dispatch_uid` —
+`record_backchannel_logout_attempt` не «съедает» сигнал.
+Обычно SIEM-forwarder склеивает `application_id` + `user_pk` +
+`reason` в структурированную лог-строку; curated `LogoutAuditBody`
+TypedDict документирует безопасный для отправки набор полей.
 
 ## 8. Out of scope — feature v2 (session-scoped logout)
 

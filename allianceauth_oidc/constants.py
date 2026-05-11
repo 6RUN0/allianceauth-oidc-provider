@@ -44,3 +44,13 @@ TASK_SEND_LOGOUT_TOKEN: Final[str] = "allianceauth_oidc.send_logout_token"
 DEFAULT_LOGOUT_DISPATCH_UID: Final[str] = (
     "allianceauth_oidc.default_logout_dispatcher"
 )
+
+# dispatch_uid for the dead-letter recorder
+# (``receivers.record_backchannel_logout_attempt``) connected to
+# ``oidc_logout_dispatched``. Separate from the trigger UID above
+# because this is the audit-sink path; tests that disable the
+# recorder (e.g. to inspect raw signal payloads) reuse this constant
+# to ``disconnect`` cleanly without affecting the dispatcher.
+BCL_AUDIT_DISPATCH_UID: Final[str] = (
+    "allianceauth_oidc.record_backchannel_logout_attempt"
+)

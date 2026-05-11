@@ -134,6 +134,7 @@ def send_logout_token(
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
             application=application,
+            user_pk=user_pk,
             jti=jti,
             success=False,
             attempt_count=attempt_count,
@@ -167,6 +168,7 @@ def send_logout_token(
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
             application=application,
+            user_pk=user_pk,
             jti=jti,
             success=False,
             attempt_count=attempt_count,
@@ -177,6 +179,7 @@ def send_logout_token(
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
             application=application,
+            user_pk=user_pk,
             jti=jti,
             success=True,
             attempt_count=attempt_count,
@@ -196,6 +199,7 @@ def send_logout_token(
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
             application=application,
+            user_pk=user_pk,
             jti=jti,
             success=False,
             attempt_count=attempt_count,
@@ -220,6 +224,7 @@ def send_logout_token(
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
             application=application,
+            user_pk=user_pk,
             jti=jti,
             success=False,
             attempt_count=attempt_count,

@@ -48,7 +48,7 @@ MIGRATION_SCHEMA = "0010_alliance_auth_application_pkce_required"
 # INSERTs see the columns they expect. PKCE-specific assertions
 # inside this file still depend on the ``0011`` data step having
 # run; that's true for any chain ending at 0011 or beyond.
-MIGRATION_TARGET = "0014_backchannel_logout_on_revoke_only"
+MIGRATION_TARGET = "0015_backchannellogoutattempt"
 
 
 def _migrate_to(target):

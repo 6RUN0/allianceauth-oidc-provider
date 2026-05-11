@@ -224,12 +224,65 @@ Two Django signals are emitted:
   the Celery task; custom receivers can connect under a different
   `dispatch_uid` for SIEM forwarding.
 
-- `oidc_logout_dispatched(sender, application, jti, success, attempt_count, reason=None)`
+- `oidc_logout_dispatched(sender, application, jti, success, attempt_count, user_pk=None, reason=None)`
   — fired by `tasks.send_logout_token` on every attempt (success,
   3xx, 4xx, kid-retired, retries-exhausted) AND by the dispatcher
   when the broker is unavailable. Receivers can forward
   `LogoutAuditBody` (the curated audit payload) to log aggregators
-  without leaking secrets.
+  without leaking secrets. `user_pk` is a plain integer so the
+  `user_deleted` flow can still report the affected user after the
+  user row has been deleted.
+
+## 7.1 Dead-letter audit table
+
+`BackChannelLogoutAttempt` records every terminal
+`oidc_logout_dispatched` event as one immutable audit row. Operators
+inspect it from Django admin → **Alliance Auth OIDC → Back-Channel
+Logout attempts**.
+
+| Column          | Source signal field | Notes                                                  |
+|-----------------|---------------------|--------------------------------------------------------|
+| `application`   | `application`       | FK to `AllianceAuthApplication`. `CASCADE` on delete.  |
+| `user_pk`       | `user_pk`           | Plain int; `NULL` after the user row is gone.          |
+| `jti`           | `jti`               | 32-char hex from `uuid4().hex`. Empty for pre-mint failures. |
+| `success`       | `success`           | `True` = HTTP 2xx; `False` = every other terminal outcome. |
+| `attempt_count` | `attempt_count`     | Celery attempt number (1-based). `0` for dispatcher-side failures. |
+| `reason`        | `reason`            | Trigger reason on success, failure mode on failure.    |
+| `created_at`    | wall clock          | `auto_now_add`; indexed for `-created_at` ordering.    |
+
+**What gets recorded.** By default, **only failures** —
+`success=False` rows with one of `redirect_blocked`,
+`rp_client_error`, `retries_exhausted`, `signing_kid_retired`,
+`signing_kid_resolve_failed`, or `broker_unavailable`. Successful
+dispatches are silently dropped to keep the table focused on what
+needs operator attention.
+
+Set `ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS=True` in Django settings to
+also record successful dispatches (e.g. for full SIEM correlation
+or compliance trails). Off by default; flipping the flag affects
+new events only — historical rows are not backfilled.
+
+**Read-only by design.** The admin disables add and change; the
+audit row is a faithful record of what happened on the wire and
+MUST NOT be edited. Delete remains available so superusers can
+prune the table manually or via a scheduled Celery task on a
+retention policy.
+
+**Retention.** No automatic cleanup is shipped — the table grows
+linearly with failure volume. For a moderately-trafficked install
+that means handfuls of rows per week. Operators with high failure
+volume (or a compliance retention ceiling) can wire a Celery beat
+task that runs `BackChannelLogoutAttempt.objects.filter(
+created_at__lt=cutoff).delete()` on a schedule, mirroring the
+pattern used for `clear_expired_tokens` in §2.
+
+**Forwarding to SIEM.** Connect a second receiver to
+`oidc_logout_dispatched` under a different `dispatch_uid` —
+`record_backchannel_logout_attempt` does not consume the signal.
+SIEM forwarders typically combine `application_id` + `user_pk` +
+`reason` into a structured log line; the curated
+`LogoutAuditBody` TypedDict documents the safe-to-forward field
+set.
 
 ## 8. Out of scope — feature v2 (session-scoped logout)
 

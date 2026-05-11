@@ -251,6 +251,7 @@ def dispatch_backchannel_logout(
         oidc_logout_dispatched.send(
             sender=BackChannelLogoutSender,
             application=application,
+            user_pk=getattr(user, "pk", None),
             jti="",
             success=False,
             attempt_count=0,
@@ -291,6 +292,7 @@ def dispatch_backchannel_logout(
             oidc_logout_dispatched.send(
                 sender=BackChannelLogoutSender,
                 application=application,
+                user_pk=getattr(user, "pk", None),
                 jti=jti_value,
                 success=False,
                 attempt_count=0,

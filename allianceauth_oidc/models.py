@@ -6,6 +6,7 @@ import concurrent.futures
 import ipaddress
 import logging
 import socket
+from typing import Any
 from urllib.parse import urlsplit
 
 from allianceauth.authentication.models import State
@@ -276,3 +277,107 @@ class AllianceAuthApplication(AbstractApplication):
                 _("Can Authenticate External Apps with OIDC"),
             )
         ]
+
+
+class BackChannelLogoutAttempt(models.Model):
+    """
+    Dead-letter / audit row for one ``oidc_logout_dispatched`` event.
+
+    Per-event (not per-``jti``): the dispatcher and the Celery task
+    emit exactly one terminal ``oidc_logout_dispatched`` signal per
+    logout_token, so a row maps 1:1 to a single dispatch outcome.
+    Celery's per-request 5xx retries are transparent — only the
+    final ``retries_exhausted`` (or earlier terminal status) lands
+    here.
+
+    Defaults to recording **failures only**. Set
+    ``ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS=True`` to also record
+    successful dispatches (e.g. for full SIEM correlation); off by
+    default keeps this table focused on what its name promises —
+    deliveries that need operator attention.
+
+    The ``user_pk`` column is a plain integer (not an FK) because
+    the ``user_deleted`` trigger fires AFTER the row is gone. A
+    nullable column with no FK constraint keeps the audit log
+    historically faithful even when the originating user no longer
+    exists. Use :meth:`get_user` for a best-effort lookup.
+    """
+
+    application = models.ForeignKey(
+        "AllianceAuthApplication",
+        on_delete=models.CASCADE,
+        related_name="backchannel_logout_attempts",
+        verbose_name=_("Application"),
+    )
+    user_pk = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name=_("User PK"),
+        help_text=_(
+            "Integer primary key of the user whose session was being terminated. Not a ForeignKey because the ``user_deleted`` trigger fires after the row is removed."  # noqa: E501
+        ),
+    )
+    # ``uuid4().hex`` is 32 chars; blank string is intentional for the
+    # ``broker_unavailable`` / ``signing_kid_resolve_failed`` cases
+    # where the dispatcher never got far enough to mint a jti.
+    jti = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name=_("JTI"),
+    )
+    success = models.BooleanField(
+        db_index=True,
+        verbose_name=_("Success"),
+    )
+    attempt_count = models.PositiveSmallIntegerField(
+        default=1,
+        verbose_name=_("Attempt count"),
+        help_text=_(
+            "1-based attempt number from the Celery task (1 = first try). Dispatcher-side failures (broker_unavailable, signing_kid_resolve_failed) record 0 because no HTTP attempt was made."  # noqa: E501
+        ),
+    )
+    reason = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name=_("Reason"),
+        help_text=_(
+            "Stable string identifying the dispatch outcome: trigger reason (user_revoked/...) on success, or failure mode (redirect_blocked, rp_client_error, retries_exhausted, signing_kid_retired, broker_unavailable, signing_kid_resolve_failed) on failure."  # noqa: E501
+        ),
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        verbose_name=_("Created at"),
+    )
+
+    class Meta:
+        # Newest failures first — operator scanning the dead-letter
+        # admin wants "what broke recently", not chronological replay.
+        ordering = ("-created_at",)
+        verbose_name = _("Back-Channel Logout attempt")
+        verbose_name_plural = _("Back-Channel Logout attempts")
+        indexes = [
+            # Per-RP timeline: "show me failures for app X".
+            models.Index(fields=["application", "-created_at"]),
+            # Failure-only scan: "show me everything that broke today".
+            models.Index(fields=["success", "-created_at"]),
+        ]
+
+    @override
+    @override
+    def __str__(self) -> str:
+        status = "OK" if self.success else "FAIL"
+        # ``application_id`` is the FK's implicit shadow column. The
+        # type checker's Django stub does not expose it on the model
+        # class, so an ``Any``-typed self-cast keeps the annotation
+        # honest without dragging in a per-line ``type: ignore``.
+        self_any: Any = self
+        return (
+            f"BCL {status} app={self_any.application_id} "
+            f"jti={self.jti or '-'} reason={self.reason or '-'}"
+        )

@@ -39,6 +39,12 @@ from .logout import apps_with_active_tokens
 from .security import DEFAULT_POLICY
 from .signals import oidc_logout_required
 
+# settings.ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS — when True, the
+# dead-letter receiver also records successful dispatches. Off by
+# default keeps the audit table focused on what the name promises:
+# delivery attempts that need operator attention.
+_AUDIT_SUCCESS_SETTING = "ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS"
+
 logger = logging.getLogger(f"extensions.{__name__}")
 
 UID_IS_ACTIVE_PRE_SAVE = "allianceauth_oidc.is_active_pre_save"
@@ -212,6 +218,81 @@ def on_user_post_delete(sender: Any, instance: Any, **kwargs: Any) -> None:
         )
 
 
+# ---------- BCL dead-letter / audit recorder ----------
+
+
+def record_backchannel_logout_attempt(
+    sender: Any,
+    application: Any,
+    jti: str,
+    success: bool,
+    attempt_count: int,
+    user_pk: int | None = None,
+    reason: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Persist one ``oidc_logout_dispatched`` event as a
+    :class:`allianceauth_oidc.models.BackChannelLogoutAttempt` row.
+
+    By default records only failures (``success is False``); flip
+    ``settings.ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS=True`` to also
+    record successful dispatches.
+
+    Defensive against partial bodies: ``application`` may be the
+    model or a duck-typed mock during tests, and ``user_pk`` is
+    optional (older custom senders may not pass it). ``int()`` on
+    ``user_pk`` normalises None / numeric strings / odd types into
+    either an int or None so the model column never receives garbage.
+    """
+    from django.conf import settings
+
+    from .models import BackChannelLogoutAttempt
+
+    audit_success = getattr(settings, _AUDIT_SUCCESS_SETTING, False)
+    if success and not audit_success:
+        return
+    app_pk = getattr(application, "pk", None)
+    if app_pk is None:
+        # Without an FK target we can't write a row; the signal
+        # contract guarantees ``application`` is a real Application
+        # in every code path the project owns, so this branch only
+        # fires for malformed third-party senders. WARN so operators
+        # can spot the misuse.
+        logger.warning(
+            "OIDC BCL: dead-letter recorder received oidc_logout_dispatched without an application — skipping row"  # noqa: E501
+        )
+        return
+    normalised_user_pk: int | None
+    if user_pk is None:
+        normalised_user_pk = None
+    else:
+        try:
+            normalised_user_pk = int(user_pk)
+        except (TypeError, ValueError):
+            normalised_user_pk = None
+    try:
+        BackChannelLogoutAttempt.objects.create(
+            application_id=app_pk,
+            user_pk=normalised_user_pk,
+            jti=jti or "",
+            success=bool(success),
+            attempt_count=int(attempt_count or 0),
+            reason=reason or "",
+        )
+    except Exception:
+        # Audit MUST NOT break the dispatcher. Failing to persist a
+        # dead-letter row is logged with a traceback and swallowed
+        # so the originating signal sender (Celery task or
+        # dispatcher) finishes its own work normally.
+        logger.exception(
+            "OIDC BCL: failed to persist dead-letter row (app_pk=%s, jti=%s, reason=%s)",  # noqa: E501
+            app_pk,
+            jti,
+            reason,
+        )
+
+
 def connect_all() -> None:
     """
     Wire every receiver in this module against its signal under the
@@ -226,6 +307,15 @@ def connect_all() -> None:
         post_save,
         pre_delete,
         pre_save,
+    )
+
+    from .constants import BCL_AUDIT_DISPATCH_UID
+    from .signals import oidc_logout_dispatched
+
+    oidc_logout_dispatched.connect(
+        record_backchannel_logout_attempt,
+        dispatch_uid=BCL_AUDIT_DISPATCH_UID,
+        weak=False,
     )
 
     User = get_user_model()
