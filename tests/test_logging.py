@@ -10,13 +10,13 @@ import logging
 from django.test import override_settings
 from oauth2_provider.models import get_access_token_model
 
+from ._jwt_helpers import _jwt_mode_oauth2_provider, split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
     SCOPE_OPENID,
     OIDCTestCase,
 )
-from .test_jwt_access_tokens import _jwt_mode_oauth2_provider, split_jwt
 
 TOKEN_VIEW_LOGGER = "extensions.allianceauth_oidc.views_token"
 

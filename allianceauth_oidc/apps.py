@@ -38,7 +38,7 @@ def _check_jwt_wiring() -> None:
     Public name (no leading underscore on the docstring level)
     despite the ``_`` prefix on the symbol — the function is
     importable for direct testing under ``override_settings`` (see
-    ``tests/test_jwt_access_tokens.py::TestStartupWiringCheck``).
+    ``tests/test_jwt_validation.py::TestStartupWiringCheck``).
     """
     try:
         from oauth2_provider.settings import oauth2_settings
