@@ -779,3 +779,83 @@ class TestHostHeaderPoisoning(OIDCTestCase):
             location,
             f"redirect Location leaked attacker Host: {location!r}",
         )
+
+
+class TestIssParamInAuthzResponse(OIDCTestCase):
+    """
+    RFC 9207 — *OAuth 2.0 Authorization Server Issuer Identification*.
+
+    The RFC closes the "mix-up attack" class (RFC 9700 §4.4) by
+    requiring the AS to echo its ``iss`` (issuer URL) in the
+    authorize redirect. The RP, federated to multiple ASes, then
+    verifies the redirect originated from the AS it initiated the
+    flow with — without ``iss`` the RP cannot distinguish a code
+    issued by AS-honest from one injected via AS-evil.
+
+    Current state of the upstream stack:
+
+    * django-oauth-toolkit 3.2 / oauthlib 3.x do **not** implement
+      RFC 9207. The authorize redirect contains ``code`` + ``state``
+      and nothing else; the discovery document does **not**
+      advertise ``authorization_response_iss_parameter_supported``.
+
+    These tests **document the gap**. They are deliberately
+    asymmetric — when DOT adopts RFC 9207 in a future minor, the
+    assertions flip from "absent" to "present and equals issuer",
+    which is the right time to revisit the policy layer and
+    consider whether to enforce the parameter at the AS side
+    independently of DOT.
+    """
+
+    def test_authorize_redirect_does_not_include_iss_parameter(self) -> None:
+        """
+        documents-gap: the 302 from /o/authorize/ on consent carries
+        only ``code`` and ``state``. When DOT ships RFC 9207, this
+        assertion flips to ``self.assertIn("iss", qs)`` and a
+        follow-up assertion equates ``qs["iss"][0]`` with the
+        discovery ``issuer`` URL.
+        """
+        self.grant_oidc_access(self.user1)
+        code, _, qs = self.authorize_post_and_extract_code(
+            self.user1,
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "iss-absent",
+                "allow": True,
+            },
+            expected_redirect_uri=REDIRECT_URI,
+        )
+        del code  # acknowledge that issuance is just a side-effect here
+        self.assertNotIn(
+            "iss",
+            qs,
+            "RFC 9207 ``iss`` parameter unexpectedly present — "
+            "DOT must have shipped support; flip this test to a "
+            "positive equality check against the discovery ``issuer``.",
+        )
+
+    def test_discovery_does_not_advertise_iss_parameter_support(self) -> None:
+        """
+        documents-gap: discovery does not yet carry
+        ``authorization_response_iss_parameter_supported: true``.
+
+        RFC 9207 §3 requires the AS to advertise the capability so
+        RPs can opt into stricter verification. Until DOT adds this
+        flag, RPs cannot tell if the AS is RFC 9207-compliant; pin
+        the current absence so a silent flip to ``True`` doesn't
+        bypass our review.
+        """
+        import json as _json
+
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        config = _json.loads(resp.content.decode("utf-8"))
+        self.assertNotIn(
+            "authorization_response_iss_parameter_supported",
+            config,
+            "DOT discovery shipped RFC 9207 advert — flip this test "
+            "to a positive ``assertTrue(config[...]) is True``.",
+        )
