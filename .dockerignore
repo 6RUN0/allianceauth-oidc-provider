@@ -1,3 +1,1 @@
-tests/conformance/results/
-tests/conformance/diagnostic_export/
-tests/conformance/reports/
+.artifacts/

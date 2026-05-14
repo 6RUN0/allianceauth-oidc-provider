@@ -26,7 +26,12 @@
 set -euo pipefail
 
 PLAN="oidcc-basic-certification-test-plan"
-RESULTS_DIR="tests/conformance/results"
+# ``.artifacts/`` is the project-wide convention for ephemeral
+# run-output (gitignored, dockerignored). Keeping source-of-truth
+# (``tests/conformance/*.py``, expected_failures.json, README)
+# separate from generated zips/JSON makes ``ls tests/conformance/``
+# tractable as the file count grows.
+RESULTS_DIR=".artifacts/conformance/results"
 COMPOSE_FILE="tests/conformance/docker-compose.yml"
 EXPECTED_FAILURES="tests/conformance/expected_failures.json"
 RUNNER_ARGS=()

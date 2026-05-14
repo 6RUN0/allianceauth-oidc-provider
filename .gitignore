@@ -151,12 +151,14 @@ desktop.ini
 styles/*
 !styles/config/
 
-# Conformance: per-module summary JSON artifacts produced by
-# ``run_per_module.sh``. Ephemeral results — review and discard.
-tests/conformance/results/
-
-# Conformance: per-plan HTML report archives downloaded via
-# ``GET /api/plan/exporthtml/{id}`` (see ``runner/client.py``).
-# Ephemeral — regeneratable from any rerun.
-tests/conformance/diagnostic_export/
-tests/conformance/reports/
+# Generated artifacts — anything a build/test step writes belongs
+# under ``.artifacts/`` (separate from ``dist/`` for wheel/sdist
+# output). Conformance suite outputs (``.artifacts/conformance/
+# results/`` per-module JSON summaries, ``.artifacts/conformance/
+# reports/`` plan HTML archives, ``.artifacts/conformance/
+# diagnostic_export/`` suite-UI exports) live here so source-of-
+# truth (``tests/conformance/*.py``, ``Dockerfile.provider``,
+# ``expected_failures.json``) stays separate from ephemeral run-
+# output. Defaults in ``run_per_module.sh`` and the README write
+# under this prefix.
+.artifacts/

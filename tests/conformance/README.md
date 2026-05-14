@@ -129,12 +129,15 @@ submission, or comparing against the next run. Pass `--export-dir`:
 ```sh
 uv run nox -s conformance -- \
   --plan oidcc-basic-certification-test-plan \
-  --export-dir tests/conformance/reports
+  --export-dir .artifacts/conformance/reports
 ```
 
 The runner downloads `GET /api/plan/exporthtml/{plan_id}` and writes
-a zip archive `reports/{plan_id}.zip` containing one HTML file per
-module. Mirrors the upstream `conformance.py:exporthtml()` pattern.
+a zip archive `{plan_id}.zip` into the directory you pass (the
+runner `mkdir -p`s it for you). `.artifacts/` is the project-wide
+ephemeral-output bucket — gitignored and dockerignored, separate
+from `dist/` (wheel/sdist build output). Mirrors the upstream
+`conformance.py:exporthtml()` pattern.
 
 ## Expected failures (XFAIL / XPASS)
 
@@ -168,9 +171,14 @@ so each one gets a fresh JVM:
 ```sh
 tests/conformance/run_per_module.sh \
   --plan oidcc-basic-certification-test-plan \
-  --results-dir tests/conformance/results \
+  --results-dir .artifacts/conformance/results \
   -- --exclude 'oidcc-userinfo-*'
 ```
+
+`--results-dir` defaults to `.artifacts/conformance/results`, so the
+flag is only needed when you want to keep multiple result sets side
+by side (e.g. `--results-dir .artifacts/conformance/results-aa4` for
+a matrix run).
 
 How it works:
 
