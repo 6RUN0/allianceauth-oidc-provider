@@ -1352,33 +1352,43 @@ class TestRedirectURIInjection(OIDCTestCase):
         with self.assertRaises(ValidationError):
             creds.app.full_clean()
 
-    def test_null_byte_in_registered_uri_currently_accepted_documents_gap(
-        self,
-    ) -> None:
+    def test_null_byte_in_registered_redirect_uri_rejected(self) -> None:
         r"""
-        NUL byte in path is currently NOT rejected by Django's
-        ``URLValidator`` (regex permits non-control bytes in path).
-        This test documents the gap: a registered URI containing
-        ``\x00`` survives ``full_clean()``.
+        NUL byte in path MUST fail validation.
 
-        Why this matters: legacy C-string parsers (some load
-        balancers, log analysers) truncate at NUL — an attacker who
-        registers ``https://rp.example/cb\x00.evil/`` may see the
-        AS dispatch to ``https://rp.example/cb`` while the audit log
-        records the full string. Hardening: add a ``\x00 in value``
-        check to ``AllianceAuthApplication.clean``.
-
-        If this test starts failing (rejection), the hardening landed
-        — flip the assertion to ``assertRaises(ValidationError)``.
+        Django's stock ``URLValidator`` regex permits non-control
+        bytes including ``\x00`` in the path segment; the project
+        adds an explicit ``\x00 in value`` check in
+        :meth:`AllianceAuthApplication._validate_no_nul_in_uri_fields`
+        because legacy C-string parsers (load balancers, log
+        analysers, syslog) truncate at NUL and would otherwise
+        dispatch to a different URI than the audit log records.
         """
+        from django.core.exceptions import ValidationError
+
         from ._factories import make_app
 
         creds = make_app(
             owner=self.user1,
             redirect_uri="https://rp.example/cb\x00evil",
         )
-        # Currently accepted — full_clean must not raise.
-        creds.app.full_clean()
+        with self.assertRaises(ValidationError) as ctx:
+            creds.app.full_clean()
+        self.assertIn("redirect_uris", ctx.exception.error_dict)
+
+    def test_null_byte_in_post_logout_redirect_uri_rejected(self) -> None:
+        r"""Symmetric: NUL byte in ``post_logout_redirect_uris``."""
+        from django.core.exceptions import ValidationError
+
+        from ._factories import make_app
+
+        creds = make_app(owner=self.user1)
+        creds.app.post_logout_redirect_uris = (
+            "https://rp.example/logged-out\x00evil"
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            creds.app.full_clean()
+        self.assertIn("post_logout_redirect_uris", ctx.exception.error_dict)
 
     def test_idn_punycode_byte_mismatch_rejected(self) -> None:
         """

@@ -227,6 +227,42 @@ class AllianceAuthApplication(AbstractApplication):
             )
         if self.backchannel_logout_uri:
             self._validate_backchannel_logout_uri()
+        self._validate_no_nul_in_uri_fields()
+
+    def _validate_no_nul_in_uri_fields(self) -> None:
+        r"""
+        Reject NUL bytes (``\x00``) in registered URI fields.
+
+        Django's stock ``URLValidator`` regex permits non-control
+        bytes in the path segment, including the NUL byte — so a
+        URI like ``https://rp/cb\x00.evil/`` survives ``full_clean``
+        on a vanilla ``URLField``. Legacy C-string parsers (some
+        load balancers, log analysers, syslog forwarders) truncate
+        at the first NUL and would dispatch to ``https://rp/cb``
+        while the audit log records the full ``.../cb\x00.evil/``
+        string. Reject up front so the registered URI cannot mean
+        two different things to two different consumers.
+
+        Keyed per field so the admin form points at the offending
+        input.
+        """
+        for field in (
+            "redirect_uris",
+            "post_logout_redirect_uris",
+            "backchannel_logout_uri",
+        ):
+            value = getattr(self, field, "") or ""
+            if "\x00" in value:
+                raise ValidationError(
+                    {
+                        field: _(
+                            "NUL byte (\\x00) is not permitted in URI "
+                            "fields; legacy parsers truncate at NUL "
+                            "and would mean two different things to "
+                            "two different consumers."
+                        ),
+                    }
+                )
 
     def _validate_backchannel_logout_uri(self) -> None:
         """
