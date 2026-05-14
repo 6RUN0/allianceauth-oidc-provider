@@ -155,38 +155,13 @@ class TestUiLocalesParameter(OIDCTestCase):
                 resp = self._authorize_with_locales(value)
                 self.assertLess(resp.status_code, 500)
 
-    def test_ui_locales_does_not_leak_into_id_token_locale_claim(
-        self,
-    ) -> None:
-        """
-        ``ui_locales`` MUST NOT silently override ``locale`` claim.
-
-        ``locale`` in the id_token / userinfo is sourced from
-        ``user.profile.language`` — the user's actual preference.
-        A request-time ``ui_locales`` is a UI hint, not an identity
-        claim, and confusing the two would let an attacker forge a
-        ``locale`` claim by re-authenticating with a crafted
-        request.
-        """
-        self.grant_oidc_access(self.user1)
-        tokens = self.run_code_flow(
-            self.user1,
-            state="locales-no-leak",
-            extra_authorize_params={"ui_locales": "fr-FR de-DE"},
-        )
-        # Decode id_token without signature check — only inspect ``locale``.
-        import base64
-
-        seg = tokens["id_token"].split(".", 2)[1]
-        padding = "=" * (-len(seg) % 4)
-        claims = json.loads(
-            base64.urlsafe_b64decode(seg + padding).decode("utf-8")
-        )
-        # ``locale`` is in id_token only when explicitly requested.
-        # Here we just confirm it's NOT one of the ui_locales values
-        # — i.e. the request hint didn't bleed into the claim.
-        leaked = claims.get("locale")
-        self.assertNotIn(leaked, ("fr-FR", "de-DE"))
+    # The full ui_locales-vs-profile.language identity contract is
+    # pinned at the /userinfo HTTP level by
+    # ``test_conformance.TestLocaleNegotiation
+    # .test_locale_claim_follows_user_profile_not_request_locale``.
+    # Duplicating it here would only re-test the same boundary
+    # against a weaker observation point (id_token §5.4 hides
+    # ``locale`` by design — see ``get_id_token_dictionary``).
 
 
 class TestLoginHintParameter(OIDCTestCase):
