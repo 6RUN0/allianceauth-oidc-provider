@@ -125,3 +125,154 @@ class TestRevokeAndIntrospect(OIDCTestCase):
         self.assertEqual(200, resp.status_code)
         body = json.loads(resp.content.decode("utf-8"))
         self.assertFalse(body.get("active"))
+
+
+class TestRevokeRefreshTokenChainBehaviour(OIDCTestCase):
+    """
+    RFC 7009 §2.1 SHOULD clause: revoking a refresh token MAY (and
+    typically should) revoke the linked access tokens.
+
+    DOT's :class:`RefreshToken.revoke` deletes the linked
+    ``AccessToken`` row, so revoking an RT does invalidate the AT.
+    The reverse direction (revoke AT → leave RT alone) is left
+    open by the RFC; DOT keeps the RT independent. Both contracts
+    are pinned here so a future DOT change in either direction is
+    visible.
+    """
+
+    def _issue_tokens(self) -> dict:
+        self.grant_oidc_access(self.user1)
+        return self.run_code_flow(self.user1, state="rt-chain")
+
+    def _userinfo(self, access_token: str):
+        return self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {access_token}"},
+        )
+
+    def _revoke(self, token: str) -> int:
+        return self.client.post(
+            "/o/revoke_token/",
+            data={
+                "token": token,
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+            },
+        ).status_code
+
+    def test_revoking_refresh_token_invalidates_linked_access_token(
+        self,
+    ) -> None:
+        """
+        Revoke the RT; the AT issued together with it MUST no longer
+        authorize /o/userinfo/. DOT enforces this via
+        ``RefreshToken.revoke`` which deletes the linked AT row.
+        """
+        tokens = self._issue_tokens()
+        # Sanity: AT works before revoke.
+        self.assertEqual(
+            200, self._userinfo(tokens["access_token"]).status_code
+        )
+
+        status = self._revoke(tokens["refresh_token"])
+        self.assertEqual(200, status)
+
+        resp = self._userinfo(tokens["access_token"])
+        self.assertIn(
+            resp.status_code,
+            (401, 403),
+            "RFC 7009 §2.1 SHOULD: revoking RT must invalidate linked AT",
+        )
+
+    def test_revoking_access_token_leaves_refresh_token_independent(
+        self,
+    ) -> None:
+        """
+        Revoke just the AT; the RT remains usable to mint a new AT.
+        Pins DOT's "AT-only revoke does not cascade to RT" contract.
+        If DOT tightens to cascade (RFC 7009 permits this), flip the
+        assertion accordingly.
+        """
+        tokens = self._issue_tokens()
+        self._revoke(tokens["access_token"])
+
+        # The RT should still mint a fresh AT.
+        refresh_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+                "refresh_token": tokens["refresh_token"],
+            },
+        )
+        self.assertEqual(
+            200,
+            refresh_resp.status_code,
+            "DOT default: revoking AT alone leaves RT independent and "
+            "usable; if this fails, DOT now cascades AT revoke to RT",
+        )
+
+
+class TestSubClaimContract(OIDCTestCase):
+    """
+    The ``sub`` claim is the OIDC identifier the RP keys off.
+
+    Three invariants pinned:
+    - Stability: same user → same ``sub`` across multiple
+      authorizations.
+    - Uniqueness: different users → different ``sub``.
+    - Documented format: ``str(User.pk)``. The integer-PK choice
+      is "public-subject" semantics (Discovery §4.4 subject_types_supported
+      includes "public") — every RP gets the same sub for a given user.
+      If a future feature adds pairwise subjects, that design change
+      must flip this assertion deliberately.
+    """
+
+    def _sub_for(self, user) -> str:
+        self.grant_oidc_access(user)
+        info = self.client.get(
+            "/o/userinfo/",
+            headers={
+                "authorization": "Bearer "
+                + self.run_code_flow(user, state=f"sub-{user.username}")[
+                    "access_token"
+                ]
+            },
+        )
+        self.assertEqual(200, info.status_code)
+        return json.loads(info.content.decode("utf-8"))["sub"]
+
+    def test_sub_is_stable_across_separate_authorizations(self) -> None:
+        """
+        Two separate code-flow rounds for the same user MUST yield
+        the same ``sub`` claim.
+        """
+        sub1 = self._sub_for(self.user1)
+        # Re-issue: completely independent flow.
+        sub1_again = self.client.get(
+            "/o/userinfo/",
+            headers={
+                "authorization": "Bearer "
+                + self.run_code_flow(self.user1, state="sub-stable-2")[
+                    "access_token"
+                ]
+            },
+        )
+        body = json.loads(sub1_again.content.decode("utf-8"))
+        self.assertEqual(sub1, body["sub"])
+
+    def test_sub_differs_across_users(self) -> None:
+        """Two different users MUST yield different ``sub`` values."""
+        sub_user1 = self._sub_for(self.user1)
+        sub_user2 = self._sub_for(self.user2)
+        self.assertNotEqual(sub_user1, sub_user2)
+
+    def test_sub_format_is_documented_user_pk(self) -> None:
+        """
+        Pin the documented format: ``sub == str(User.pk)``. This is
+        the "public subject" design choice; pairwise subjects would
+        require a deliberate test update.
+        """
+        sub = self._sub_for(self.user1)
+        self.assertEqual(str(self.user1.pk), sub)
