@@ -9,7 +9,6 @@ tests/_jwt_helpers.py.
 
 from __future__ import annotations
 
-import base64
 import json
 from typing import Any
 
@@ -287,22 +286,6 @@ class TestBackcompatLifecycle(OIDCTestCase):
         super().setUp()
         self.grant_oidc_access(self.user1)
 
-    def _introspect(self, token: str) -> dict:
-        # DOT requires a confidential client to introspect.
-        resp = self.client.post(
-            "/o/introspect/",
-            data={"token": token},
-            headers={
-                "authorization": (
-                    "Basic "
-                    + base64.b64encode(
-                        f"{self.oauth_id}:{self.oauth_secret}".encode("ascii")
-                    ).decode("ascii")
-                )
-            },
-        )
-        return json.loads(resp.content)
-
     def test_existing_opaque_tokens_remain_valid_after_global_flip(
         self,
     ) -> None:
@@ -312,7 +295,7 @@ class TestBackcompatLifecycle(OIDCTestCase):
             opaque_at = body["access_token"]
         # Flip to JWT (decorator already applies). Now introspect the
         # opaque token.
-        intro = self._introspect(opaque_at)
+        intro = self.introspect_token(opaque_at)
         self.assertTrue(
             intro.get("active"),
             f"expected legacy opaque token to remain valid; got {intro!r}",
@@ -339,21 +322,6 @@ class TestJWTRevocation(OIDCTestCase):
         super().setUp()
         self.grant_oidc_access(self.user1)
 
-    def _introspect(self, token: str) -> dict:
-        resp = self.client.post(
-            "/o/introspect/",
-            data={"token": token},
-            headers={
-                "authorization": (
-                    "Basic "
-                    + base64.b64encode(
-                        f"{self.oauth_id}:{self.oauth_secret}".encode("ascii")
-                    ).decode("ascii")
-                )
-            },
-        )
-        return json.loads(resp.content)
-
     def _revoke(self, token: str) -> int:
         resp = self.client.post(
             "/o/revoke_token/",
@@ -373,11 +341,11 @@ class TestJWTRevocation(OIDCTestCase):
         self.assertEqual("at+jwt", header.get("typ"))
 
         # Token starts active.
-        self.assertTrue(self._introspect(jwt_at).get("active"))
+        self.assertTrue(self.introspect_token(jwt_at).get("active"))
         # RFC 7009 §2.2: success is 200 with empty body.
         self.assertEqual(200, self._revoke(jwt_at))
         # Post-revocation, introspection reports inactive.
-        self.assertFalse(self._introspect(jwt_at).get("active"))
+        self.assertFalse(self.introspect_token(jwt_at).get("active"))
 
     def test_revoke_legacy_opaque_token_after_format_flip(self) -> None:
         # Issue under opaque mode; the JWT-mode decorator is overridden
@@ -386,6 +354,6 @@ class TestJWTRevocation(OIDCTestCase):
             body = self.run_code_flow(self.user1)
             opaque_at = body["access_token"]
         # The class-level decorator (JWT mode) is back in effect.
-        self.assertTrue(self._introspect(opaque_at).get("active"))
+        self.assertTrue(self.introspect_token(opaque_at).get("active"))
         self.assertEqual(200, self._revoke(opaque_at))
-        self.assertFalse(self._introspect(opaque_at).get("active"))
+        self.assertFalse(self.introspect_token(opaque_at).get("active"))

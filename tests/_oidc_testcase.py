@@ -1,7 +1,7 @@
 import hashlib
 import json
 import os
-from base64 import urlsafe_b64encode
+from base64 import b64encode, urlsafe_b64encode
 from http import HTTPStatus
 from typing import Any, ClassVar, Final
 from urllib.parse import parse_qs, urlparse
@@ -313,6 +313,32 @@ class OIDCTestCase(TestCase):
         else:
             self.assertEqual(expected_status, resp.status_code)
         return resp
+
+    def introspect_token(
+        self,
+        token: str,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        POST /o/introspect/ for ``token`` using Basic auth.
+
+        Defaults to the fixture confidential client. RFC 7662 requires
+        a confidential authenticated requester — pass ``client_id`` /
+        ``client_secret`` to drive the endpoint with a different
+        principal.
+        """
+        cid = client_id or self.oauth_id
+        secret = client_secret or self.oauth_secret
+        # RFC 7617 Basic auth uses standard base64 (``+/``), not URL-safe.
+        creds = b64encode(f"{cid}:{secret}".encode("ascii")).decode("ascii")
+        resp = self.client.post(
+            INTROSPECT_URL,
+            data={"token": token},
+            headers={"authorization": f"Basic {creds}"},
+        )
+        return self.json_body(resp)
 
     def refresh_token(
         self,
