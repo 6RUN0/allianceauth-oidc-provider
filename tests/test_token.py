@@ -568,3 +568,187 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
             IssuedCodeAudit.objects.filter(pk=clean_fresh.pk).exists(),
             "fresh audit row must not be touched",
         )
+
+
+class TestPKCEAttackVectors(OIDCTestCase):
+    """
+    PKCE (RFC 7636) negative paths on /o/token/ and /o/authorize/.
+
+    ``TestPkceRequiredRefreshFlow`` covers the happy path; this class
+    closes the verifier-validation contract on the exchange step and
+    the challenge-presence contract on the authorize step. The OIDC
+    conformance suite's PKCE coverage routinely TIMEOUTs upstream
+    (HtmlUnit), so without these Python-side tests we have no
+    automated proof that a missing / wrong / downgraded verifier is
+    actually rejected.
+    """
+
+    def _pkce_app(self):
+        # ``pkce_required=True`` is per-app and resolved via the
+        # callable in test settings (``per_app_pkce_required``);
+        # ``skip_authorization=True`` short-circuits the consent page
+        # so ``authorize_get_default`` returns a 302 directly.
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+        return creds
+
+    def _issue_code_with_challenge(
+        self,
+        creds,
+        *,
+        challenge: str,
+        method: str = "S256",
+        state: str,
+    ) -> str:
+        from urllib.parse import parse_qs, urlparse
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state=state,
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": method,
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        return parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+    def test_exchange_without_verifier_when_challenge_was_set(self):
+        """
+        RFC 7636 §4.6: when ``code_challenge`` was sent on authorize,
+        the token request MUST include ``code_verifier``. Omitting it
+        must yield ``invalid_grant``.
+        """
+        creds = self._pkce_app()
+        _, challenge = self.make_pkce_pair()
+        code = self._issue_code_with_challenge(
+            creds, challenge=challenge, state="pkce-omit-verifier"
+        )
+
+        resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier=None,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertIn(resp.status_code, (400, 401))
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_exchange_with_wrong_verifier(self):
+        """
+        RFC 7636 §4.6: a verifier that does NOT hash (S256) to the
+        registered challenge must be rejected. Drawing a second fresh
+        PKCE pair makes the mismatch overwhelmingly likely (the
+        challenge space is 256 bits).
+        """
+        creds = self._pkce_app()
+        _, challenge = self.make_pkce_pair()
+        wrong_verifier, _ = self.make_pkce_pair()
+        code = self._issue_code_with_challenge(
+            creds, challenge=challenge, state="pkce-wrong-verifier"
+        )
+
+        resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier=wrong_verifier,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertIn(resp.status_code, (400, 401))
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_exchange_with_malformed_verifier_rejected(self):
+        """
+        A verifier shorter than RFC 7636 §4.1's 43-character minimum is
+        malformed; DOT rejects it via the same ``invalid_grant`` path
+        as a wrong-but-well-formed verifier. Pins that a length-shortcut
+        does not bypass the hash check.
+        """
+        creds = self._pkce_app()
+        _, challenge = self.make_pkce_pair()
+        code = self._issue_code_with_challenge(
+            creds, challenge=challenge, state="pkce-malformed-verifier"
+        )
+
+        resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier="too-short",
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertIn(resp.status_code, (400, 401))
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_authorize_without_challenge_when_pkce_required(self):
+        """
+        ``pkce_required=True`` on the application must cause /authorize/
+        to refuse a request that has no ``code_challenge``. Refusal
+        shape (error-redirect vs 400) depends on DOT's branch; both are
+        spec-compliant, the contract is "no code is issued".
+        """
+        creds = self._pkce_app()
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="pkce-missing-challenge",
+            extra={"client_id": creds.client_id},
+        )
+        self.assertIn(resp.status_code, (302, 400))
+        if resp.status_code == 302:
+            _, _, qs = self.parse_redirect(resp, (302,))
+            self.assertNotIn(
+                "code",
+                qs,
+                "PKCE-required app must NOT issue a code when "
+                "code_challenge is absent",
+            )
+            self.assertIn("error", qs)
+
+    def test_authorize_accepts_plain_method_documenting_dot_default(self):
+        """
+        DOT does not restrict ``code_challenge_method`` to S256 by
+        default — ``plain`` is accepted alongside S256. Pin this so a
+        future "S256 only" hardening lands with a deliberate test
+        change rather than a silent behaviour shift.
+
+        RFC 7636 §4.2 prefers S256 ("clients SHOULD use S256"), but the
+        spec permits ``plain``; tightening to S256-only is a project
+        policy decision, not a DOT default.
+        """
+        creds = self._pkce_app()
+        verifier, _ = self.make_pkce_pair()
+        # For ``plain``, the challenge is the verifier verbatim
+        # (RFC 7636 §4.2). Using the verifier as challenge means the
+        # exchange step has the matching value to send back.
+        code = self._issue_code_with_challenge(
+            creds,
+            challenge=verifier,
+            method="plain",
+            state="pkce-plain-method",
+        )
+
+        resp = self.exchange_code_with_verifier(
+            code=code,
+            verifier=verifier,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertEqual(200, resp.status_code)
+        body = json.loads(resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)
