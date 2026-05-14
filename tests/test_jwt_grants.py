@@ -136,6 +136,37 @@ class TestClientCredentials(OIDCTestCase):
         _, payload = split_jwt(token)
         self.assertNotIn("auth_time", payload)
 
+    def test_client_credentials_response_omits_id_token(self) -> None:
+        """
+        OIDC Core 1.0 §3 + RFC 6749 §4.4 — ``client_credentials`` is an
+        end-user-less grant. There is no authenticated subject whose
+        identity an id_token could attest to, so the token response
+        MUST NOT include one even when ``scope=openid`` is requested.
+
+        Without this pin, a future regression that mis-routes the
+        id_token generation hook (DOT historically did this on at
+        least one minor) would fabricate an id_token with
+        ``sub=<client_id>`` and any RP that trusts it would treat
+        the *client* as an authenticated end user.
+        """
+        resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self.cc_id,
+                "client_secret": self.cc_secret,
+                "scope": "openid",
+            },
+        )
+        self.assertEqual(200, resp.status_code, resp.content)
+        body = json.loads(resp.content)
+        self.assertNotIn(
+            "id_token",
+            body,
+            "client_credentials response MUST NOT carry id_token "
+            "(no end user to attest to)",
+        )
+
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
 class TestPasswordGrant(OIDCTestCase):
