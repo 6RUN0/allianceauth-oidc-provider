@@ -203,9 +203,11 @@ short reasons grouped into three classes:
    (HtmlUnit JS engine, manual screenshot upload). Add a line
    here if a future plan or upstream change surfaces a real
    provider-side gap.
-2. **HtmlUnit upstream issues** (~18 modules) — TIMEOUT in the
-   suite-side browser even with per-module restart. These come back
-   only when the suite ships a newer HtmlUnit (4.13+).
+2. **HtmlUnit upstream issues** (~15 modules) — TIMEOUT or
+   browser-driver FAILED in the suite-side browser even with
+   per-module restart. These come back only when the suite ships a
+   newer HtmlUnit (4.13+) or a Selenium release that fixes
+   ``HtmlUnitDriver`` element resolution.
 3. **Suite-side SKIP** (3 modules) — `oidcc-scope-{address,phone,all}`
    the suite skips because we do not advertise these scopes in
    discovery. Listed so they don't tilt the exit code.
