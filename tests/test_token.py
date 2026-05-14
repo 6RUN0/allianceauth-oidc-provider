@@ -386,3 +386,185 @@ class TestPkceRequiredRefreshFlow(OIDCTestCase):
         self.assertEqual(200, refresh_resp.status_code)
         refreshed = json.loads(refresh_resp.content.decode("utf-8"))
         self.assertIn("access_token", refreshed)
+
+
+class TestCodeReuseTokenRevocation(OIDCTestCase):
+    """
+    Authorization-code reuse must invalidate any tokens previously
+    issued from that code.
+
+    RFC 6749 §10.5: ``If an authorization code is used more than once,
+    the authorization server MUST deny the request and SHOULD revoke
+    (when possible) all tokens previously issued based on that
+    authorization code.``
+
+    DOT 3.2.0 enforces the MUST half (re-exchange returns
+    ``invalid_grant`` because the Grant row is deleted on first use),
+    but leaves the already-issued AccessToken / RefreshToken usable
+    until their natural expiry. The OpenID Conformance Suite's
+    ``oidcc-codereuse-30seconds`` module surfaces this gap as a
+    WARNING via ``EnsureHttpStatusCodeIs4xx`` on the post-reuse
+    ``/o/userinfo/`` probe.
+    """
+
+    def _userinfo(self, access_token: str):
+        return self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {access_token}"},
+        )
+
+    def test_access_token_revoked_when_code_replayed(self):
+        """
+        After a second ``POST /o/token/`` with the same code returns
+        ``invalid_grant``, the access_token issued by the FIRST
+        exchange must no longer be accepted at ``/o/userinfo/``.
+        """
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="code-replay-at")
+
+        first = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+        )
+        body = json.loads(first.content.decode("utf-8"))
+        access_token = body["access_token"]
+
+        # Sanity: the freshly-issued access_token works before reuse.
+        sanity = self._userinfo(access_token)
+        self.assertEqual(
+            200,
+            sanity.status_code,
+            "access_token must be valid immediately after issue",
+        )
+
+        # Replay the SAME authorization code — DOT must reject this.
+        replay = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+            expected_status=400,
+        )
+        self.assertOAuthError(replay, expected_error="invalid_grant")
+
+        # The access_token issued from that code must now be revoked.
+        revoked = self._userinfo(access_token)
+        self.assertIn(
+            revoked.status_code,
+            (401, 403),
+            "RFC 6749 §10.5: access_token issued from a reused code "
+            "must be revoked; /userinfo returned "
+            f"{revoked.status_code} with token still usable",
+        )
+
+    def test_refresh_token_revoked_when_code_replayed(self):
+        """
+        Same defence-in-depth for refresh_token: a code-reuse event
+        must invalidate the refresh_token issued from the original
+        exchange, otherwise an attacker who replays the code (and is
+        rate-limited at /token/) can still mint fresh access_tokens
+        via the refresh flow indefinitely.
+        """
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="code-replay-rt")
+
+        first = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+        )
+        body = json.loads(first.content.decode("utf-8"))
+        refresh = body["refresh_token"]
+
+        self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+            expected_status=400,
+        )
+
+        resp = self.refresh_token(
+            refresh_token=refresh, expected_status=(400, 401)
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_audit_row_created_on_first_exchange(self):
+        """
+        Sanity: a successful code exchange records exactly one
+        ``IssuedCodeAudit`` row keyed on the sha256 of the code.
+        """
+        import hashlib
+
+        from allianceauth_oidc.models import IssuedCodeAudit
+
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="audit-row-test")
+        self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+        )
+
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        audit = IssuedCodeAudit.objects.filter(
+            code_hash=code_hash, application=self.oauth_app
+        ).first()
+        self.assertIsNotNone(audit, "audit row must be created on exchange")
+        self.assertEqual(0, audit.reuse_count)
+        self.assertIsNotNone(audit.access_token_pk)
+        self.assertIsNotNone(audit.refresh_token_pk)
+
+    def test_cleanup_drops_clean_old_audits_but_keeps_reused_ones(self):
+        """
+        ``clear_expired_tokens`` deletes ``IssuedCodeAudit`` rows
+        older than the refresh-token TTL ONLY when ``reuse_count=0``.
+        Rows that recorded a replay are forensic evidence and must
+        be preserved across the routine cleanup pass.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.settings import oauth2_settings
+
+        from allianceauth_oidc.models import IssuedCodeAudit
+        from allianceauth_oidc.tasks import clear_expired_tokens
+
+        refresh_ttl = oauth2_settings.REFRESH_TOKEN_EXPIRE_SECONDS
+        well_past = timezone.now() - timedelta(seconds=refresh_ttl + 60)
+
+        # Clean & old → should be deleted.
+        clean_old = IssuedCodeAudit.objects.create(
+            code_hash="a" * 64,
+            application=self.oauth_app,
+            reuse_count=0,
+        )
+        # Reused & old → must be preserved.
+        reused_old = IssuedCodeAudit.objects.create(
+            code_hash="b" * 64,
+            application=self.oauth_app,
+            reuse_count=1,
+        )
+        # Clean & fresh → must be preserved.
+        clean_fresh = IssuedCodeAudit.objects.create(
+            code_hash="c" * 64,
+            application=self.oauth_app,
+            reuse_count=0,
+        )
+        # Backdate the "old" rows. ``auto_now_add`` ignores assigns
+        # at creation; use a queryset update to bypass it.
+        IssuedCodeAudit.objects.filter(
+            pk__in=[clean_old.pk, reused_old.pk]
+        ).update(created_at=well_past)
+
+        clear_expired_tokens()
+
+        self.assertFalse(
+            IssuedCodeAudit.objects.filter(pk=clean_old.pk).exists(),
+            "clean old audit row must be cleaned up",
+        )
+        self.assertTrue(
+            IssuedCodeAudit.objects.filter(pk=reused_old.pk).exists(),
+            "reused audit row must be preserved as forensic evidence",
+        )
+        self.assertTrue(
+            IssuedCodeAudit.objects.filter(pk=clean_fresh.pk).exists(),
+            "fresh audit row must not be touched",
+        )

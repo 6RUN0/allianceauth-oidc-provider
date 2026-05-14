@@ -118,6 +118,7 @@ class AllianceAuthOIDC(AppConfig):
         from .app_settings import connect_invalidator
         from .logout import dispatch_backchannel_logout
         from .signals import (
+            connect_default_code_reuse_receiver,
             connect_default_logout_receiver,
             connect_default_receiver,
         )
@@ -129,6 +130,7 @@ class AllianceAuthOIDC(AppConfig):
         # as unused; ``E001_ID`` is the public id constant.
         _ = checks.E001_ID
         connect_default_receiver()
+        connect_default_code_reuse_receiver()
         connect_default_logout_receiver(dispatch_backchannel_logout)
         receivers.connect_all()
         connect_invalidator()

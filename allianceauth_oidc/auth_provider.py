@@ -587,7 +587,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         from django.utils import timezone
         from oauth2_provider.models import get_access_token_model
 
-        AccessToken = get_access_token_model()  # noqa: N806
+        AccessToken = get_access_token_model()
         active = AccessToken.objects.filter(
             user=user,
             application__client_id=getattr(client, "client_id", None),
@@ -614,10 +614,31 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         Ensure app/user policy is enforced during authorization_code
         exchange (before a token is persisted).
+
+        Also implements the RFC 6749 §10.5 SHOULD clause: if the code
+        is rejected by DOT (Grant missing), check the audit side-table
+        — a hit indicates the same code was successfully exchanged
+        earlier, so any tokens still in flight are revoked here.
+        DOT's MUST half (return ``invalid_grant``) survives the
+        defence-in-depth wrap.
         """
         if not super().validate_code(
             client_id, code, client, request, *args, **kwargs
         ):
+            try:
+                self._handle_potential_code_reuse(code, client)
+            except Exception:
+                # Defence-in-depth must never escalate to 500.
+                # The MUST half (``invalid_grant``) is already armed
+                # by ``super().validate_code`` returning False; this
+                # branch is a SHOULD overlay. A failing audit lookup
+                # or revocation gets logged loudly so the operator
+                # can investigate, but the protocol response is
+                # unchanged.
+                logger.exception(
+                    "OIDC: code-reuse detection failed; "
+                    "invalid_grant still returned"
+                )
             return False
         return self._enforce_policy(request, client)
 
@@ -668,7 +689,179 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 "OIDC policy skipped: save_bearer_token user=%s no_client",
                 user,
             )
-        return super().save_bearer_token(token, request, *args, **kwargs)
+        result = super().save_bearer_token(token, request, *args, **kwargs)
+        # Record the code → tokens link only for the original
+        # authorization_code exchange — refresh_token grants reuse the
+        # same audit row from the first exchange and would otherwise
+        # double-insert under a different code. ``request.code`` is set
+        # by oauthlib during ``authorization_code`` token requests.
+        if getattr(request, "grant_type", None) == "authorization_code":
+            code = getattr(request, "code", None)
+            if code:
+                try:
+                    self._record_code_issuance(code, request, token, client)
+                except Exception:
+                    # Same defence-in-depth posture as
+                    # ``validate_code``: a failed audit insert cannot
+                    # be allowed to break a legitimate token
+                    # issuance. Lose the SHOULD overlay, keep the
+                    # tokens; alert via the log instead.
+                    logger.exception(
+                        "OIDC: code-issuance audit failed for "
+                        "client_id=%s — revoke-on-reuse degraded "
+                        "for this code",
+                        getattr(client, "client_id", None),
+                    )
+        return result
+
+    def _record_code_issuance(self, code, request, token, client):
+        """
+        Persist the ``code_hash → (AccessToken, RefreshToken)`` link
+        used by :meth:`_handle_potential_code_reuse` for revocation.
+
+        Only the sha256 of the code is stored. ``token`` is the dict
+        oauthlib hands to ``save_bearer_token`` (raw bearer strings);
+        we re-query the persisted ``AccessToken`` / ``RefreshToken``
+        rows by their ``token`` column so we hold the database PKs,
+        not the bearer values, in the audit table.
+        """
+        import hashlib
+
+        from oauth2_provider.models import (
+            get_access_token_model,
+            get_refresh_token_model,
+        )
+
+        from .models import IssuedCodeAudit
+
+        application = client or getattr(request, "client", None)
+        if application is None:
+            return
+
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        AccessToken = get_access_token_model()
+        RefreshToken = get_refresh_token_model()
+
+        access_token_value = token.get("access_token")
+        refresh_token_value = token.get("refresh_token")
+        at_pk = (
+            AccessToken.objects.filter(token=access_token_value)
+            .values_list("pk", flat=True)
+            .first()
+            if access_token_value
+            else None
+        )
+        rt_pk = (
+            RefreshToken.objects.filter(token=refresh_token_value)
+            .values_list("pk", flat=True)
+            .first()
+            if refresh_token_value
+            else None
+        )
+
+        # ``update_or_create`` keeps the operation idempotent against
+        # a (vanishingly rare) replay of the issuance path that would
+        # otherwise trip the ``(code_hash, application)`` unique
+        # constraint and crash the issuance.
+        IssuedCodeAudit.objects.update_or_create(
+            code_hash=code_hash,
+            application=application,
+            defaults={
+                "access_token_pk": at_pk,
+                "refresh_token_pk": rt_pk,
+            },
+        )
+
+    def _handle_potential_code_reuse(self, code, client):
+        """
+        On a reuse hit, revoke the linked tokens and emit the
+        ``oidc_code_reuse_detected`` audit signal.
+
+        Token revocation goes through DOT's own ``RefreshToken.revoke``
+        (which cascades to its AccessToken via ``access_token.revoke``
+        → ``self.delete()``); calling DOT's API instead of mutating
+        the rows directly means future schema changes (e.g. a
+        ``revoked_at`` column or a soft-delete flag) take effect
+        without code edits here.
+        """
+        import hashlib
+
+        from django.db import transaction
+        from django.utils import timezone
+        from oauth2_provider.models import (
+            get_access_token_model,
+            get_refresh_token_model,
+        )
+
+        from .models import IssuedCodeAudit
+        from .signals import oidc_code_reuse_detected
+
+        if not code or client is None:
+            return
+
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        with transaction.atomic():
+            audit = (
+                IssuedCodeAudit.objects.select_for_update()
+                .filter(code_hash=code_hash, application=client)
+                .first()
+            )
+            if audit is None:
+                # No audit row — the code is genuinely unknown to
+                # this provider, not a replay. Caller will return
+                # False (``invalid_grant``) on its own.
+                return
+
+            at_pk = audit.access_token_pk
+            rt_pk = audit.refresh_token_pk
+
+            # ``RefreshToken.revoke`` deletes the linked AccessToken
+            # and stamps ``revoked`` on the refresh row. When no
+            # refresh token was issued (e.g. a future client config
+            # disabling refresh), fall through to ``AccessToken.revoke``
+            # which also calls ``.delete()`` — both result in the
+            # token row disappearing, so ``find_token`` at /userinfo
+            # returns None → 401.
+            AccessToken = get_access_token_model()
+            RefreshToken = get_refresh_token_model()
+            try:
+                refresh_token = (
+                    RefreshToken.objects.filter(pk=rt_pk).first()
+                    if rt_pk
+                    else None
+                )
+                if refresh_token is not None:
+                    refresh_token.revoke()
+                elif at_pk:
+                    access_token = AccessToken.objects.filter(pk=at_pk).first()
+                    if access_token is not None:
+                        access_token.revoke()
+            except Exception:
+                # If revocation itself failed (e.g. the AccessToken
+                # was already cleaned up by ``clear_expired_tokens``
+                # mid-transaction), still emit the audit signal and
+                # bump the counter — the missed revocation is itself
+                # a signal worth surfacing.
+                logger.exception(
+                    "OIDC: token revocation failed during "
+                    "code-reuse handling; emitting audit signal "
+                    "anyway"
+                )
+
+            audit.reuse_count += 1
+            audit.last_reuse_at = timezone.now()
+            audit.save(update_fields=["reuse_count", "last_reuse_at"])
+
+            reuse_count = audit.reuse_count
+
+        oidc_code_reuse_detected.send(
+            sender=type(self),
+            application=client,
+            code_hash=code_hash,
+            access_token_id=at_pk,
+            refresh_token_id=rt_pk,
+            reuse_count=reuse_count,
+        )
 
     def get_additional_claims(self, request):
         """Augment DOT's id_token/userinfo claims with AA-specific values."""

@@ -280,6 +280,82 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         self.assertEqual(1, len(self.captured))
 
 
+class TestOidcCodeReuseDetectedSignal(OIDCTestCase):
+    """
+    Contract test for ``oidc_code_reuse_detected``.
+
+    The signal is the documented SIEM/alerting hook for RFC 6749
+    §10.5 reuse events — receivers connect to it (not to logs) to
+    forward to external systems.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        from allianceauth_oidc.signals import oidc_code_reuse_detected
+
+        self.captured: list[dict] = []
+
+        def receiver(sender, **kwargs):
+            self.captured.append(kwargs)
+
+        oidc_code_reuse_detected.connect(
+            receiver, dispatch_uid="test-reuse-signal-capture"
+        )
+        self.addCleanup(
+            oidc_code_reuse_detected.disconnect,
+            dispatch_uid="test-reuse-signal-capture",
+        )
+
+    def test_signal_payload_on_code_reuse(self):
+        """
+        On code reuse the signal MUST fire exactly once with
+        ``application`` / ``code_hash`` / ``access_token_id`` /
+        ``refresh_token_id`` / ``reuse_count`` kwargs populated.
+        """
+        import hashlib
+
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="signal-reuse")
+        self.exchange_code_for_token(code=code, redirect_uri=REDIRECT_URI)
+        # Replay → signal fires.
+        self.exchange_code_for_token(
+            code=code, redirect_uri=REDIRECT_URI, expected_status=400
+        )
+
+        self.assertEqual(
+            1,
+            len(self.captured),
+            f"expected exactly one reuse signal, got {len(self.captured)}",
+        )
+        kw = self.captured[0]
+        self.assertEqual(self.oauth_app, kw["application"])
+        self.assertEqual(
+            hashlib.sha256(code.encode("utf-8")).hexdigest(),
+            kw["code_hash"],
+        )
+        self.assertIsNotNone(kw["access_token_id"])
+        self.assertIsNotNone(kw["refresh_token_id"])
+        self.assertEqual(1, kw["reuse_count"])
+
+    def test_signal_does_not_fire_for_unknown_code(self):
+        """
+        A token request with a code that was NEVER issued must NOT
+        produce a reuse-detected signal — that path returns
+        ``invalid_grant`` because of DOT's own ``Grant.DoesNotExist``,
+        unrelated to reuse.
+        """
+        self.exchange_code_for_token(
+            code="this-code-was-never-issued",
+            redirect_uri=REDIRECT_URI,
+            expected_status=400,
+        )
+        self.assertEqual(
+            0,
+            len(self.captured),
+            "no signal expected for codes never tracked by the audit table",
+        )
+
+
 class TestAuditReceiverErrorPath(SimpleTestCase):
     """
     Cover the defensive ``except`` in ``audit_oidc_token_issued``.

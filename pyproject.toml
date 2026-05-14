@@ -239,7 +239,10 @@ convention = "pep257"
 # oauthlib ``RequestValidator`` parent dictates the signature of
 # ``validate_silent_login(self, request)`` and similar; our overrides
 # accept the parameter even when policy decisions don't read it.
-"allianceauth_oidc/auth_provider.py" = [ "ARG002" ]
+# ``N806`` allows the Django idiom ``AccessToken = get_access_token_model()``
+# inside the validator helpers — mirrors the existing exemption on
+# ``models.py`` for the same upstream pattern.
+"allianceauth_oidc/auth_provider.py" = [ "ARG002", "N806" ]
 # OIDC Back-Channel Logout module: Django signal handlers accept
 # ``(sender, instance, **kwargs)`` — kwargs are required by the
 # dispatcher even when the body branches on the named args (ARG001).

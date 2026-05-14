@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from django.dispatch import Signal
 from typing_extensions import NotRequired
 
-from .constants import AUDIT_DISPATCH_UID, DEFAULT_LOGOUT_DISPATCH_UID
+from .constants import (
+    AUDIT_DISPATCH_UID,
+    CODE_REUSE_AUDIT_DISPATCH_UID,
+    DEFAULT_LOGOUT_DISPATCH_UID,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -156,6 +160,84 @@ def connect_default_receiver() -> None:
     oidc_token_issued.connect(
         audit_oidc_token_issued,
         dispatch_uid=AUDIT_DISPATCH_UID,
+    )
+
+
+# RFC 6749 §10.5 reuse-detection signal. Fired by
+# ``AllianceAuthOAuth2Validator.validate_code`` when a previously-issued
+# authorization code is presented again. By the time this fires the
+# validator has already revoked the linked AccessToken / RefreshToken;
+# the signal exists so operators can fan the event out to SIEM /
+# alerting independently of the WARNING log line.
+#
+# Receiver contract:
+#
+#     def my_receiver(
+#         sender, application, code_hash, access_token_id,
+#         refresh_token_id, reuse_count, **kwargs,
+#     ):
+#         ...
+#
+# - ``application`` is the :class:`AllianceAuthApplication` instance
+#   the reuse attempt targeted. May be ``None`` if reuse was detected
+#   against a deleted application row (the audit table preserves the
+#   ``application_id`` FK as SET_NULL, so this is rare but possible).
+# - ``code_hash`` is the sha256 hex of the replayed authorization
+#   code. Storing the hash (not the plaintext code) keeps audit logs
+#   forensically useful without re-introducing the secret.
+# - ``access_token_id`` / ``refresh_token_id`` are the PKs of the
+#   tokens that were revoked, or ``None`` if the audit row pointed at
+#   tokens that had already been cleaned up by
+#   :func:`tasks.clear_expired_tokens`.
+# - ``reuse_count`` is the post-increment count of replays observed
+#   for this code (>=1). Receivers can route higher counts to a more
+#   aggressive alert path.
+oidc_code_reuse_detected = Signal(use_caching=True)
+
+
+def audit_oidc_code_reuse_detected(
+    sender: object,
+    application: Any,
+    code_hash: str,
+    access_token_id: int | None,
+    refresh_token_id: int | None,
+    reuse_count: int,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
+    """
+    Default audit receiver — log the reuse event at WARNING.
+
+    The code hash is the only token-derived value on the wire, and
+    sha256 is one-way: receivers may forward this payload to SIEM
+    unchanged. Token PKs are integers (not the bearer strings) so
+    they too are safe to forward.
+    """
+    logger.warning(
+        "OIDC code-reuse detected client_id=%s app_id=%s code_hash=%s "
+        "revoked_access_token_id=%s revoked_refresh_token_id=%s "
+        "reuse_count=%s",
+        getattr(application, "client_id", None),
+        getattr(application, "id", None),
+        code_hash,
+        access_token_id,
+        refresh_token_id,
+        reuse_count,
+    )
+
+
+def connect_default_code_reuse_receiver() -> None:
+    """
+    Wire ``audit_oidc_code_reuse_detected`` to
+    ``oidc_code_reuse_detected``.
+
+    Mirror of :func:`connect_default_receiver` — wired from
+    :meth:`AllianceAuthOIDC.ready` so importing this module does not
+    have the side effect of connecting receivers.
+    """
+    oidc_code_reuse_detected.connect(
+        audit_oidc_code_reuse_detected,
+        dispatch_uid=CODE_REUSE_AUDIT_DISPATCH_UID,
     )
 
 

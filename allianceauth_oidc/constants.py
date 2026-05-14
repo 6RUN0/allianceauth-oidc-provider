@@ -24,6 +24,15 @@ PERM_ACCESS_OIDC: Final[str] = f"allianceauth_oidc.{PERM_ACCESS_OIDC_CODENAME}"
 # Tests that swap receivers in/out reuse this to avoid double-connecting.
 AUDIT_DISPATCH_UID: Final[str] = "allianceauth_oidc.audit_oidc_token_issued"
 
+# dispatch_uid for the default audit receiver of
+# ``oidc_code_reuse_detected``. Symmetry with :data:`AUDIT_DISPATCH_UID`
+# — operator-facing receivers (SIEM forwarders, alerting hooks)
+# connect with their own UID; this constant is the in-tree default so
+# tests can disconnect/replace without re-deriving the string.
+CODE_REUSE_AUDIT_DISPATCH_UID: Final[str] = (
+    "allianceauth_oidc.audit_oidc_code_reuse_detected"
+)
+
 # Celery task name. Operators reference this verbatim in
 # ``CELERYBEAT_SCHEDULE``; the README documents the same string.
 TASK_CLEAR_EXPIRED_TOKENS: Final[str] = (

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from datetime import timedelta
+from typing import Any, cast
 
 import requests
 from celery import shared_task
@@ -14,6 +15,7 @@ from oauth2_provider.models import (
     get_access_token_model,
     get_application_model,
 )
+from oauth2_provider.settings import oauth2_settings
 
 from . import __version__
 from ._metrics import bcl_delivery_seconds, tokens_cleaned
@@ -70,12 +72,34 @@ def clear_expired_tokens() -> None:
     # scope explicit so dashboards do not over-promise.
     removed = max(expired_before - expired_after, 0)
     tokens_cleaned.inc(removed)
+    # Drop ``IssuedCodeAudit`` rows that are both old AND clean
+    # (``reuse_count=0``): older than the refresh-token lifetime
+    # means the code could no longer be replayed against any token
+    # we'd be willing to mint, so the audit row carries no further
+    # value. Rows with ``reuse_count>=1`` are forensic evidence and
+    # are NOT auto-deleted — operators clean those up explicitly
+    # when their incident-review window closes.
+    from .models import IssuedCodeAudit  # local: avoid app-loading races
+
+    # ``oauth2_settings`` is the dynamic settings facade DOT exposes;
+    # the field is documented as ``int`` but basedpyright sees the
+    # facade's value-union (which spans every DOT setting). Use
+    # ``typing.cast`` to pin the runtime contract for the type
+    # checker without inserting a runtime check that would not match
+    # any real-world value.
+    refresh_ttl = cast("int", oauth2_settings.REFRESH_TOKEN_EXPIRE_SECONDS)
+    cutoff = now - timedelta(seconds=refresh_ttl)
+    audits_removed, _ = IssuedCodeAudit.objects.filter(
+        reuse_count=0,
+        created_at__lt=cutoff,
+    ).delete()
     logger.info(
-        "OIDC cleanup: removed_access=%d (before_access=%d, after_access=%d, duration=%.1f ms)",  # noqa: E501
+        "OIDC cleanup: removed_access=%d (before_access=%d, after_access=%d, duration=%.1f ms, audits_removed=%d)",  # noqa: E501
         removed,
         expired_before,
         expired_after,
         duration_ms,
+        audits_removed,
     )
 
 

@@ -409,3 +409,126 @@ class BackChannelLogoutAttempt(models.Model):
             f"BCL {status} app={self_any.application_id} "
             f"jti={self.jti or '-'} reason={self.reason or '-'}"
         )
+
+
+class IssuedCodeAudit(models.Model):
+    """
+    Side-table linking an authorization code (by hash) to the tokens
+    issued from it, so :meth:`AllianceAuthOAuth2Validator.validate_code`
+    can detect reuse and revoke the linked tokens.
+
+    DOT 3.2.0 deletes the ``Grant`` row on first successful exchange,
+    leaving ``validate_code`` unable to distinguish "code never
+    existed" from "code already used". RFC 6749 §10.5 makes the MUST
+    half (reject reuse) automatic — the deleted Grant produces
+    ``invalid_grant`` — but the SHOULD half (revoke all tokens issued
+    from the reused code) requires keeping the link alive past the
+    Grant's lifetime. This model is exactly that link.
+
+    Only a one-way ``sha256`` of the code is stored. The hash is
+    deterministic, so reuse-detection at validate-time can re-hash the
+    presented code and look it up; the plaintext code is never
+    persisted.
+
+    Growth is bounded by :func:`tasks.clear_expired_tokens`, which
+    drops rows older than ``REFRESH_TOKEN_EXPIRE_SECONDS`` with
+    ``reuse_count=0`` (no security signal, safe to forget) and keeps
+    rows with ``reuse_count>=1`` for forensic review until an explicit
+    operator cleanup.
+    """
+
+    code_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        verbose_name=_("Code hash"),
+        help_text=_(
+            "sha256 hex digest of the authorization code. One-way "
+            "by construction — the plaintext code is never stored."
+        ),
+    )
+    application = models.ForeignKey(
+        "AllianceAuthApplication",
+        on_delete=models.CASCADE,
+        related_name="+",
+        verbose_name=_("Application"),
+    )
+    # Plain integer PKs (not FKs) for the same reason
+    # ``BackChannelLogoutAttempt.user_pk`` is a plain integer: the
+    # audit row must survive the target's deletion (e.g. by
+    # ``clear_expired_tokens``). A FK with ``on_delete=SET_NULL``
+    # would mostly work but would also force Django's migration
+    # autodetector to walk DOT's swappable machinery for
+    # ``OAUTH2_PROVIDER_ACCESS_TOKEN_MODEL`` /
+    # ``OAUTH2_PROVIDER_REFRESH_TOKEN_MODEL``, neither of which this
+    # project sets at top level (only the Application swappable is
+    # exposed). Looking the tokens up by PK at reuse-detection time
+    # gives the same "live or gone" semantic without the dependency.
+    access_token_pk = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_("Access token PK"),
+        help_text=_(
+            "Integer primary key of the AccessToken row issued by "
+            "this code exchange. Resolved at reuse-detection time."
+        ),
+    )
+    refresh_token_pk = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_("Refresh token PK"),
+        help_text=_(
+            "Integer primary key of the RefreshToken row issued by "
+            "this code exchange. Resolved at reuse-detection time."
+        ),
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        verbose_name=_("Created at"),
+    )
+    reuse_count = models.PositiveIntegerField(
+        default=0,
+        verbose_name=_("Reuse count"),
+        help_text=_(
+            "Number of times this code was presented at /o/token/ "
+            "after the original exchange. >= 1 indicates a "
+            "security-relevant replay attempt."
+        ),
+    )
+    last_reuse_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_("Last reuse at"),
+    )
+
+    class Meta:
+        verbose_name = _("Issued authorization code audit")
+        verbose_name_plural = _("Issued authorization code audits")
+        # ``(code_hash, application)`` is the natural unique key — two
+        # distinct apps could theoretically collide on the same code
+        # value (the code generator is per-grant-record, not
+        # per-deployment, but the contract is stronger to defend
+        # against future generator changes).
+        constraints = [
+            models.UniqueConstraint(
+                fields=["code_hash", "application"],
+                name="uniq_codehash_per_app",
+            ),
+        ]
+        indexes = [
+            # Cleanup task scans by ``(reuse_count, created_at)`` —
+            # see ``tasks.clear_expired_tokens`` for the predicate.
+            models.Index(
+                fields=["reuse_count", "created_at"],
+                name="aaoidc_audit_cleanup_idx",
+            ),
+        ]
+
+    @override
+    def __str__(self) -> str:
+        self_any: Any = self
+        head = self.code_hash[:12] if self.code_hash else "-"
+        return (
+            f"IssuedCodeAudit app={self_any.application_id} "
+            f"code_hash={head}… reuse_count={self.reuse_count}"
+        )
