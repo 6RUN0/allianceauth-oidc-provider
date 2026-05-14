@@ -1027,3 +1027,46 @@ class TestRefreshScopeBoundary(OIDCTestCase):
                     "invalid_request",
                 },
             )
+
+
+class TestRefreshAfterUserDeactivation(OIDCTestCase):
+    """
+    Refresh-token grant after the end-user's account changes state.
+
+    Sibling to :class:`TestTokenPolicyGuards`, which already covers
+    "user lost the test group" and "user lost the global OIDC
+    permission". This class closes the ``user.is_active=False``
+    branch: a refresh that re-authenticates a deactivated user MUST
+    NOT mint a fresh access token.
+
+    The corresponding /o/userinfo/ behaviour is documented (and
+    deliberately not enforced) in
+    :class:`TestUserinfoAfterUserStateChange` — AT remains valid
+    until expiry, RT is where the deactivation contract is.
+    """
+
+    def test_refresh_denied_when_user_marked_inactive(self) -> None:
+        """
+        After ``user.is_active=False``, the refresh_token grant MUST
+        be rejected. Mirror of
+        ``test_refresh_token_denied_if_global_permission_removed``.
+        """
+        self.grant_oidc_access(self.user1)
+        body = self.run_code_flow(self.user1, state="refresh-inactive")
+        refresh = body["refresh_token"]
+
+        self.user1.is_active = False
+        self.user1.save()
+        self.user1.refresh_from_db()
+
+        resp = self.refresh_token(
+            refresh_token=refresh, expected_status=(400, 401)
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={
+                "invalid_grant",
+                "invalid_request",
+                "invalid_client",
+            },
+        )

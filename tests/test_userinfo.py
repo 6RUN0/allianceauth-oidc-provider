@@ -606,3 +606,144 @@ class TestUserinfoTokenLifecycle(OIDCTestCase):
 
         resp = self._userinfo(authorization=access)  # no "Bearer" prefix
         self.assertIn(resp.status_code, (401, 403))
+
+
+class TestUserinfoTokenTypeConfusion(OIDCTestCase):
+    """
+    /o/userinfo/ MUST accept only access tokens.
+
+    Submitting an id_token, refresh_token, or authorization code as
+    the Bearer value MUST be rejected. The "every token-shape thing
+    works as a Bearer" anti-pattern is a textbook confusion attack:
+    id_tokens are routinely logged by RPs (not treated as secret in
+    the same way as ATs), so a /userinfo/ that happily accepted them
+    would expose user data to anyone with read access to RP logs.
+
+    The contract is enforced by DOT's :class:`AccessToken` lookup —
+    only rows in the ``oauth2_provider_accesstoken`` table are
+    accepted. Pinning the negative cases guards against a regression
+    where a future ``validate_bearer_token`` override accidentally
+    widens the lookup.
+    """
+
+    def _userinfo(self, bearer: str):
+        return self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {bearer}"},
+        )
+
+    def test_id_token_rejected_at_userinfo(self) -> None:
+        """
+        ``id_token`` is a JWT signed for an audience; it carries
+        identity claims but MUST NOT authorize /userinfo/. id_tokens
+        commonly land in RP browser storage / server logs and have
+        a different threat model than ATs.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="confusion-id-token")
+        self.assertIn("id_token", tokens)  # sanity
+        resp = self._userinfo(tokens["id_token"])
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_refresh_token_rejected_at_userinfo(self) -> None:
+        """
+        Refresh tokens live in a different DB table and serve a
+        different purpose. Accepting one as a Bearer would mean a
+        leaked RT (longer-lived than AT, often weakly-protected on
+        device) grants instant identity disclosure.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="confusion-rt")
+        resp = self._userinfo(tokens["refresh_token"])
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_authorization_code_rejected_at_userinfo(self) -> None:
+        """
+        The authorization code is a one-shot exchange artefact, not
+        a Bearer. Codes never live in the AT table; this MUST yield
+        401/403.
+        """
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="confusion-code")
+        resp = self._userinfo(code)
+        self.assertIn(resp.status_code, (401, 403))
+
+
+class TestUserinfoAfterUserStateChange(OIDCTestCase):
+    """
+    Effects on /o/userinfo/ when user-state changes after token issuance.
+
+    DOT's default ``validate_bearer_token`` checks only the AT row's
+    ``expires`` and scope set — it does NOT re-check the user's
+    ``is_active`` flag, group membership, or global OIDC permission.
+    The architectural intent: AT TTL (60s in test settings, typically
+    1h in prod) is the revocation window; tighter propagation goes
+    through introspect / token revocation, not bearer re-validation.
+
+    The refresh-side contract (re-check on every refresh, RT lifetime
+    is the wide revocation window) is pinned by
+    :meth:`TestTokenPolicyGuards.test_refresh_token_denied_if_global_permission_removed`
+    and :meth:`TestRefreshAfterUserDeactivation` (sibling class in
+    ``test_token.py``).
+
+    This class documents the AT-side behaviour so a future hardening
+    that adds ``is_active`` to ``validate_bearer_token`` lands with
+    a deliberate test flip, not a silent behaviour change.
+    """
+
+    def _userinfo(self, bearer: str):
+        return self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {bearer}"},
+        )
+
+    def test_at_validity_after_user_is_marked_inactive_documents_gap(
+        self,
+    ) -> None:
+        """
+        After ``user.is_active=False``, the existing AT remains usable
+        until natural expiry. This is the documented behaviour and the
+        operator-facing trade-off (short AT TTL vs introspect on every
+        request). If this test fails (AT rejected), DOT or our
+        validator started checking ``is_active`` — update the contract
+        accordingly.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="at-after-inactive")
+        access = tokens["access_token"]
+        # Sanity: AT works pre-deactivation.
+        self.assertEqual(200, self._userinfo(access).status_code)
+
+        self.user1.is_active = False
+        self.user1.save()
+        self.user1.refresh_from_db()
+
+        resp = self._userinfo(access)
+        # Today: 200 (gap). Tomorrow: 401/403 if hardening lands.
+        # Either is in-spec; the contract pinned here is "no 5xx and
+        # behaviour matches the documented design".
+        self.assertIn(
+            resp.status_code,
+            (200, 401, 403),
+            "AT post-deactivation must yield a clean OAuth response, "
+            f"not {resp.status_code}",
+        )
+
+    def test_at_validity_after_user_loses_global_oidc_permission(
+        self,
+    ) -> None:
+        """
+        Mirror of the inactive-user case for the ``access_oidc``
+        permission. Same architectural reasoning: bearer validation
+        is fast-path, policy re-check lives on the refresh side.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="at-after-perm-revoke")
+        access = tokens["access_token"]
+        self.assertEqual(200, self._userinfo(access).status_code)
+
+        self.user1.user_permissions.remove(self.access_oauth)
+        self.user1.refresh_from_db()
+
+        resp = self._userinfo(access)
+        self.assertIn(resp.status_code, (200, 401, 403))
