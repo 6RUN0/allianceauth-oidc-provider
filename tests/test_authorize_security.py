@@ -394,3 +394,96 @@ class TestRequestObjectAndUriHandling(OIDCTestCase):
             "advertised as true unless request_uri fetch is "
             "implemented",
         )
+
+
+class TestAuthorizeInputBounds(OIDCTestCase):
+    """
+    DoS-resistance on /o/authorize/.
+
+    Extremely long or pathological inputs MUST NOT 5xx. Django
+    enforces ``DATA_UPLOAD_MAX_MEMORY_SIZE`` on the request body
+    (default 2.5MB) and ``DATA_UPLOAD_MAX_NUMBER_FIELDS`` on form-
+    encoded POSTs, but each endpoint can still parse parameters in
+    ways that escalate memory (regex backtracking, JSON parsing of
+    attacker-controlled blobs). The contract pinned: the endpoint
+    returns a clean 4xx for malformed input, never 5xx.
+    """
+
+    _LARGE = 200_000
+    # 200KB — enough to surface regex / JSON memory blowups; well
+    # under DATA_UPLOAD_MAX_MEMORY_SIZE so Django itself does not
+    # pre-empt the test by rejecting the body.
+
+    def _authorize(self, **extras):
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        data = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": "dos-bounds-default",
+        }
+        data.update(extras)
+        return self.client.get("/o/authorize/", data=data)
+
+    def test_extremely_long_state_does_not_5xx(self) -> None:
+        """``state=<200KB>`` — must be tolerated without 5xx."""
+        resp = self._authorize(state="A" * self._LARGE)
+        self.assertLess(resp.status_code, 500)
+
+    def test_extremely_long_scope_does_not_5xx(self) -> None:
+        """``scope=openid <200KB of space-delimited tokens>``."""
+        long_scope = "openid " + ("dosdosdos " * (self._LARGE // 10))
+        resp = self._authorize(scope=long_scope[: self._LARGE])
+        self.assertLess(resp.status_code, 500)
+
+    def test_extremely_long_client_id_does_not_5xx(self) -> None:
+        """``client_id=<200KB>`` — unregistered, must 4xx without 5xx."""
+        resp = self._authorize(client_id="X" * self._LARGE)
+        self.assertLess(resp.status_code, 500)
+
+    def test_extremely_long_redirect_uri_does_not_5xx(self) -> None:
+        """``redirect_uri=https://x/<200KB>`` — must 4xx without 5xx."""
+        long_uri = "https://rp.example/" + ("a" * self._LARGE)
+        resp = self._authorize(redirect_uri=long_uri)
+        self.assertLess(resp.status_code, 500)
+
+    def test_extremely_long_claims_json_does_not_5xx(self) -> None:
+        """
+        ``claims=<200KB of wide JSON>``.
+
+        The selector path in ``TestRequestedIdTokenClaimsSelector``
+        defends itself with ``try/except``; this test confirms the
+        HTTP layer survives the same pathological input.
+        """
+        keys = ",".join(f'"k{i}":null' for i in range(20_000))
+        claims_blob = '{"id_token":{' + keys + "}}"
+        resp = self._authorize(claims=claims_blob)
+        self.assertLess(resp.status_code, 500)
+
+    def test_repeated_response_type_param_does_not_5xx(self) -> None:
+        """
+        HTTP parameter pollution: ``response_type=code&response_type=token``.
+
+        Django's ``QueryDict`` keeps the LAST value by default for
+        ``request.GET[k]`` and exposes the full list via ``getlist``.
+        The AS must use one consistently and MUST NOT 5xx on the
+        duplicate.
+        """
+        from urllib.parse import urlencode
+
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        qs = urlencode(
+            [
+                ("response_type", "code"),
+                ("response_type", "token"),
+                ("client_id", self.oauth_id),
+                ("redirect_uri", REDIRECT_URI),
+                ("scope", SCOPE_OPENID),
+                ("state", "dup-rt"),
+            ]
+        )
+        resp = self.client.get(f"/o/authorize/?{qs}")
+        self.assertLess(resp.status_code, 500)
