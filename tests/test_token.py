@@ -1070,3 +1070,165 @@ class TestRefreshAfterUserDeactivation(OIDCTestCase):
                 "invalid_client",
             },
         )
+
+
+class TestAuthorizationCodeSubstitution(OIDCTestCase):
+    """
+    PKCE binds an authorization code to the verifier-of-issue.
+
+    Without PKCE the only thing that ties a ``code`` to its session
+    is the ``client_id`` — within the SAME client, an attacker who
+    captures one user's code can present it from a different session
+    and the AS cannot distinguish the swap. PKCE (RFC 7636) closes
+    this by injecting a per-session ``code_challenge`` at authorize
+    time and demanding the matching ``code_verifier`` at exchange.
+
+    Cross-client substitution is already pinned by
+    :class:`tests.test_multiapp.TestCrossClientCodeAbuse`. This class
+    closes the WITHIN-same-client variant — the attack that PKCE
+    actually solves.
+    """
+
+    def _pkce_app(self):
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
+        )
+        self.grant_oidc_access(self.user1)
+        return creds
+
+    def _issue_code_with_challenge(
+        self, creds, *, challenge: str, state: str
+    ) -> str:
+        from urllib.parse import parse_qs, urlparse
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state=state,
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        return parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+    def test_session_a_code_with_session_b_verifier_rejected(self) -> None:
+        """
+        Two parallel auth sessions for the same client / same user
+        issue code-A (bound to challenge-A / verifier-A) and code-B
+        (bound to challenge-B / verifier-B). Substituting verifier-B
+        when exchanging code-A MUST yield ``invalid_grant`` — the
+        hash mismatches.
+        """
+        creds = self._pkce_app()
+
+        verifier_a, challenge_a = self.make_pkce_pair()
+        verifier_b, challenge_b = self.make_pkce_pair()
+        # Sanity that the two pairs differ; the attack scenario relies
+        # on it.
+        self.assertNotEqual(verifier_a, verifier_b)
+        self.assertNotEqual(challenge_a, challenge_b)
+
+        code_a = self._issue_code_with_challenge(
+            creds, challenge=challenge_a, state="subst-a"
+        )
+
+        # Exchange code-A with the WRONG (session B) verifier.
+        resp = self.exchange_code_with_verifier(
+            code=code_a,
+            verifier=verifier_b,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertIn(resp.status_code, (400, 401))
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_session_b_code_with_session_a_verifier_rejected(self) -> None:
+        """Symmetric — the swap is rejected in both directions."""
+        creds = self._pkce_app()
+        verifier_a, _ = self.make_pkce_pair()
+        _, challenge_b = self.make_pkce_pair()
+
+        code_b = self._issue_code_with_challenge(
+            creds, challenge=challenge_b, state="subst-b"
+        )
+
+        resp = self.exchange_code_with_verifier(
+            code=code_b,
+            verifier=verifier_a,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+        self.assertIn(resp.status_code, (400, 401))
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+
+class TestConcurrentReuseLockingInvariant(OIDCTestCase):
+    """
+    Concurrent-reuse race guard — pin the ``select_for_update``
+    invariant.
+
+    Two simultaneous exchanges of the same code on a multi-process
+    server MUST NOT both succeed. The serial reuse case is pinned by
+    :meth:`TestCodeReuseTokenRevocation.test_access_token_revoked_when_code_replayed`;
+    the concurrent case requires DB-level row locking on the audit
+    table, implemented via ``IssuedCodeAudit.objects.select_for_update()``
+    inside :meth:`AllianceAuthOAuth2Validator._handle_potential_code_reuse`.
+
+    SQLite (in-memory) used for unit tests does not provide row-level
+    locks; truly racing two threads here is non-deterministic. Instead,
+    we pin the invariant by inspecting the audit-handling code path:
+    a regression that drops ``select_for_update`` from the queryset
+    re-opens the race on PostgreSQL deployments where it actually
+    matters.
+    """
+
+    def test_handle_potential_code_reuse_source_uses_atomic_and_lock(
+        self,
+    ) -> None:
+        """
+        Verify the source of ``_handle_potential_code_reuse`` contains
+        both ``transaction.atomic()`` and ``select_for_update()``.
+
+        The naive runtime check (``CaptureQueriesContext`` looking for
+        ``FOR UPDATE`` in emitted SQL) does not work under SQLite —
+        the Django SQLite backend silently strips the ``FOR UPDATE``
+        clause because the engine has no row-level locks. The contract
+        we are pinning is "the ORM call exists in the source"; whether
+        the engine honours it is engine-specific (PostgreSQL: yes,
+        SQLite: no). A regression that removes the call would re-open
+        the concurrent-double-exchange race on PostgreSQL.
+        """
+        import inspect
+
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        src = inspect.getsource(
+            AllianceAuthOAuth2Validator._handle_potential_code_reuse
+        )
+        self.assertIn(
+            "transaction.atomic()",
+            src,
+            "reuse handler MUST wrap the audit lookup + revocation in "
+            "an atomic block — required so both the SELECT and the "
+            "revoke() commit together",
+        )
+        self.assertIn(
+            "select_for_update()",
+            src,
+            "reuse handler MUST hold a row-level lock on the audit "
+            "row while revoking; concurrent exchanges on PostgreSQL "
+            "would both succeed without it",
+        )
