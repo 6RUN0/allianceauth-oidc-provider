@@ -420,40 +420,34 @@ class TestAuthorizeInputBounds(OIDCTestCase):
         data.update(extras)
         return self.client.get("/o/authorize/", data=data)
 
-    def test_extremely_long_state_does_not_5xx(self) -> None:
-        """``state=<200KB>`` — must be tolerated without 5xx."""
-        resp = self._authorize(state="A" * self._LARGE)
-        self.assertLess(resp.status_code, 500)
-
-    def test_extremely_long_scope_does_not_5xx(self) -> None:
-        """``scope=openid <200KB of space-delimited tokens>``."""
-        long_scope = "openid " + ("dosdosdos " * (self._LARGE // 10))
-        resp = self._authorize(scope=long_scope[: self._LARGE])
-        self.assertLess(resp.status_code, 500)
-
-    def test_extremely_long_client_id_does_not_5xx(self) -> None:
-        """``client_id=<200KB>`` — unregistered, must 4xx without 5xx."""
-        resp = self._authorize(client_id="X" * self._LARGE)
-        self.assertLess(resp.status_code, 500)
-
-    def test_extremely_long_redirect_uri_does_not_5xx(self) -> None:
-        """``redirect_uri=https://x/<200KB>`` — must 4xx without 5xx."""
-        long_uri = "https://rp.example/" + ("a" * self._LARGE)
-        resp = self._authorize(redirect_uri=long_uri)
-        self.assertLess(resp.status_code, 500)
-
-    def test_extremely_long_claims_json_does_not_5xx(self) -> None:
+    def test_extremely_long_parameter_does_not_5xx(self) -> None:
         """
-        ``claims=<200KB of wide JSON>``.
-
-        The selector path in ``TestRequestedIdTokenClaimsSelector``
-        defends itself with ``try/except``; this test confirms the
-        HTTP layer survives the same pathological input.
+        Sweep: ``state`` / ``scope`` / ``client_id`` / ``redirect_uri``
+        / ``claims`` MUST tolerate a 200KB attacker payload without
+        a 5xx. The selector path in ``TestRequestedIdTokenClaimsSelector``
+        defends itself with ``try/except``; this sweep confirms the
+        HTTP layer survives the same pathological inputs.
         """
-        keys = ",".join(f'"k{i}":null' for i in range(20_000))
-        claims_blob = '{"id_token":{' + keys + "}}"
-        resp = self._authorize(claims=claims_blob)
-        self.assertLess(resp.status_code, 500)
+        long_scope = ("openid " + ("dosdosdos " * (self._LARGE // 10)))[
+            : self._LARGE
+        ]
+        long_redirect = "https://rp.example/" + ("a" * self._LARGE)
+        wide_claims = (
+            '{"id_token":{'
+            + ",".join(f'"k{i}":null' for i in range(20_000))
+            + "}}"
+        )
+        cases = (
+            ("state", {"state": "A" * self._LARGE}),
+            ("scope", {"scope": long_scope}),
+            ("client_id", {"client_id": "X" * self._LARGE}),
+            ("redirect_uri", {"redirect_uri": long_redirect}),
+            ("claims", {"claims": wide_claims}),
+        )
+        for label, extras in cases:
+            with self.subTest(param=label):
+                resp = self._authorize(**extras)
+                self.assertLess(resp.status_code, 500)
 
     def test_repeated_response_type_param_does_not_5xx(self) -> None:
         """
@@ -532,62 +526,50 @@ class TestResponseTypeRestriction(OIDCTestCase):
                     f"fragment {fragment!r}",
                 )
 
-    def test_response_type_token_rejected(self) -> None:
+    _OAUTH_REJECT_ERRORS = frozenset(
+        {
+            "unsupported_response_type",
+            "unauthorized_client",
+            "invalid_request",
+        }
+    )
+
+    def test_non_code_response_types_rejected(self) -> None:
         """
-        ``response_type=token`` MUST yield an OAuth error redirect.
+        Every non-``code`` response_type MUST be rejected.
 
-        DOT gates per-app on ``authorization_grant_type``: our test
-        fixture is ``authorization_code``, so a request asking for
-        implicit flow comes back as ``unauthorized_client`` (the
-        client is not registered for the implicit grant). Either
-        ``unauthorized_client``, ``unsupported_response_type``, or
-        ``invalid_request`` is spec-compliant; the contract pinned
-        is "no token surfaces in the fragment".
+        Sweep covers ``token``, ``id_token``, the two §3.3 hybrid
+        pairs, and the §3.1.1 ``none`` value. The contract is
+        layered:
+
+        * No 5xx — the authorize dispatcher catches malformed flows
+          before they reach the grant machinery.
+        * No implicit token/id_token surfaces in the URL fragment.
+        * On the redirect branch, the OAuth error code lives in the
+          ``unsupported_response_type`` / ``unauthorized_client`` /
+          ``invalid_request`` set — DOT picks the variant based on
+          per-app grant-type policy, all three are spec-compliant
+          (RFC 6749 §4.1.2.1, OIDC §3.3 for hybrid, OIDC §3.1.1
+          for ``none``).
         """
-        resp = self._authorize_with_response_type("token", "rt-token")
-        self.assertLess(resp.status_code, 500)
-        self._assert_no_token_in_fragment(resp)
-        if resp.status_code in (301, 302, 303, 307, 308):
-            _, _, qs = self.parse_redirect(resp, (302, 303))
-            self.assertIn(
-                qs.get("error", [None])[0],
-                {
-                    "unsupported_response_type",
-                    "unauthorized_client",
-                    "invalid_request",
-                },
-            )
-
-    def test_response_type_id_token_rejected(self) -> None:
-        """``response_type=id_token`` (implicit OIDC) MUST be rejected."""
-        resp = self._authorize_with_response_type("id_token", "rt-idtok")
-        self.assertLess(resp.status_code, 500)
-        self._assert_no_token_in_fragment(resp)
-
-    def test_hybrid_code_id_token_rejected(self) -> None:
-        """``response_type=code id_token`` (OIDC §3.3 hybrid) rejected."""
-        resp = self._authorize_with_response_type(
-            "code id_token", "rt-hybrid-1"
+        cases = (
+            ("token", "rt-token"),
+            ("id_token", "rt-idtok"),
+            ("code id_token", "rt-hybrid-1"),
+            ("code token", "rt-hybrid-2"),
+            ("none", "rt-none"),
         )
-        self.assertLess(resp.status_code, 500)
-        self._assert_no_token_in_fragment(resp)
-
-    def test_hybrid_code_token_rejected(self) -> None:
-        """``response_type=code token`` rejected."""
-        resp = self._authorize_with_response_type("code token", "rt-hybrid-2")
-        self.assertLess(resp.status_code, 500)
-        self._assert_no_token_in_fragment(resp)
-
-    def test_response_type_none_rejected(self) -> None:
-        """
-        OIDC core 1.0 §3.1.1 — ``response_type=none`` is a valid
-        OIDC value meaning "no token, just consent recorded". The
-        project does not implement it; MUST be rejected, not
-        silently accepted.
-        """
-        resp = self._authorize_with_response_type("none", "rt-none")
-        self.assertLess(resp.status_code, 500)
-        self._assert_no_token_in_fragment(resp)
+        for response_type, state in cases:
+            with self.subTest(response_type=response_type):
+                resp = self._authorize_with_response_type(response_type, state)
+                self.assertLess(resp.status_code, 500)
+                self._assert_no_token_in_fragment(resp)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    _, _, qs = self.parse_redirect(resp, (302, 303))
+                    self.assertIn(
+                        qs.get("error", [None])[0],
+                        self._OAUTH_REJECT_ERRORS,
+                    )
 
     def test_discovery_advertises_only_code_response_type(self) -> None:
         """
