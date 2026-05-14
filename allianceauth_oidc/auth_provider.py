@@ -254,6 +254,52 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
     # do carry the Protocol annotations — they don't cross the parent
     # boundary, so Liskov compatibility doesn't bite there.
 
+    def validate_bearer_token(self, token, scopes, request):
+        """
+        Re-check user/app policy on every bearer-authenticated request.
+
+        DOT's default only checks ``AccessToken.expires`` and scope
+        membership — once an AT is issued, it stays valid for its full
+        TTL regardless of the end-user's current state. This override
+        symmetrises the contract with ``validate_code`` and
+        ``validate_refresh_token`` (both of which re-run the policy
+        gate): a user who lost the global ``access_oidc`` permission,
+        was marked inactive, fell out of the per-app state/group
+        whitelist, or whose application was deactivated, sees ``401``
+        on the next userinfo request rather than waiting for AT expiry.
+
+        Three layers, in order of cheapness:
+
+        1. ``app.is_usable`` — closes the ``active=False`` propagation
+           gap. The authorize endpoint's ``_get_app`` already filters
+           inactive apps; ``validate_code`` / ``_refresh_token`` get
+           the same via DOT's ``validate_client_id``. The bearer path
+           bypassed both — this is where we re-introduce the check.
+        2. ``_enforce_policy`` — global perm + per-app state/group
+           gate. Same routine the refresh path uses.
+
+        The per-request cost is one permission lookup plus one M2M
+        check for state/groups — typically ≤ 1ms thanks to Django's
+        per-user ``_perm_cache``. The security benefit is immediate
+        revocation propagation, which is the standard expectation for
+        incident response.
+
+        ``super()`` sets ``request.client`` / ``request.user`` before
+        returning True, so the policy check below runs with the same
+        client/user reference DOT just resolved.
+        """
+        if not super().validate_bearer_token(token, scopes, request):
+            return False
+        client = getattr(request, "client", None)
+        # Deactivated app: ``is_usable`` returns ``self.active`` on our
+        # model. ``getattr`` guard for client mocks that lack the
+        # method (test seams, oauthlib internal calls); the default
+        # ``True`` mirrors DOT's "if you can't tell, accept".
+        is_usable = getattr(client, "is_usable", None)
+        if callable(is_usable) and not is_usable(request):
+            return False
+        return self._enforce_policy(request, client)
+
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """
         Ensure app/user policy is enforced during authorization_code

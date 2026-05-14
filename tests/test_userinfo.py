@@ -671,24 +671,22 @@ class TestUserinfoTokenTypeConfusion(OIDCTestCase):
 
 class TestUserinfoAfterUserStateChange(OIDCTestCase):
     """
-    Effects on /o/userinfo/ when user-state changes after token issuance.
+    Effects on /o/userinfo/ when user/app state changes after token
+    issuance.
 
-    DOT's default ``validate_bearer_token`` checks only the AT row's
-    ``expires`` and scope set — it does NOT re-check the user's
-    ``is_active`` flag, group membership, or global OIDC permission.
-    The architectural intent: AT TTL (60s in test settings, typically
-    1h in prod) is the revocation window; tighter propagation goes
-    through introspect / token revocation, not bearer re-validation.
+    ``AllianceAuthOAuth2Validator.validate_bearer_token`` re-runs the
+    project policy gate on every bearer-authenticated request, so the
+    /userinfo/ contract is symmetric with the refresh side
+    (:meth:`TestTokenPolicyGuards.test_refresh_token_denied_if_global_permission_removed`
+    and :class:`TestRefreshAfterUserDeactivation` in ``test_token.py``):
+    a user who lost ``access_oidc``, was marked inactive, or whose app
+    was deactivated MUST see 401 on the next request rather than
+    waiting for AT expiry.
 
-    The refresh-side contract (re-check on every refresh, RT lifetime
-    is the wide revocation window) is pinned by
-    :meth:`TestTokenPolicyGuards.test_refresh_token_denied_if_global_permission_removed`
-    and :meth:`TestRefreshAfterUserDeactivation` (sibling class in
-    ``test_token.py``).
-
-    This class documents the AT-side behaviour so a future hardening
-    that adds ``is_active`` to ``validate_bearer_token`` lands with
-    a deliberate test flip, not a silent behaviour change.
+    Previously this class documented the gap (assertions allowed 200
+    OR 401/403 to reflect status quo). The validator override flipped
+    the contract to "401/403 immediately"; the documents-gap pattern
+    is preserved in the git history.
     """
 
     def _userinfo(self, bearer: str):
@@ -697,16 +695,12 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
             headers={"authorization": f"Bearer {bearer}"},
         )
 
-    def test_at_validity_after_user_is_marked_inactive_documents_gap(
-        self,
-    ) -> None:
+    def test_at_rejected_after_user_is_marked_inactive(self) -> None:
         """
-        After ``user.is_active=False``, the existing AT remains usable
-        until natural expiry. This is the documented behaviour and the
-        operator-facing trade-off (short AT TTL vs introspect on every
-        request). If this test fails (AT rejected), DOT or our
-        validator started checking ``is_active`` — update the contract
-        accordingly.
+        After ``user.is_active=False``, the existing AT MUST be
+        rejected. Inactive users fail ``user.has_perm("access_oidc")``
+        (Django's default ``ModelBackend`` short-circuits on
+        ``is_active``), so ``check_user_global_oidc_access`` denies.
         """
         self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="at-after-inactive")
@@ -719,23 +713,18 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
         self.user1.refresh_from_db()
 
         resp = self._userinfo(access)
-        # Today: 200 (gap). Tomorrow: 401/403 if hardening lands.
-        # Either is in-spec; the contract pinned here is "no 5xx and
-        # behaviour matches the documented design".
         self.assertIn(
             resp.status_code,
-            (200, 401, 403),
-            "AT post-deactivation must yield a clean OAuth response, "
-            f"not {resp.status_code}",
+            (401, 403),
+            f"AT post-deactivation must yield 401/403, got {resp.status_code}",
         )
 
-    def test_at_validity_after_user_loses_global_oidc_permission(
+    def test_at_rejected_after_user_loses_global_oidc_permission(
         self,
     ) -> None:
         """
         Mirror of the inactive-user case for the ``access_oidc``
-        permission. Same architectural reasoning: bearer validation
-        is fast-path, policy re-check lives on the refresh side.
+        permission: revoke the perm, AT immediately invalid.
         """
         self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="at-after-perm-revoke")
@@ -746,7 +735,47 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
         self.user1.refresh_from_db()
 
         resp = self._userinfo(access)
-        self.assertIn(resp.status_code, (200, 401, 403))
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_at_rejected_after_app_deactivated(self) -> None:
+        """
+        ``app.active=False`` MUST invalidate existing ATs. Closes the
+        gap on the app side: previously the AT remained usable until
+        natural expiry even after admin disabled the application.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="at-after-app-off")
+        access = tokens["access_token"]
+        self.assertEqual(200, self._userinfo(access).status_code)
+
+        self.oauth_app.active = False
+        self.oauth_app.save()
+        self.oauth_app.refresh_from_db()
+
+        resp = self._userinfo(access)
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_at_rejected_after_user_loses_state_or_group_match(
+        self,
+    ) -> None:
+        """
+        Per-app state/group policy: if the app is restricted to a
+        state the user no longer holds, AT MUST be rejected on the
+        next userinfo request — not delayed to refresh time.
+        """
+        from allianceauth.authentication.models import State
+
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="at-after-state-loss")
+        access = tokens["access_token"]
+        self.assertEqual(200, self._userinfo(access).status_code)
+
+        # Restrict the app to a state user1 does NOT hold.
+        self.oauth_app.states.add(State.objects.get(name="Blue"))
+        self.oauth_app.refresh_from_db()
+
+        resp = self._userinfo(access)
+        self.assertIn(resp.status_code, (401, 403))
 
 
 class TestUserinfoClaimAntiLeak(OIDCTestCase):
