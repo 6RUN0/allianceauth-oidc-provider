@@ -130,3 +130,89 @@ class TestMultiAppIsolation(OIDCTestCase):
             headers={"authorization": f"Bearer {access_token}"},
         )
         self.assertIn(post_revoke.status_code, (401, 403))
+
+
+class TestCrossClientCodeAbuse(OIDCTestCase):
+    """
+    Authorization-code grant: a code issued to app A must NOT be
+    exchangeable by app B, even when B presents perfectly valid
+    credentials. RFC 6749 §10.5 / §4.1.3.
+
+    The refresh-token side of this contract is in
+    :class:`TestMultiAppIsolation`; this class closes the symmetric
+    gap on the authorization-code side. The conformance suite's
+    ``oidcc-codereuse-30seconds`` probes code-binding but TIMEOUTs
+    upstream (HtmlUnit 4.11.1) before reaching the cross-client
+    variant, so the only automated proof of this contract lives here.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        # App B uses a distinct redirect_uri so the test cannot
+        # accidentally pass on redirect_uri equality — the rejection
+        # must be on client_id binding, not on URI shape.
+        self.app_b_redirect = "http://localhost/other-redir/"
+        self.app_b, self.app_b_id, self.app_b_secret = make_app(
+            owner=self.user1,
+            pkce_required=False,
+            redirect_uri=self.app_b_redirect,
+        )
+
+    def test_code_from_app_a_rejected_at_app_b_with_app_b_redirect(
+        self,
+    ) -> None:
+        """
+        Code issued to app A, presented at /token/ with app B's
+        client_id, client_secret, and app B's registered redirect_uri.
+        DOT must reject — the code's binding is to app A.
+        """
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="cross-client-code")
+
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=self.app_b_redirect,
+            client_id=self.app_b_id,
+            client_secret=self.app_b_secret,
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={
+                "invalid_grant",
+                "invalid_client",
+                "invalid_request",
+            },
+        )
+
+    def test_code_from_app_a_rejected_at_app_b_with_app_a_redirect(
+        self,
+    ) -> None:
+        """
+        Same code, app B's credentials, but the *original* redirect_uri
+        (the one to which the code was bound). This rules out a
+        regression where the check accidentally piggy-backs on
+        redirect_uri equality — the binding must be on client_id.
+        """
+        from ._oidc_testcase import REDIRECT_URI
+
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(
+            self.user1, state="cross-client-code-redir-a"
+        )
+
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+            client_id=self.app_b_id,
+            client_secret=self.app_b_secret,
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={
+                "invalid_grant",
+                "invalid_client",
+                "invalid_request",
+            },
+        )

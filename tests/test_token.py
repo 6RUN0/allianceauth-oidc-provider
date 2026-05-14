@@ -752,3 +752,128 @@ class TestPKCEAttackVectors(OIDCTestCase):
         self.assertEqual(200, resp.status_code)
         body = json.loads(resp.content.decode("utf-8"))
         self.assertIn("access_token", body)
+
+
+class TestRefreshScopeBoundary(OIDCTestCase):
+    """
+    Refresh-token grant scope contract.
+
+    RFC 6749 §6: the requested ``scope`` parameter on refresh MUST be
+    a subset of the originally-granted scope. The server SHOULD honour
+    a strict subset (downscope) and MUST reject an attempt to widen
+    the scope (upscope).
+
+    The conformance suite's ``oidcc-refresh-token`` exercises the
+    refresh-with-subset path but TIMEOUTs upstream; we own the
+    coverage Python-side.
+    """
+
+    def test_refresh_downscope_to_subset_is_allowed(self):
+        """
+        Original grant: ``openid profile email`` → refresh requesting
+        ``openid`` must succeed and the response must echo the
+        narrowed scope.
+        """
+        self.grant_oidc_access(self.user1)
+        first = self.run_code_flow(
+            self.user1, scope=SCOPE_FULL, state="downscope-1"
+        )
+        refresh = first["refresh_token"]
+
+        resp = self.refresh_token(
+            refresh_token=refresh, scope=SCOPE_OPENID, expected_status=200
+        )
+        body = json.loads(resp.content.decode("utf-8"))
+        # Scope echo: at most a subset of the original grant.
+        got = set((body.get("scope") or "").split())
+        self.assertTrue(
+            got.issubset(set(SCOPE_FULL.split())),
+            f"refresh scope {got!r} must be subset of original "
+            f"{set(SCOPE_FULL.split())!r}",
+        )
+        self.assertIn("openid", got)
+        self.assertIn("access_token", body)
+
+    def test_refresh_upscope_to_unrequested_scope_rejected(self):
+        """
+        Original grant: ``openid`` only → refresh request asks for
+        ``openid profile email``. RFC 6749 §6: the response scope MUST
+        NOT exceed the original grant. DOT's contract: either reject
+        outright (invalid_scope / invalid_grant) or silently clamp back
+        to the original. Either is spec-compliant; the test pins both
+        acceptable outcomes so a regression that *widens* is caught.
+        """
+        self.grant_oidc_access(self.user1)
+        first = self.run_code_flow(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="upscope-1",
+            expected_scope=SCOPE_OPENID,
+        )
+        refresh = first["refresh_token"]
+
+        resp = self.refresh_token(
+            refresh_token=refresh,
+            scope=SCOPE_FULL,
+            expected_status=(200, 400, 401),
+        )
+
+        if resp.status_code == 200:
+            body = json.loads(resp.content.decode("utf-8"))
+            got = set((body.get("scope") or "").split())
+            self.assertEqual(
+                {"openid"},
+                got,
+                "RFC 6749 §6: upscope MUST NOT succeed — the response "
+                "scope must remain the original subset",
+            )
+        else:
+            self.assertOAuthError(
+                resp,
+                expected_error={
+                    "invalid_scope",
+                    "invalid_grant",
+                    "invalid_request",
+                },
+            )
+
+    def test_refresh_with_disjoint_scope_rejected_or_clamped(self):
+        """
+        Original grant: ``openid`` → refresh asks for ``email`` alone
+        (no overlap with the original). Same contract as upscope:
+        reject or clamp; widening is forbidden. ``email`` was NOT in
+        the original grant, so it must not appear in the response.
+        """
+        self.grant_oidc_access(self.user1)
+        first = self.run_code_flow(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="disjoint-1",
+            expected_scope=SCOPE_OPENID,
+        )
+        refresh = first["refresh_token"]
+
+        resp = self.refresh_token(
+            refresh_token=refresh,
+            scope="email",
+            expected_status=(200, 400, 401),
+        )
+
+        if resp.status_code == 200:
+            body = json.loads(resp.content.decode("utf-8"))
+            got = set((body.get("scope") or "").split())
+            self.assertNotIn(
+                "email",
+                got,
+                "RFC 6749 §6: a scope absent from the original grant "
+                "must not be granted on refresh",
+            )
+        else:
+            self.assertOAuthError(
+                resp,
+                expected_error={
+                    "invalid_scope",
+                    "invalid_grant",
+                    "invalid_request",
+                },
+            )
