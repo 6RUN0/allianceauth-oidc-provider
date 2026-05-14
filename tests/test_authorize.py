@@ -1164,3 +1164,132 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         _, path, qs = self.parse_redirect(resp, (302,))
         self.assertEqual("/redir/", path)
         self.assertIn("code", qs)
+
+
+class TestStateEchoOnError(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.6 / RFC 6749 §4.1.2.1: when /authorize/
+    fails after the AS has decided the redirect_uri is registered,
+    the error MUST be returned to the RP via redirect with the
+    ``state`` parameter echoed back. Omitting state breaks the RP's
+    CSRF defence — a man-in-the-middle can swap the error response
+    for an attacker-chosen authorization code if the RP cannot
+    distinguish their own state.
+
+    The success-path state echo and the ``prompt=none`` /
+    ``login_required`` cases are pinned by the prompt-* tests above;
+    this class closes the same contract on the OAuth-protocol error
+    branches (consent denial, malformed scope, malformed
+    response_type) which the conformance suite covers indirectly via
+    HtmlUnit and stalls upstream.
+    """
+
+    def _force_login_user1(self) -> None:
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+    def test_state_echoed_on_user_consent_denial(self) -> None:
+        """
+        Consent denial: POST /authorize/ with ``allow`` present but
+        falsy (Django BooleanField cleans an empty string to False).
+        DOT translates that into an ``access_denied`` error redirect.
+
+        NB: the project's :meth:`AuthAuthorizationView._promote_post_body_to_query`
+        treats *absence* of ``allow`` as the cross-origin initial POST
+        (OIDC §3.1.2.1) and promotes the body to a GET query rather
+        than a denial. Denial therefore requires ``allow`` to be
+        present with a falsy value.
+        """
+        self._force_login_user1()
+        response = self.client.post(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "deny-state-echo",
+                "allow": "",  # present but falsy → user denied
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertEqual(["access_denied"], qs.get("error"))
+        self.assertEqual(["deny-state-echo"], qs.get("state"))
+        self.assertNotIn("code", qs)
+
+    def test_state_echoed_on_unsupported_response_type(self) -> None:
+        """
+        ``response_type=unknown`` is a protocol-level error.
+
+        The AS must redirect with ``error=unsupported_response_type``
+        and echo state. DOT also accepts ``invalid_request`` here;
+        spec-compliance allows either.
+        """
+        self._force_login_user1()
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "wibble",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "bad-rt-state",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertIn(
+            qs.get("error", [None])[0],
+            ("unsupported_response_type", "invalid_request"),
+        )
+        self.assertEqual(["bad-rt-state"], qs.get("state"))
+        self.assertNotIn("code", qs)
+
+    def test_state_echoed_on_invalid_scope(self) -> None:
+        """
+        Unknown scope name → ``error=invalid_scope`` on the redirect
+        (RFC 6749 §4.1.2.1). State must still ride along.
+        """
+        self._force_login_user1()
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": "openid bogus-scope-x",
+                "state": "bad-scope-state",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertEqual(["invalid_scope"], qs.get("error"))
+        self.assertEqual(["bad-scope-state"], qs.get("state"))
+        self.assertNotIn("code", qs)
+
+    def test_state_absent_when_request_omitted_it(self) -> None:
+        """
+        Symmetric: if the original request had no ``state``, the AS
+        must NOT inject an empty ``state=`` into the error redirect
+        — that would corrupt RP-side parsing. Omit state entirely
+        rather than echo an empty string.
+        """
+        self._force_login_user1()
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": "openid not-a-scope",
+                # Deliberately no ``state``.
+            },
+        )
+        _, _, qs = self.parse_redirect(response, (302,))
+        self.assertIn("error", qs)
+        self.assertNotIn(
+            "state",
+            qs,
+            "state MUST NOT be injected when the request lacked it",
+        )

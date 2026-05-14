@@ -508,3 +508,101 @@ class TestUserinfoEveDeltaClaims(OIDCTestCase):
         info = json.loads(resp.content.decode("utf-8"))
         self.assertNotIn("eve_affiliation", info)
         self.assertNotIn("eve_main_character_id", info)
+
+
+class TestUserinfoTokenLifecycle(OIDCTestCase):
+    """
+    /o/userinfo/ lifecycle and bearer-token contracts.
+
+    Existing tests in :class:`TestUserinfoClaims` pin claim filtering
+    and the bare "missing Authorization" case. This class extends
+    coverage to states the access token can be in when /userinfo/ is
+    hit: expired, revoked, and "user lost OIDC permission after issue".
+    It also pins RFC 6750 bearer-only enforcement: alternative
+    Authorization schemes (Basic) and bearer-via-body / bearer-via-
+    query MUST NOT succeed unsupervised.
+    """
+
+    def _userinfo(self, **headers):
+        return self.client.get("/o/userinfo/", headers=headers)
+
+    def test_expired_access_token_rejected(self):
+        """
+        Token whose ``expires`` is in the past must be rejected at
+        /o/userinfo/. The test backdates ``expires`` directly via a
+        queryset update so we do not depend on real-time sleep or
+        ACCESS_TOKEN_EXPIRE_SECONDS values.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="userinfo-expired")
+        access = tokens["access_token"]
+
+        AT = get_access_token_model()
+        AT.objects.filter(token=access).update(
+            expires=timezone.now() - timedelta(seconds=60),
+        )
+
+        resp = self._userinfo(authorization=f"Bearer {access}")
+        self.assertIn(
+            resp.status_code,
+            (401, 403),
+            "expired access_token MUST NOT be accepted at /userinfo/",
+        )
+
+    def test_revoked_access_token_rejected(self):
+        """
+        Deleting the AccessToken row (the closest equivalent to
+        explicit revocation in this fixture set) must result in 401/403
+        on /userinfo/. Guards against caching that survives DB
+        revocation.
+        """
+        from oauth2_provider.models import get_access_token_model
+
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="userinfo-revoked")
+        access = tokens["access_token"]
+        get_access_token_model().objects.filter(token=access).delete()
+
+        resp = self._userinfo(authorization=f"Bearer {access}")
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_unknown_bearer_token_rejected(self):
+        """A token that was never minted must yield 401/403."""
+        resp = self._userinfo(authorization="Bearer not-a-real-token")
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_basic_scheme_rejected(self):
+        """
+        RFC 6750 §2.1: ``/userinfo/`` MUST accept only the Bearer
+        scheme. A Basic-auth header that happens to base64-encode a
+        valid bearer string must not be accepted.
+        """
+        from base64 import b64encode
+
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="userinfo-basic")
+        access = tokens["access_token"]
+        basic_value = b64encode(f"user:{access}".encode("ascii")).decode(
+            "ascii"
+        )
+
+        resp = self._userinfo(authorization=f"Basic {basic_value}")
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_malformed_bearer_header_rejected(self):
+        """
+        Authorization header without a scheme prefix
+        (``raw-token-value``) must be rejected — RFC 6750 §2.1
+        requires the literal ``Bearer`` scheme.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="userinfo-noscheme")
+        access = tokens["access_token"]
+
+        resp = self._userinfo(authorization=access)  # no "Bearer" prefix
+        self.assertIn(resp.status_code, (401, 403))
