@@ -264,6 +264,115 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         ):
             app.full_clean()
 
+    # ---------- AC-3a — IPv6 and cross-family SSRF variants ----------
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_ipv6_loopback_rejected(self) -> None:
+        """
+        ``ipaddress.IPv6Address("::1").is_loopback`` is True; the
+        validator's existing ``is_loopback`` arm MUST catch it. Closes
+        the IPv6-equivalent gap of the existing IPv4 loopback test.
+        """
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("::1"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_ipv6_link_local_rejected(self) -> None:
+        """``fe80::/10`` is the IPv6 link-local block."""
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("fe80::1"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_ipv6_ula_private_rejected(self) -> None:
+        """``fc00::/7`` is the IPv6 Unique-Local Address private block."""
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("fc00::1"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_ipv4_mapped_ipv6_loopback_rejected(self) -> None:
+        """
+        ``::ffff:127.0.0.1`` is the IPv4-mapped-into-IPv6 form of the
+        loopback address. If a kernel/resolver returns this form,
+        ``ipaddress.IPv6Address.is_loopback`` is True and the
+        validator MUST reject — otherwise an attacker who controls a
+        domain that resolves to an IPv4-mapped IPv6 loopback can
+        bypass an IPv4-only check.
+        """
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("::ffff:127.0.0.1"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_cloud_metadata_ip_rejected(self) -> None:
+        """
+        ``169.254.169.254`` is the AWS/GCP/Azure instance-metadata IP
+        — the most famous SSRF target. It is in ``169.254.0.0/16``
+        (link-local) so the existing link-local arm catches it, but
+        a named test makes the SSRF intent visible to anyone reading
+        the test file (and protects against a future "carve out
+        link-local except metadata" misconfiguration).
+        """
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("169.254.169.254"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
+    @override_settings(DEBUG=False)
+    def test_ac3a_mixed_public_and_private_in_dns_rejected(self) -> None:
+        """
+        Anti-rebinding pin: if the resolver returns both a public and
+        a private address for the host, the validator MUST reject —
+        otherwise an attacker who controls a DNS record can serve a
+        public IP at registration time and a private one at logout
+        dispatch time.
+
+        The existing ``for info in infos: ... if private: raise`` loop
+        implements this contract; this test pins it across a
+        mixed-record return rather than the single-private-record
+        cases the other tests cover.
+        """
+        app = self._new_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP, "10.0.0.1"),
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            app.full_clean()
+
     # ---------- AC-3b — non-blocking DNS failure ----------
 
     @override_settings(DEBUG=False)
