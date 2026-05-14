@@ -996,3 +996,97 @@ class TestLocaleNegotiation(OIDCTestCase):
             "locale claim must come from user.profile.language, not "
             "the ui_locales request parameter",
         )
+
+
+class TestIdTokenAlgConfusion(OIDCTestCase):
+    """
+    Algorithm-confusion defences on the issued id_token.
+
+    A regression that drops the id_token down to ``alg=none`` (or
+    re-signs with HS256 using the *public* JWKS key) is the textbook
+    JWT-confusion attack — every downstream RP that validates with
+    "any alg the header claims" is then trivially impersonated.
+
+    The existing ``test_id_token_is_signed_and_verifiable_against_jwks``
+    pins ``alg=RS256`` indirectly. This class makes the defensive
+    assertions explicit, decoupled from the success-path JWKS
+    verification flow, so a regression review sees the defence by
+    test name alone.
+    """
+
+    def _decode_id_token_header(self, id_token: str) -> dict:
+        # Split JWT header without verifying — we are asserting the
+        # header's algorithm field, not the signature.
+        header_b64 = id_token.split(".", 1)[0]
+        # base64url decode with padding restored.
+        padding = "=" * (-len(header_b64) % 4)
+        return json.loads(
+            base64.urlsafe_b64decode(header_b64 + padding).decode("utf-8")
+        )
+
+    def test_id_token_alg_is_never_none(self) -> None:
+        """
+        Tight regression pin: a freshly issued id_token's header
+        ``alg`` MUST NOT be ``"none"`` or ``"None"``. Any value that
+        matches case-insensitively reduces the JWT to an unsigned
+        blob and bypasses every downstream verification step.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="id-token-alg-none")
+        header = self._decode_id_token_header(tokens["id_token"])
+        alg = header.get("alg", "")
+        self.assertNotIn(
+            alg.lower(),
+            ("none", ""),
+            f"id_token header alg={alg!r} is forbidden — unsigned "
+            "JWTs MUST NOT be issued",
+        )
+
+    def test_id_token_alg_matches_jwks_advertised(self) -> None:
+        """
+        The header ``alg`` must be one of the algorithms advertised by
+        ``/.well-known/openid-configuration/id_token_signing_alg_values_supported``.
+        A drift between header and discovery breaks RP signature
+        verification and is the precondition for an alg-confusion
+        attack on naive verifiers.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="id-token-alg-match")
+        header = self._decode_id_token_header(tokens["id_token"])
+
+        discovery = self.client.get("/o/.well-known/openid-configuration/")
+        advertised = json.loads(discovery.content.decode("utf-8")).get(
+            "id_token_signing_alg_values_supported"
+        )
+        self.assertIsInstance(advertised, list)
+        self.assertIn(
+            header.get("alg"),
+            advertised,
+            f"id_token header alg={header.get('alg')!r} is not in the "
+            f"discovery-advertised set {advertised!r}",
+        )
+
+    def test_id_token_kid_resolves_to_a_jwks_key(self) -> None:
+        """
+        The header ``kid`` must point at a key actually published on
+        the JWKS endpoint. A dangling ``kid`` (header references a
+        key absent from JWKS) means every RP fails verification but
+        the AS thinks it issued a valid token — a hard-to-debug
+        outage and a precondition for downgrade attacks.
+        """
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="id-token-kid")
+        header = self._decode_id_token_header(tokens["id_token"])
+        token_kid = header.get("kid")
+        self.assertIsInstance(token_kid, str)
+        self.assertTrue(token_kid)
+
+        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        jwks = json.loads(jwks_resp.content.decode("utf-8"))
+        published_kids = {k.get("kid") for k in jwks.get("keys", [])}
+        self.assertIn(
+            token_kid,
+            published_kids,
+            f"id_token kid={token_kid!r} is not published in JWKS "
+            f"{sorted(published_kids)!r}",
+        )

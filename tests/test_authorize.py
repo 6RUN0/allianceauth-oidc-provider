@@ -1293,3 +1293,145 @@ class TestStateEchoOnError(OIDCTestCase):
             qs,
             "state MUST NOT be injected when the request lacked it",
         )
+
+
+class TestRequestObjectAndUriHandling(OIDCTestCase):
+    """
+    OIDC Core 1.0 §6 / RFC 9101 (JAR) — the ``request`` and
+    ``request_uri`` parameters carry a signed JWT whose claims
+    override the corresponding query-string parameters.
+
+    The project does NOT implement JAR. The discovery document does
+    NOT set ``request_parameter_supported=true`` (per §4 the value
+    defaults to ``false``), and the provider does NOT fetch the URL
+    referenced by ``request_uri``. Both contracts are security-
+    critical:
+
+    1. Silent ``request=`` parsing would let a forged JWT override
+       ``redirect_uri`` / ``client_id`` from the query — classic
+       parameter-confusion attack.
+    2. Fetching a URL from ``request_uri`` is SSRF: attacker-supplied
+       URL → AS makes an outbound HTTP request, possibly to internal
+       services (RFC 6819 §5.4.1).
+
+    Tests pin the safe behaviour: parameters are ignored, the flow
+    uses the query-string values, no outbound fetch happens, no 5xx.
+    Replaces ``oidcc-ensure-request-object-with-redirect-uri`` and
+    ``oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported``
+    from the conformance suite (both fail upstream).
+    """
+
+    def test_request_param_does_not_override_query_redirect_uri(self) -> None:
+        """
+        Send a forged unsigned JWT-shaped payload in ``request=`` that
+        claims a different ``redirect_uri``. The AS must ignore it and
+        either use the query-string values (succeed) or reject with an
+        OAuth error redirect to the *query* ``redirect_uri``, not the
+        forged one. Either is spec-compliant; a forged-URI redirect or
+        5xx would be the regression.
+        """
+        from base64 import urlsafe_b64encode
+
+        def _b64(s: bytes) -> str:
+            return urlsafe_b64encode(s).rstrip(b"=").decode("ascii")
+
+        forged_header = _b64(b'{"alg":"none","typ":"JWT"}')
+        forged_payload = _b64(
+            b'{"redirect_uri":"http://evil.example/cb","client_id":"forged"}'
+        )
+        forged_jwt = f"{forged_header}.{forged_payload}."
+
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "request-object-ignored",
+                "request": forged_jwt,
+            },
+        )
+        self.assertLess(
+            resp.status_code,
+            500,
+            f"request= must NOT 5xx; got {resp.status_code}",
+        )
+        # If the AS emitted a redirect, it must point at the registered
+        # redirect_uri (taken from query) — NOT the forged URI from the
+        # JWT.
+        location = resp.headers.get("Location", "")
+        self.assertNotIn(
+            "evil.example",
+            location,
+            "request= JWT MUST NOT override redirect_uri — query "
+            f"redirect_uri wins; got Location={location!r}",
+        )
+
+    def test_request_uri_param_does_not_trigger_fetch_or_5xx(self) -> None:
+        """
+        ``request_uri=http://attacker.invalid/`` — the AS must not
+        make an outbound fetch (no test runs DNS so an attempted
+        fetch would raise and surface as 5xx) and must not redirect
+        to the attacker URL.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "request-uri-ssrf",
+                "request_uri": "http://attacker.invalid/forged.jwt",
+            },
+        )
+        self.assertLess(
+            resp.status_code,
+            500,
+            "request_uri= must NOT trigger an outbound fetch / 5xx; "
+            f"got {resp.status_code}",
+        )
+        self.assertNotIn(
+            "attacker.invalid",
+            resp.headers.get("Location", ""),
+            "AS must never redirect to a request_uri-supplied host",
+        )
+
+    def test_discovery_does_not_falsely_advertise_request_parameter_support(
+        self,
+    ) -> None:
+        """
+        Discovery: if ``request_parameter_supported`` is present it
+        must be ``false`` (or absent — defaults to ``false`` per §4).
+        Same contract for ``request_uri_parameter_supported``: per §4
+        the default is ``true``, so if absent we are technically
+        claiming support; the test asserts the field is either absent
+        or explicitly ``false`` — preventing an accidental ``true``
+        from leaking into the discovery doc.
+        """
+        import json
+
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content.decode("utf-8"))
+        self.assertIsNot(
+            doc.get("request_parameter_supported"),
+            True,
+            "request_parameter_supported MUST NOT be advertised as "
+            "true unless JAR is actually implemented",
+        )
+        # ``request_uri_parameter_supported`` defaults to ``true`` per
+        # §4 if absent. The contract here is "do not flip to true
+        # without an actual implementation"; absent is acceptable.
+        self.assertIsNot(
+            doc.get("request_uri_parameter_supported"),
+            True,
+            "request_uri_parameter_supported MUST NOT be explicitly "
+            "advertised as true unless request_uri fetch is "
+            "implemented",
+        )
