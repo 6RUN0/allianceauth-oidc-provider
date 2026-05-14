@@ -822,10 +822,7 @@ class TestOfflineAccessScopeSemantics(OIDCTestCase):
         discover the capability and will fall back to whatever
         refresh-token behaviour the OP exposes by default.
         """
-        resp = self.client.get("/o/.well-known/openid-configuration/")
-        self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
-        scopes = doc.get("scopes_supported") or []
+        scopes = self.discovery().get("scopes_supported") or []
         self.assertNotIn(
             "offline_access",
             scopes,

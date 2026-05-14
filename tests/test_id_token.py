@@ -24,6 +24,7 @@ from jwcrypto import jwk, jwt
 
 from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
+    JWKS_URL,
     OIDCTestCase,
 )
 
@@ -38,7 +39,7 @@ class TestIdTokenScopeFiltering(OIDCTestCase):
     """
 
     def _decode_id_token(self, id_token: str) -> dict:
-        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        jwks_resp = self.client.get(JWKS_URL)
         keyset = jwk.JWKSet.from_json(jwks_resp.content.decode("utf-8"))
         verified = jwt.JWT(jwt=id_token, key=keyset)
         return json.loads(verified.claims)
@@ -118,7 +119,7 @@ class TestIdTokenAuthTime(OIDCTestCase):
     """
 
     def _decode_id_token(self, id_token: str) -> dict:
-        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        jwks_resp = self.client.get(JWKS_URL)
         keyset = jwk.JWKSet.from_json(jwks_resp.content.decode("utf-8"))
         verified = jwt.JWT(jwt=id_token, key=keyset)
         return json.loads(verified.claims)
@@ -287,8 +288,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         tokens = self.run_code_flow(self.user1, state="id-token-alg-match")
         header = split_jwt(tokens["id_token"])[0]
 
-        discovery = self.client.get("/o/.well-known/openid-configuration/")
-        advertised = json.loads(discovery.content.decode("utf-8")).get(
+        advertised = self.discovery().get(
             "id_token_signing_alg_values_supported"
         )
         self.assertIsInstance(advertised, list)
@@ -307,9 +307,9 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         algorithm — and a green light for an alg-confusion attack
         on every downstream consumer.
         """
-        resp = self.client.get("/o/.well-known/openid-configuration/")
-        doc = json.loads(resp.content.decode("utf-8"))
-        algs = doc.get("id_token_signing_alg_values_supported", [])
+        algs = self.discovery().get(
+            "id_token_signing_alg_values_supported", []
+        )
         self.assertNotIn(
             "none",
             algs,
@@ -331,7 +331,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         self.assertIsInstance(token_kid, str)
         self.assertTrue(token_kid)
 
-        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        jwks_resp = self.client.get(JWKS_URL)
         jwks = json.loads(jwks_resp.content.decode("utf-8"))
         published_kids = {k.get("kid") for k in jwks.get("keys", [])}
         self.assertIn(

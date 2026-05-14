@@ -34,6 +34,18 @@ REDIRECT_URI = DEFAULT_REDIRECT_URI
 SCOPE_OPENID = "openid"
 SCOPE_PROFILE = "openid profile"
 SCOPE_FULL = "openid profile email"
+
+# Mounted provider endpoints — re-export the DOT URL conf overrides
+# in ``allianceauth_oidc/urls.py``. Centralised so test files do
+# not sprinkle literal paths that future remounts would have to
+# chase across the suite.
+DISCOVERY_URL: Final[str] = "/o/.well-known/openid-configuration/"
+JWKS_URL: Final[str] = "/o/.well-known/jwks.json"
+AUTHORIZE_URL: Final[str] = "/o/authorize/"
+TOKEN_URL: Final[str] = "/o/token/"
+INTROSPECT_URL: Final[str] = "/o/introspect/"
+REVOKE_URL: Final[str] = "/o/revoke_token/"
+USERINFO_URL: Final[str] = "/o/userinfo/"
 # Read from DOT's resolved settings so a future change to
 # ``OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"]`` in
 # ``test_settingsAA4.py`` propagates here without a manual edit.
@@ -139,6 +151,44 @@ class OIDCTestCase(TestCase):
         path = parsed.path
         qs = parse_qs(parsed.query)
         return (loc, path, qs)
+
+    def json_body(
+        self, response: Any, *, expected_status: int | None = 200
+    ) -> Any:
+        """
+        Decode a Django test-client response body as JSON.
+
+        Default asserts HTTP 200 — pass ``expected_status=None`` to
+        skip the status check (e.g. for error-path responses where
+        the caller verifies the status separately) or an explicit
+        integer to pin a non-200 expectation.
+        """
+        if expected_status is not None:
+            self.assertEqual(
+                expected_status,
+                response.status_code,
+                getattr(response, "content", b"").decode(
+                    "utf-8", errors="replace"
+                ),
+            )
+        return json.loads(response.content.decode("utf-8"))
+
+    def discovery(
+        self, *, headers: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        """
+        Fetch and parse the OIDC discovery document.
+
+        Optional ``headers`` forwarded to the test client — used by
+        host-poisoning regression tests that need to drive the
+        endpoint under a crafted ``Host`` header.
+        """
+        resp = self.client.get(DISCOVERY_URL, headers=headers or {})
+        return self.json_body(resp)
+
+    def jwks(self) -> dict[str, Any]:
+        """Fetch and parse the public JWKS document."""
+        return self.json_body(self.client.get(JWKS_URL))
 
     @staticmethod
     def make_pkce_pair() -> tuple[str, str]:

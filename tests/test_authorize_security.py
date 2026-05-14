@@ -374,11 +374,7 @@ class TestRequestObjectAndUriHandling(OIDCTestCase):
         or explicitly ``false`` — preventing an accidental ``true``
         from leaking into the discovery doc.
         """
-        import json
-
-        resp = self.client.get("/o/.well-known/openid-configuration/")
-        self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.discovery()
         self.assertIsNot(
             doc.get("request_parameter_supported"),
             True,
@@ -605,11 +601,7 @@ class TestResponseTypeRestriction(OIDCTestCase):
         sending requests the AS will reject at runtime via the per-app
         ``authorization_grant_type`` gate.
         """
-        import json
-
-        resp = self.client.get("/o/.well-known/openid-configuration/")
-        doc = json.loads(resp.content.decode("utf-8"))
-        rts = doc.get("response_types_supported")
+        rts = self.discovery().get("response_types_supported")
         self.assertEqual(
             ["code"],
             rts,
@@ -836,14 +828,9 @@ class TestIssParamInAuthzResponse(OIDCTestCase):
         the current absence so a silent flip to ``True`` doesn't
         bypass our review.
         """
-        import json as _json
-
-        resp = self.client.get("/o/.well-known/openid-configuration/")
-        self.assertEqual(200, resp.status_code)
-        config = _json.loads(resp.content.decode("utf-8"))
         self.assertNotIn(
             "authorization_response_iss_parameter_supported",
-            config,
+            self.discovery(),
             "DOT discovery shipped RFC 9207 advert — flip this test "
             "to a positive ``assertTrue(config[...]) is True``.",
         )

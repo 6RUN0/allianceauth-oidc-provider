@@ -19,8 +19,6 @@ each test surfaces the change by flipping from "ignored" to
 "honoured" assertions.
 """
 
-import json
-
 from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
@@ -312,12 +310,9 @@ class TestResponseModeFormPost(OIDCTestCase):
         list. Flip the assertion at that point and extend the
         first test to assert the actual form_post behaviour.
         """
-        resp = self.client.get("/o/.well-known/openid-configuration/")
-        self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
         self.assertNotIn(
             "response_modes_supported",
-            doc,
+            self.discovery(),
             "DOT shipped response_modes advert; extend "
             "test_response_mode_form_post_is_downgraded_or_rejected.",
         )
