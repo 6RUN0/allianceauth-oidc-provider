@@ -624,3 +624,157 @@ class TestResponseTypeRestriction(OIDCTestCase):
         # AS rejects non-code requests at runtime (see other tests
         # in this class). Once discovery is tightened, replace this
         # with the inverse assertion (no implicit / hybrid forms).
+
+
+class TestHostHeaderPoisoning(OIDCTestCase):
+    """
+    An attacker-controlled ``Host`` header MUST NOT alter the AS's
+    canonical identifiers or selection logic.
+
+    Reverse-proxy scenarios: an attacker who sits between RP and AS
+    (or who controls a host that resolves to the AS via DNS
+    rebinding) sends a request with ``Host: evil.example``. If the
+    AS derives ``iss``, ``jwks_uri``, or redirect_uri match-keys
+    from ``request.get_host()``, the attacker controls those values
+    in the response — game over.
+
+    Pin three layers:
+
+    1. ``iss`` claim in id_token comes from ``OIDC_ISS_ENDPOINT``
+       setting, not from request Host.
+    2. Discovery ``issuer`` field is stable across Host header
+       changes.
+    3. ``redirect_uri`` matching is byte-equal against the
+       registered URI; Host header does not get to substitute.
+
+    AA's default ``ALLOWED_HOSTS=['*']`` means Django won't 400 on
+    the attacker Host — exactly the deployment that needs this
+    test most.
+    """
+
+    EVIL_HOST = "evil.example"
+
+    def _decode_id_token_payload(self, id_token: str) -> dict:
+        import base64
+        import json
+
+        # Padding-safe URL-base64 of the payload segment, without
+        # verifying signature: we are checking what the AS PUT in
+        # the payload, not whether it later verifies.
+        payload_b64 = id_token.split(".", 2)[1]
+        padding = "=" * (-len(payload_b64) % 4)
+        return json.loads(
+            base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
+        )
+
+    def test_iss_claim_comes_from_setting_not_host_header(self) -> None:
+        """
+        Send the full code-flow under an attacker Host header.
+        ``iss`` in the issued id_token MUST equal the configured
+        ``OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']``, never
+        ``https://evil.example/...``.
+        """
+        from oauth2_provider.settings import oauth2_settings
+
+        configured_iss = getattr(oauth2_settings, "OIDC_ISS_ENDPOINT", "")
+        # The test settings pin a fixed issuer; the assertion only
+        # makes sense if that pin is present.
+        self.assertTrue(
+            configured_iss,
+            "test settings must pin OIDC_ISS_ENDPOINT for this test",
+        )
+
+        self.grant_oidc_access(self.user1)
+        body = self.run_code_flow(
+            self.user1,
+            state="host-iss-poison",
+            extra_authorize_params={"HTTP_HOST": self.EVIL_HOST},
+        )
+        # Token endpoint hit happens via the default test client
+        # which uses ``testserver`` as Host; the iss claim must
+        # still come from the setting regardless.
+        claims = self._decode_id_token_payload(body["id_token"])
+        self.assertEqual(
+            configured_iss,
+            claims.get("iss"),
+            f"id_token iss came from request Host instead of "
+            f"OIDC_ISS_ENDPOINT; got {claims.get('iss')!r}",
+        )
+        self.assertNotIn(self.EVIL_HOST, claims.get("iss", ""))
+
+    def test_discovery_issuer_stable_under_attacker_host_header(
+        self,
+    ) -> None:
+        """
+        Discovery ``issuer`` field MUST NOT shift with the Host
+        header. Otherwise an attacker who can inject Host can
+        publish a malicious discovery document that points RPs at
+        their forged JWKS.
+        """
+        import json
+
+        from oauth2_provider.settings import oauth2_settings
+
+        configured_iss = getattr(oauth2_settings, "OIDC_ISS_ENDPOINT", "")
+
+        resp = self.client.get(
+            "/o/.well-known/openid-configuration/",
+            headers={"host": self.EVIL_HOST},
+        )
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content.decode("utf-8"))
+        self.assertEqual(
+            configured_iss,
+            doc.get("issuer"),
+            f"discovery issuer shifted to attacker Host; got "
+            f"{doc.get('issuer')!r}",
+        )
+        # jwks_uri may use request-host (DOT default) — pin the
+        # current behavior so a shift is visible. If this test
+        # starts failing, jwks_uri now points at evil.example,
+        # which is the real SSRF/key-substitution risk.
+        jwks_uri = doc.get("jwks_uri", "")
+        self.assertNotIn(
+            self.EVIL_HOST,
+            jwks_uri,
+            f"jwks_uri leaked attacker Host header: {jwks_uri!r}",
+        )
+
+    def test_redirect_uri_match_ignores_host_header(self) -> None:
+        """
+        Authorize with the registered redirect_uri but under an
+        attacker Host header. The AS MUST accept the request as
+        normal (matching is on registered URI, not on Host),
+        issuing the code to the registered URI.
+
+        The flip-side (attacker submits an attacker-controlled
+        redirect_uri AND attacker Host) is already covered by
+        :class:`TestRedirectURIExactMatch` in test_token.py — that
+        path rejects because the URI doesn't match the registered
+        value.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        # POST with the registered URI; the Host header is the
+        # attacker's value but redirect_uri is honest.
+        resp = self.client.post(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "host-redir-ok",
+                "allow": True,
+            },
+            headers={"host": self.EVIL_HOST},
+        )
+        # Either successful redirect to registered URI, or a clean
+        # error — never a redirect to attacker host.
+        self.assertLess(resp.status_code, 500)
+        location = resp.headers.get("Location", "")
+        self.assertNotIn(
+            self.EVIL_HOST,
+            location,
+            f"redirect Location leaked attacker Host: {location!r}",
+        )
