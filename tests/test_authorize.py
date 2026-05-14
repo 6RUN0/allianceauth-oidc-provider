@@ -440,3 +440,60 @@ class TestAuthAuthorizationViewPromotion(TestCase):
         AuthAuthorizationView._promote_post_body_to_query(request)
         with self.assertRaises(AttributeError):
             request.POST["response_type"] = "tampered"
+
+
+class TestAuthorizeMethodRestriction(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.1 — /o/authorize/ accepts ``GET`` and ``POST``.
+
+    Django's ``FormView`` aliases ``PUT`` to ``POST`` via
+    ``ProcessFormView.put`` — that is an upstream design choice, not
+    a project bug. We pin the orthogonal verbs ``DELETE`` and
+    ``PATCH``, which have no FormView handler and MUST yield 405.
+
+    ``force_login`` first because ``LoginRequiredMixin.dispatch``
+    runs before Django's method-not-allowed handler in the MRO; an
+    anonymous DELETE would short-circuit to 302→login before ever
+    reaching the method check.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+
+    def _assert_allow_header_lists_get_and_post(self, resp) -> None:
+        # RFC 9110 §10.2.1: 405 responses MUST carry an Allow header
+        # listing the methods the resource supports.
+        allow = resp.headers.get("Allow", "").upper()
+        self.assertIn("GET", allow)
+        self.assertIn("POST", allow)
+
+    def test_delete_returns_405(self) -> None:
+        resp = self.client.delete("/o/authorize/")
+        self.assertEqual(405, resp.status_code)
+        self._assert_allow_header_lists_get_and_post(resp)
+
+    def test_patch_returns_405(self) -> None:
+        resp = self.client.patch("/o/authorize/")
+        self.assertEqual(405, resp.status_code)
+        self._assert_allow_header_lists_get_and_post(resp)
+
+    def test_put_documents_formview_aliasing(self) -> None:
+        """
+        ``ProcessFormView.put`` delegates to ``post``. PUT is NOT
+        rejected with 405; it runs through the same flow as POST.
+
+        This is a Django/FormView contract, not a security gap — but
+        pin it so the next person to read the test file does not
+        mis-remember "we 405 every non-GET/POST". If a future
+        ``http_method_names = ["get", "post"]`` override is added to
+        ``AuthAuthorizationView``, this test flips to assert 405.
+        """
+        resp = self.client.put("/o/authorize/")
+        self.assertNotEqual(
+            405,
+            resp.status_code,
+            "FormView aliases PUT to POST — see ProcessFormView.put",
+        )
+        self.assertLess(resp.status_code, 500)

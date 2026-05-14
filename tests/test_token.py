@@ -1495,3 +1495,50 @@ class TestTokenEndpointCacheControl(OIDCTestCase):
             resp.headers.get("Cache-Control", ""),
             f"4xx token response missing no-store; status={resp.status_code}",
         )
+
+
+class TestTokenContentType(OIDCTestCase):
+    """
+    RFC 6749 §5.1 / §5.2 — token responses (both 200 and 4xx) MUST
+    be ``application/json``. RP libraries parse strictly on
+    Content-Type; ``text/html`` would surface as cryptic JSON-decode
+    errors at the RP rather than as the actual OAuth error.
+
+    DOT default sets this correctly on both branches; the tests pin
+    against a middleware regression that strips or rewrites the
+    header.
+    """
+
+    def test_successful_response_is_application_json(self) -> None:
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="ct-200")
+        resp = self.exchange_code_for_token(
+            code=code, redirect_uri=REDIRECT_URI
+        )
+        self.assertEqual(200, resp.status_code)
+        self.assertTrue(
+            resp.headers.get("Content-Type", "").startswith(
+                "application/json"
+            ),
+        )
+
+    def test_error_response_is_application_json(self) -> None:
+        resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": "definitely-not-a-real-code",
+            },
+        )
+        self.assertGreaterEqual(resp.status_code, 400)
+        self.assertLess(resp.status_code, 500)
+        self.assertTrue(
+            resp.headers.get("Content-Type", "").startswith(
+                "application/json"
+            ),
+            f"4xx token Content-Type missing JSON; "
+            f"got {resp.headers.get('Content-Type')!r}",
+        )

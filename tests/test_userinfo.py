@@ -937,3 +937,32 @@ class TestUserinfoCacheControl(OIDCTestCase):
         """
         _, headers = self._userinfo()
         self.assertEqual(headers.get("Pragma"), "no-cache")
+
+
+class TestUserinfoContentType(OIDCTestCase):
+    """
+    OIDC §5.3.2 — successful /o/userinfo/ response MUST be
+    ``application/json`` (the default for normal/un-signed userinfo).
+
+    The project does not implement signed-userinfo (``application/jwt``),
+    so JSON is the only valid Content-Type. Pin against a regression
+    where a future middleware sets ``text/html`` or strips the
+    Content-Type entirely.
+    """
+
+    def test_userinfo_response_is_application_json(self) -> None:
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="userinfo-ct")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(200, resp.status_code)
+        # Content-Type may carry a charset suffix, so check prefix.
+        self.assertTrue(
+            resp.headers.get("Content-Type", "").startswith(
+                "application/json"
+            ),
+            f"OIDC §5.3.2: Content-Type MUST be application/json; got "
+            f"{resp.headers.get('Content-Type')!r}",
+        )
