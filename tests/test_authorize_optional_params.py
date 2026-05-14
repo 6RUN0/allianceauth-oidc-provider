@@ -21,6 +21,7 @@ each test surfaces the change by flipping from "ignored" to
 
 import json
 
+from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
@@ -200,13 +201,7 @@ class TestLoginHintParameter(OIDCTestCase):
                 "login_hint": "attacker@example.com",
             },
         )
-        import base64
-
-        seg = tokens["id_token"].split(".", 2)[1]
-        padding = "=" * (-len(seg) % 4)
-        claims = json.loads(
-            base64.urlsafe_b64decode(seg + padding).decode("utf-8")
-        )
+        _, claims = split_jwt(tokens["id_token"])
         self.assertEqual(
             str(self.user1.pk),
             claims.get("sub"),

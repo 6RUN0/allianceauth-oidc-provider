@@ -8,6 +8,7 @@ exchange flows belong in test_token.py.
 """
 
 from ._factories import make_app
+from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_OPENID,
@@ -655,19 +656,6 @@ class TestHostHeaderPoisoning(OIDCTestCase):
 
     EVIL_HOST = "evil.example"
 
-    def _decode_id_token_payload(self, id_token: str) -> dict:
-        import base64
-        import json
-
-        # Padding-safe URL-base64 of the payload segment, without
-        # verifying signature: we are checking what the AS PUT in
-        # the payload, not whether it later verifies.
-        payload_b64 = id_token.split(".", 2)[1]
-        padding = "=" * (-len(payload_b64) % 4)
-        return json.loads(
-            base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
-        )
-
     def test_iss_claim_comes_from_setting_not_host_header(self) -> None:
         """
         Send the full code-flow under an attacker Host header.
@@ -694,7 +682,7 @@ class TestHostHeaderPoisoning(OIDCTestCase):
         # Token endpoint hit happens via the default test client
         # which uses ``testserver`` as Host; the iss claim must
         # still come from the setting regardless.
-        claims = self._decode_id_token_payload(body["id_token"])
+        _, claims = split_jwt(body["id_token"])
         self.assertEqual(
             configured_iss,
             claims.get("iss"),

@@ -18,11 +18,11 @@ strict conformance (RFC compatibility); the goal is to catch silent
 regressions in DOT integration, not to replace a formal OIDC test suite.
 """
 
-import base64
 import json
 
 from jwcrypto import jwk, jwt
 
+from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     OIDCTestCase,
 )
@@ -257,16 +257,6 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
     test name alone.
     """
 
-    def _decode_id_token_header(self, id_token: str) -> dict:
-        # Split JWT header without verifying — we are asserting the
-        # header's algorithm field, not the signature.
-        header_b64 = id_token.split(".", 1)[0]
-        # base64url decode with padding restored.
-        padding = "=" * (-len(header_b64) % 4)
-        return json.loads(
-            base64.urlsafe_b64decode(header_b64 + padding).decode("utf-8")
-        )
-
     def test_id_token_alg_is_never_none(self) -> None:
         """
         Tight regression pin: a freshly issued id_token's header
@@ -276,7 +266,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         """
         self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-alg-none")
-        header = self._decode_id_token_header(tokens["id_token"])
+        header = split_jwt(tokens["id_token"])[0]
         alg = header.get("alg", "")
         self.assertNotIn(
             alg.lower(),
@@ -295,7 +285,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         """
         self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-alg-match")
-        header = self._decode_id_token_header(tokens["id_token"])
+        header = split_jwt(tokens["id_token"])[0]
 
         discovery = self.client.get("/o/.well-known/openid-configuration/")
         advertised = json.loads(discovery.content.decode("utf-8")).get(
@@ -336,7 +326,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         """
         self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-kid")
-        header = self._decode_id_token_header(tokens["id_token"])
+        header = split_jwt(tokens["id_token"])[0]
         token_kid = header.get("kid")
         self.assertIsInstance(token_kid, str)
         self.assertTrue(token_kid)
@@ -366,17 +356,10 @@ class TestIdTokenAudienceShape(OIDCTestCase):
     assertion.
     """
 
-    def _decode_id_token_payload(self, id_token: str) -> dict:
-        seg = id_token.split(".", 2)[1]
-        padding = "=" * (-len(seg) % 4)
-        return json.loads(
-            base64.urlsafe_b64decode(seg + padding).decode("utf-8")
-        )
-
     def test_aud_is_string_not_array(self) -> None:
         self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="aud-shape")
-        claims = self._decode_id_token_payload(body["id_token"])
+        claims = split_jwt(body["id_token"])[1]
         aud = claims.get("aud")
         self.assertIsInstance(
             aud,
@@ -394,7 +377,7 @@ class TestIdTokenAudienceShape(OIDCTestCase):
         """
         self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="aud-client-match")
-        claims = self._decode_id_token_payload(body["id_token"])
+        claims = split_jwt(body["id_token"])[1]
         self.assertEqual(self.oauth_id, claims.get("aud"))
 
 
@@ -424,13 +407,6 @@ class TestNonceInIdToken(OIDCTestCase):
        RP's replay check.
     """
 
-    def _decode_id_token_payload(self, id_token: str) -> dict:
-        seg = id_token.split(".", 2)[1]
-        padding = "=" * (-len(seg) % 4)
-        return json.loads(
-            base64.urlsafe_b64decode(seg + padding).decode("utf-8")
-        )
-
     def test_nonce_echoed_in_id_token_from_authorize(self) -> None:
         """
         Anchor test — round-trip of the original nonce through the
@@ -444,7 +420,7 @@ class TestNonceInIdToken(OIDCTestCase):
             state="nonce-echo",
             extra_authorize_params={"nonce": nonce},
         )
-        claims = self._decode_id_token_payload(body["id_token"])
+        claims = split_jwt(body["id_token"])[1]
         self.assertEqual(nonce, claims.get("nonce"))
 
     def test_nonce_on_refresh_is_absent_or_equal_to_original(self) -> None:
@@ -477,7 +453,7 @@ class TestNonceInIdToken(OIDCTestCase):
             state="nonce-refresh",
             extra_authorize_params={"nonce": nonce},
         )
-        original_claims = self._decode_id_token_payload(original["id_token"])
+        original_claims = split_jwt(original["id_token"])[1]
         self.assertEqual(nonce, original_claims.get("nonce"))
 
         refreshed = self.refresh_token(
@@ -489,9 +465,7 @@ class TestNonceInIdToken(OIDCTestCase):
             self.skipTest(
                 "refresh response carries no id_token in this DOT config"
             )
-        refreshed_claims = self._decode_id_token_payload(
-            refreshed_body["id_token"]
-        )
+        refreshed_claims = split_jwt(refreshed_body["id_token"])[1]
         if "nonce" in refreshed_claims:
             self.assertEqual(
                 nonce,
@@ -511,7 +485,7 @@ class TestNonceInIdToken(OIDCTestCase):
         """
         self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="no-nonce")
-        claims = self._decode_id_token_payload(body["id_token"])
+        claims = split_jwt(body["id_token"])[1]
         self.assertNotIn(
             "nonce",
             claims,

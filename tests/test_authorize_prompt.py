@@ -7,10 +7,14 @@ request itself (i.e. before the user reaches the consent screen). Full code-
 exchange flows belong in test_token.py.
 """
 
+import base64
+import json
+
 from django.conf import settings
 from django.shortcuts import resolve_url
 
 from ._factories import make_app
+from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_OPENID,
@@ -659,15 +663,13 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
 
     def _forge_unsigned_hint_for_user(self, user_pk: object) -> str:
         """Build an ``alg=none`` JWT carrying ``sub=user_pk``."""
-        import base64 as _b64
-        import json as _json
 
         def _b64u(raw: bytes) -> str:
-            return _b64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
-        header = _b64u(_json.dumps({"alg": "none", "typ": "JWT"}).encode())
+        header = _b64u(json.dumps({"alg": "none", "typ": "JWT"}).encode())
         payload = _b64u(
-            _json.dumps(
+            json.dumps(
                 {"sub": str(user_pk), "iss": "https://hint.example/"}
             ).encode()
         )
@@ -720,8 +722,6 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
         let an attacker who steals a logged-in cookie + crafts a
         hint silently impersonate the hinted user.
         """
-        import json as _json
-
         self.grant_oidc_access(self.user1)
         self.grant_oidc_access(self.user2)
         skip_app = make_app(
@@ -757,15 +757,9 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
             },
         )
         self.assertEqual(200, token_resp.status_code, token_resp.content)
-        body = _json.loads(token_resp.content.decode("utf-8"))
-        # Decode id_token payload (unverified — we only need ``sub``).
-        import base64 as _b64
-
-        seg = body["id_token"].split(".", 2)[1]
-        padding = "=" * (-len(seg) % 4)
-        claims = _json.loads(
-            _b64.urlsafe_b64decode(seg + padding).decode("utf-8")
-        )
+        body = json.loads(token_resp.content.decode("utf-8"))
+        # id_token payload — unverified, only need ``sub``.
+        _, claims = split_jwt(body["id_token"])
         self.assertEqual(
             str(self.user1.pk),
             claims.get("sub"),
@@ -828,11 +822,9 @@ class TestOfflineAccessScopeSemantics(OIDCTestCase):
         discover the capability and will fall back to whatever
         refresh-token behaviour the OP exposes by default.
         """
-        import json as _json
-
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        doc = _json.loads(resp.content.decode("utf-8"))
+        doc = json.loads(resp.content.decode("utf-8"))
         scopes = doc.get("scopes_supported") or []
         self.assertNotIn(
             "offline_access",
@@ -898,7 +890,6 @@ class TestOfflineAccessScopeSemantics(OIDCTestCase):
         # Accepted path: code issued, exchange it and assert the
         # echoed scope does NOT carry offline_access (DOT filtered
         # it out as unsupported) and refresh_token is still issued.
-        import json as _json
 
         code = qs["code"][0]
         token_resp = self.client.post(
@@ -912,7 +903,7 @@ class TestOfflineAccessScopeSemantics(OIDCTestCase):
             },
         )
         self.assertEqual(200, token_resp.status_code, token_resp.content)
-        token_body = _json.loads(token_resp.content.decode("utf-8"))
+        token_body = json.loads(token_resp.content.decode("utf-8"))
         self.assertIn("refresh_token", token_body)
         echoed_scope = (token_body.get("scope") or "").split()
         self.assertNotIn(
