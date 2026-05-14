@@ -43,6 +43,17 @@ _GRANT_TYPES_SUPPORTED: Final[list[str]] = [
 _CLAIM_TYPES_SUPPORTED: Final[list[str]] = ["normal"]
 
 
+# OIDC Core 1.0 §3 — the only response_type this provider implements.
+# DOT's stock discovery view echoes its full enum including implicit
+# (``token``, ``id_token``) and hybrid (``code id_token``, ...) forms,
+# which is misleading: per-app ``authorization_grant_type`` gating
+# rejects non-code requests at runtime (see
+# ``TestResponseTypeRestriction``). Narrow the advertisement so RP-side
+# libraries auto-selecting from this list pick the only flow we
+# actually support.
+_RESPONSE_TYPES_SUPPORTED: Final[list[str]] = ["code"]
+
+
 class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
     """
     DOT discovery view augmented with OIDC Discovery 1.0 §3 RECOMMENDED
@@ -63,6 +74,7 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         data = json.loads(upstream.content)
         data["grant_types_supported"] = list(_GRANT_TYPES_SUPPORTED)
         data["claim_types_supported"] = list(_CLAIM_TYPES_SUPPORTED)
+        data["response_types_supported"] = list(_RESPONSE_TYPES_SUPPORTED)
         # OIDC Discovery 1.0 §3 — clients that do RFC 9068 JWT
         # access-token validation feature-detect on this field. The
         # provider only signs with RS256 (DOT's only id_token alg

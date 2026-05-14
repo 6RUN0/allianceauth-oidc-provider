@@ -596,34 +596,35 @@ class TestResponseTypeRestriction(OIDCTestCase):
         self.assertLess(resp.status_code, 500)
         self._assert_no_token_in_fragment(resp)
 
-    def test_discovery_advertises_implicit_and_hybrid_documents_gap(
-        self,
-    ) -> None:
+    def test_discovery_advertises_only_code_response_type(self) -> None:
         """
-        Discovery ``response_types_supported`` currently echoes DOT's
-        default list which includes implicit and hybrid forms even
-        though the project is code-flow only.
-
-        This is misleading-but-not-exploitable: RPs that read
-        discovery may send ``response_type=token``; the AS will
-        still reject (see ``test_response_type_token_rejected``).
-        The gap is purely advertising quality.
-
-        Hardening: override ``response_types_supported`` in
-        ``AllianceAuthDiscoveryView`` to ``["code"]``. When that
-        lands, this assertion flips to "code is the only entry".
+        ``AllianceAuthDiscoveryView`` overrides ``response_types_supported``
+        to exactly ``["code"]``. DOT's stock view would echo its full
+        enum (implicit + hybrid); advertising those misleads RPs into
+        sending requests the AS will reject at runtime via the per-app
+        ``authorization_grant_type`` gate.
         """
         import json
 
         resp = self.client.get("/o/.well-known/openid-configuration/")
         doc = json.loads(resp.content.decode("utf-8"))
-        rts = doc.get("response_types_supported", [])
-        self.assertIsInstance(rts, list)
-        self.assertIn("code", rts)
-        # The contract pinned today: code IS advertised and the
-        # AS rejects non-code requests at runtime (see other tests
-        # in this class). Once discovery is tightened, replace this
-        # with the inverse assertion (no implicit / hybrid forms).
+        rts = doc.get("response_types_supported")
+        self.assertEqual(
+            ["code"],
+            rts,
+            "Discovery MUST advertise only the code flow this "
+            "provider implements",
+        )
+        # Sanity: each implicit / hybrid form is absent.
+        for forbidden in (
+            "token",
+            "id_token",
+            "code id_token",
+            "code token",
+            "id_token token",
+            "code id_token token",
+        ):
+            self.assertNotIn(forbidden, rts)
 
 
 class TestHostHeaderPoisoning(OIDCTestCase):
