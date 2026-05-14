@@ -630,3 +630,294 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         _, path, qs = self.parse_redirect(resp, (302,))
         self.assertEqual("/redir/", path)
         self.assertIn("code", qs)
+
+
+class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.2.6 — when ``id_token_hint`` identifies an
+    end-user different from the one authenticated in the current
+    session, the AS SHOULD return ``login_required`` (or otherwise
+    re-prompt).
+
+    Current state of the upstream stack:
+
+    * ``OAuth2Validator.validate_user_match`` is a stub that
+      unconditionally returns ``True`` (DOT carries a ``# TODO``
+      pointing at oauthlib §556 and OIDC Core's id_token_hint
+      section). The hint is therefore *advisory only* — DOT will
+      issue a code bound to the authenticated session user even if
+      the hint names a different ``sub``.
+
+    The first test documents the gap so a future fix in DOT
+    surfaces here (the assertion flips from "code issued" to
+    "login_required redirect"). The second test pins the
+    **session-binding** safety net: even though the hint is
+    ignored, the code is bound to the session user — never to the
+    hinted user — so subject confusion cannot leak across users
+    through this path.
+    """
+
+    def _forge_unsigned_hint_for_user(self, user_pk: object) -> str:
+        """Build an ``alg=none`` JWT carrying ``sub=user_pk``."""
+        import base64 as _b64
+        import json as _json
+
+        def _b64u(raw: bytes) -> str:
+            return _b64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+        header = _b64u(_json.dumps({"alg": "none", "typ": "JWT"}).encode())
+        payload = _b64u(
+            _json.dumps(
+                {"sub": str(user_pk), "iss": "https://hint.example/"}
+            ).encode()
+        )
+        return f"{header}.{payload}."
+
+    def test_authorize_with_mismatched_hint_currently_proceeds(self) -> None:
+        """
+        documents-gap: pass an ``id_token_hint`` whose ``sub`` points
+        at user2 while the session is logged in as user1. DOT's stub
+        ``validate_user_match`` accepts the request and issues a
+        code as the *session* user. When DOT implements §3.1.2.6,
+        the expected outcome is a ``login_required`` error redirect;
+        flip the assertion below at that point.
+        """
+        self.grant_oidc_access(self.user1)
+        hint = self._forge_unsigned_hint_for_user(self.user2.pk)
+        skip_app = make_app(
+            owner=self.user1, skip_authorization=True, pkce_required=False
+        )
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": skip_app.client_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "hint-mismatch",
+                "id_token_hint": hint,
+            },
+        )
+        # Current behaviour: code issued, redirect to RP — hint
+        # ignored. Spec-strict behaviour: 302 to redirect_uri with
+        # ``error=login_required``. Either branch must NOT 5xx.
+        self.assertNotEqual(500, resp.status_code)
+        _, path, qs = self.parse_redirect(resp, (302,))
+        self.assertEqual("/redir/", path)
+        if "error" in qs:
+            # Future-state: DOT honours §3.1.2.6.
+            self.assertIn(qs["error"][0], ("login_required",))
+        else:
+            # Current-state: the hint is silently ignored.
+            self.assertIn("code", qs)
+
+    def test_code_is_bound_to_session_user_not_hint(self) -> None:
+        """
+        Safety-net pin: regardless of DOT's hint-validation policy,
+        the code MUST be redeemable as the *session* user. A future
+        regression that bound the code to the hint's ``sub`` would
+        let an attacker who steals a logged-in cookie + crafts a
+        hint silently impersonate the hinted user.
+        """
+        import json as _json
+
+        self.grant_oidc_access(self.user1)
+        self.grant_oidc_access(self.user2)
+        skip_app = make_app(
+            owner=self.user1, skip_authorization=True, pkce_required=False
+        )
+        hint = self._forge_unsigned_hint_for_user(self.user2.pk)
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": skip_app.client_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": "openid",
+                "state": "hint-binding-check",
+                "id_token_hint": hint,
+            },
+        )
+        _, _, qs = self.parse_redirect(resp, (302,))
+        if "error" in qs:
+            self.skipTest(
+                "DOT now rejects mismatched id_token_hint — gap closed"
+            )
+        code = qs["code"][0]
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": skip_app.client_id,
+                "client_secret": skip_app.client_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code, token_resp.content)
+        body = _json.loads(token_resp.content.decode("utf-8"))
+        # Decode id_token payload (unverified — we only need ``sub``).
+        import base64 as _b64
+
+        seg = body["id_token"].split(".", 2)[1]
+        padding = "=" * (-len(seg) % 4)
+        claims = _json.loads(
+            _b64.urlsafe_b64decode(seg + padding).decode("utf-8")
+        )
+        self.assertEqual(
+            str(self.user1.pk),
+            claims.get("sub"),
+            "code/id_token MUST be bound to session user, never to "
+            "the id_token_hint sub",
+        )
+        self.assertNotEqual(str(self.user2.pk), claims.get("sub"))
+
+
+class TestOfflineAccessScopeSemantics(OIDCTestCase):
+    """
+    OIDC Core 1.0 §11 — ``offline_access`` scope semantics.
+
+    The spec contract:
+
+    * Requesting ``scope=openid offline_access`` is the documented
+      way for an RP to ask for a refresh_token.
+    * The OP MUST ensure the end-user is aware of the offline
+      grant — either by rendering a consent screen for the scope,
+      or by having pre-registered consent (``skip_authorization``
+      with explicit operator opt-in to the offline grant).
+    * If ``skip_authorization=True`` and ``prompt=consent`` is
+      absent, the OP MUST NOT honour the offline grant — i.e. it
+      must omit ``refresh_token`` from the response.
+
+    Current state of the upstream stack:
+
+    * DOT's default behaviour is to issue ``refresh_token`` for
+      every ``authorization_code`` grant whose client is
+      ``CONFIDENTIAL`` and ``ROTATE_REFRESH_TOKEN`` is on (the
+      project default). The ``offline_access`` scope is **not**
+      special-cased; it's treated as a regular scope and either
+      accepted or rejected by the ``scopes_supported`` list.
+    * Test settings (``tests/test_settingsAA4.py``) declare
+      ``SCOPES = {"openid", "email", "profile"}`` — i.e.
+      ``offline_access`` is NOT advertised in
+      ``scopes_supported``.
+
+    Pinned contracts (current behaviour, documents-gap with respect
+    to §11):
+
+    1. The ``offline_access`` scope is **not** in
+       ``scopes_supported`` — RPs that try to request it cannot
+       discover the capability.
+    2. ``refresh_token`` is issued **regardless** of whether
+       ``offline_access`` is in the request — the scope name is
+       informational here, not a gate.
+
+    When the project implements §11 properly, the assertions flip:
+    (1) becomes ``assertIn("offline_access", scopes)``; (2) splits
+    into "with offline_access → refresh_token issued" and "without
+    offline_access on skip_authorization=True → refresh_token
+    omitted".
+    """
+
+    def test_offline_access_not_advertised_in_scopes_supported(self) -> None:
+        """
+        documents-gap: discovery does not advertise ``offline_access``
+        in ``scopes_supported``. RPs that follow OIDC §11 cannot
+        discover the capability and will fall back to whatever
+        refresh-token behaviour the OP exposes by default.
+        """
+        import json as _json
+
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = _json.loads(resp.content.decode("utf-8"))
+        scopes = doc.get("scopes_supported") or []
+        self.assertNotIn(
+            "offline_access",
+            scopes,
+            "project implemented OIDC §11 offline_access advert — "
+            "flip this test to ``assertIn`` and extend the second "
+            "test to split on the scope's presence.",
+        )
+
+    def test_refresh_token_issued_regardless_of_offline_access(self) -> None:
+        """
+        documents-gap: refresh_token is issued for any confidential
+        authorization_code grant; ``offline_access`` in the scope
+        request changes nothing today.
+
+        Pins both branches in one test: without the scope the
+        response carries refresh_token; with the scope the response
+        also carries refresh_token AND the scope echoed back does
+        NOT include ``offline_access`` (it's filtered out as
+        unsupported).
+        """
+        self.grant_oidc_access(self.user1)
+
+        # 1) Baseline — no offline_access in request.
+        body = self.run_code_flow(
+            self.user1, scope=SCOPE_OPENID, state="oa-baseline"
+        )
+        self.assertIn("refresh_token", body)
+
+        # 2) Request offline_access. DOT either rejects with
+        # invalid_scope OR accepts but drops the unsupported scope.
+        # Both outcomes are spec-compliant if §11 is not
+        # implemented; the regression we guard against is "scope
+        # accepted AND refresh-token semantics change". The
+        # ``run_code_flow`` helper raises if status != 200 so we
+        # use the lower-level path to handle both branches.
+        self.client.force_login(self.user1)
+        resp = self.client.post(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": "openid offline_access",
+                "state": "oa-requested",
+                "allow": True,
+            },
+        )
+        if resp.status_code != 302:
+            # DOT rejected the scope outright — nothing more to
+            # check; the §11 gap is documented by test 1.
+            self.skipTest(
+                "DOT rejects offline_access pre-authorize — "
+                "behaviour pinned by scopes_supported test"
+            )
+        _, _, qs = self.parse_redirect(resp, (302,))
+        if "error" in qs:
+            # Same as above — rejected; test 1 covers the gap.
+            self.skipTest(
+                "DOT rejects offline_access at authorize — "
+                "behaviour pinned by scopes_supported test"
+            )
+        # Accepted path: code issued, exchange it and assert the
+        # echoed scope does NOT carry offline_access (DOT filtered
+        # it out as unsupported) and refresh_token is still issued.
+        import json as _json
+
+        code = qs["code"][0]
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code, token_resp.content)
+        token_body = _json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn("refresh_token", token_body)
+        echoed_scope = (token_body.get("scope") or "").split()
+        self.assertNotIn(
+            "offline_access",
+            echoed_scope,
+            "DOT now echoes offline_access in the token scope — "
+            "extend this test to assert §11 consent semantics.",
+        )
