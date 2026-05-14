@@ -29,9 +29,11 @@ from __future__ import annotations
 from .views_authorize import AuthAuthorizationView
 from .views_discovery import AllianceAuthDiscoveryView
 from .views_token import TokenAudit, TokenView, classify_token_format
+from .views_userinfo import AllianceAuthUserInfoView
 
 __all__ = [
     "AllianceAuthDiscoveryView",
+    "AllianceAuthUserInfoView",
     "AuthAuthorizationView",
     "TokenAudit",
     "TokenView",

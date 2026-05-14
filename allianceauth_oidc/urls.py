@@ -5,6 +5,7 @@ from oauth2_provider import views
 
 from .views import (
     AllianceAuthDiscoveryView,
+    AllianceAuthUserInfoView,
     AuthAuthorizationView,
     TokenView,
 )
@@ -54,7 +55,12 @@ oidc_urlpatterns = [
     path(
         ".well-known/jwks.json", views.JwksInfoView.as_view(), name="jwks-info"
     ),
-    path("userinfo/", views.UserInfoView.as_view(), name="user-info"),
+    # OIDC §5.3.2: wrap DOT's UserInfoView with Cache-Control headers.
+    path(
+        "userinfo/",
+        AllianceAuthUserInfoView.as_view(),
+        name="user-info",
+    ),
     path(
         "logout/",
         views.RPInitiatedLogoutView.as_view(),

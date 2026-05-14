@@ -391,6 +391,7 @@ module = [
     "allianceauth_oidc.views_token",
     "allianceauth_oidc.views_authorize",
     "allianceauth_oidc.views_discovery",
+    "allianceauth_oidc.views_userinfo",
 ]
 disable_error_code = [ "no-any-return" ]
 

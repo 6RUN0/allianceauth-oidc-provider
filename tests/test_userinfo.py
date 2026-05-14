@@ -870,37 +870,41 @@ class TestUserinfoWWWAuthenticateHeader(OIDCTestCase):
         self.assertIn("Bearer", challenge)
 
 
-class TestUserinfoCacheControlDocumentsGap(OIDCTestCase):
+class TestUserinfoCacheControl(OIDCTestCase):
     """
-    OIDC §5.3.2 — ``/o/userinfo/`` response SHOULD carry
-    ``Cache-Control: no-store`` so identity claims do not land in
-    browser caches, CDNs, or intermediate proxies.
+    OIDC §5.3.2 — ``/o/userinfo/`` response carries
+    ``Cache-Control: no-store`` and ``Pragma: no-cache`` so identity
+    claims do not survive in browser caches, CDNs, or intermediate
+    proxies.
 
-    Current state: DOT's ``UserInfoView`` does NOT emit this header.
-    The tests below document the gap — they pass today and will
-    fail (signalling the hardening landed) when ``no-store`` is
-    added to the response.
-
-    Hardening path: wrap DOT's view with
-    ``@method_decorator(cache_control(no_store=True), name="dispatch")``
-    in a thin subclass, then register that subclass in ``urls.py``.
+    Implemented via :class:`AllianceAuthUserInfoView` which wraps
+    DOT's stock view with a class-level ``@cache_control(no_store=True)``
+    decorator plus a ``Pragma`` header set in ``dispatch``.
     """
 
-    def test_userinfo_response_lacks_no_store_header_today(self) -> None:
-        """If this fails, the no-store header was added — flip to assert."""
+    def _userinfo(self) -> tuple[int, dict]:
         self.grant_oidc_access(self.user1)
-        tokens = self.run_code_flow(self.user1, state="cache-control-gap")
+        tokens = self.run_code_flow(self.user1, state="cache-control")
         resp = self.client.get(
             "/o/userinfo/",
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
-        self.assertEqual(200, resp.status_code)
-        # Currently absent — when this assertion flips to
-        # ``assertIn("no-store", ...)`` the gap is closed.
-        cache_control = resp.headers.get("Cache-Control", "")
-        self.assertNotIn(
+        return resp.status_code, dict(resp.headers)
+
+    def test_userinfo_response_carries_cache_control_no_store(self) -> None:
+        status, headers = self._userinfo()
+        self.assertEqual(200, status)
+        self.assertIn(
             "no-store",
-            cache_control,
-            "Cache-Control: no-store is now present on /userinfo/ — "
-            "update this test to assert presence",
+            headers.get("Cache-Control", ""),
+            "OIDC §5.3.2 SHOULD: /userinfo/ MUST carry no-store",
         )
+
+    def test_userinfo_response_carries_pragma_no_cache(self) -> None:
+        """
+        Legacy HTTP/1.0 caches honour ``Pragma`` over
+        ``Cache-Control``; pin both so a downstream cache cannot
+        sneak the response into storage.
+        """
+        _, headers = self._userinfo()
+        self.assertEqual(headers.get("Pragma"), "no-cache")
