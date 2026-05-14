@@ -7,14 +7,13 @@ request itself (i.e. before the user reaches the consent screen). Full code-
 exchange flows belong in test_token.py.
 """
 
-import base64
 import json
 
 from django.conf import settings
 from django.shortcuts import resolve_url
 
 from ._factories import make_app
-from ._jwt_helpers import split_jwt
+from ._jwt_helpers import forge_unsigned_jwt, split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_OPENID,
@@ -663,17 +662,9 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
 
     def _forge_unsigned_hint_for_user(self, user_pk: object) -> str:
         """Build an ``alg=none`` JWT carrying ``sub=user_pk``."""
-
-        def _b64u(raw: bytes) -> str:
-            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-        header = _b64u(json.dumps({"alg": "none", "typ": "JWT"}).encode())
-        payload = _b64u(
-            json.dumps(
-                {"sub": str(user_pk), "iss": "https://hint.example/"}
-            ).encode()
+        return forge_unsigned_jwt(
+            {"sub": str(user_pk), "iss": "https://hint.example/"}
         )
-        return f"{header}.{payload}."
 
     def test_authorize_with_mismatched_hint_currently_proceeds(self) -> None:
         """

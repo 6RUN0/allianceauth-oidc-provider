@@ -56,6 +56,34 @@ def split_jwt(token: str) -> tuple[dict, dict]:
     return header, payload
 
 
+def _b64url_encode_nopad(raw: bytes) -> str:
+    """URL-safe base64 encode without ``=`` padding."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def forge_unsigned_jwt(
+    payload: dict, header: dict[str, Any] | None = None
+) -> str:
+    """
+    Build an ``alg=none`` JWT (``header.payload.`` with empty signature).
+
+    Negative-test helper: every spot in the suite that needed an
+    unsigned JWT to drive an alg-confusion / hint-confusion test
+    used to roll its own base64-encoder. Centralising the form
+    guarantees those tests all hit the same attack shape and that
+    a hardening change (e.g. trailing ``.`` policy) is exercised
+    once, not per-copy.
+    """
+    head = header if header is not None else {"alg": "none", "typ": "JWT"}
+    head_seg = _b64url_encode_nopad(
+        json.dumps(head, separators=(",", ":")).encode("utf-8")
+    )
+    payload_seg = _b64url_encode_nopad(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    )
+    return f"{head_seg}.{payload_seg}."
+
+
 def lookalike_access_token_generator(request: Any) -> str:
     """
     Decoy generator used by the startup-wiring regression test.

@@ -8,7 +8,7 @@ exchange flows belong in test_token.py.
 """
 
 from ._factories import make_app
-from ._jwt_helpers import split_jwt
+from ._jwt_helpers import forge_unsigned_jwt, split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_OPENID,
@@ -290,16 +290,12 @@ class TestRequestObjectAndUriHandling(OIDCTestCase):
         forged one. Either is spec-compliant; a forged-URI redirect or
         5xx would be the regression.
         """
-        from base64 import urlsafe_b64encode
-
-        def _b64(s: bytes) -> str:
-            return urlsafe_b64encode(s).rstrip(b"=").decode("ascii")
-
-        forged_header = _b64(b'{"alg":"none","typ":"JWT"}')
-        forged_payload = _b64(
-            b'{"redirect_uri":"http://evil.example/cb","client_id":"forged"}'
+        forged_jwt = forge_unsigned_jwt(
+            {
+                "redirect_uri": "http://evil.example/cb",
+                "client_id": "forged",
+            }
         )
-        forged_jwt = f"{forged_header}.{forged_payload}."
 
         self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
