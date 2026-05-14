@@ -1066,6 +1066,23 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
             f"discovery-advertised set {advertised!r}",
         )
 
+    def test_discovery_does_not_advertise_alg_none(self) -> None:
+        """
+        ``id_token_signing_alg_values_supported`` MUST NOT include
+        ``"none"``. Even a single advertised ``none`` entry is a
+        green light for RP libraries that auto-select the first
+        algorithm — and a green light for an alg-confusion attack
+        on every downstream consumer.
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        doc = json.loads(resp.content.decode("utf-8"))
+        algs = doc.get("id_token_signing_alg_values_supported", [])
+        self.assertNotIn(
+            "none",
+            algs,
+            f"alg=none MUST NOT be advertised; got {algs!r}",
+        )
+
     def test_id_token_kid_resolves_to_a_jwks_key(self) -> None:
         """
         The header ``kid`` must point at a key actually published on
@@ -1089,4 +1106,179 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
             published_kids,
             f"id_token kid={token_kid!r} is not published in JWKS "
             f"{sorted(published_kids)!r}",
+        )
+
+
+class TestDiscoveryFieldTypes(OIDCTestCase):
+    """
+    Strict typing/value contracts on the discovery document.
+
+    The existing :class:`TestDiscoveryAndJWKS` asserts presence
+    + a few hand-picked invariants. This class tightens the type
+    and value space of a handful of fields that RP-side libraries
+    parse strictly — wrong types here cause hard-to-debug client
+    failures rather than auth-server errors, and the conformance
+    suite covers them indirectly via
+    ``oidcc-discovery-endpoint-verification`` (which TIMEOUTs).
+    """
+
+    def _doc(self) -> dict[str, Any]:
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        return json.loads(resp.content.decode("utf-8"))
+
+    def test_response_types_supported_includes_code(self) -> None:
+        """The project supports only the authorization-code flow."""
+        doc = self._doc()
+        rts = doc.get("response_types_supported")
+        self.assertIsInstance(rts, list)
+        self.assertIn("code", rts)
+
+    def test_subject_types_supported_is_a_nonempty_string_list(self) -> None:
+        """
+        OIDC Discovery §3 — ``subject_types_supported`` is REQUIRED
+        and must be a non-empty list of strings. Project emits
+        ``"public"`` subs (User.pk).
+        """
+        doc = self._doc()
+        sts = doc.get("subject_types_supported")
+        self.assertIsInstance(sts, list)
+        self.assertTrue(sts)
+        for entry in sts:
+            self.assertIsInstance(entry, str)
+        self.assertIn("public", sts)
+
+    def test_scopes_supported_includes_openid(self) -> None:
+        """
+        Discovery §3 RECOMMENDED ``scopes_supported`` — even though
+        OPTIONAL, RPs auto-select scopes off this list. ``openid``
+        MUST be present since the provider is an OIDC provider.
+        """
+        doc = self._doc()
+        scopes = doc.get("scopes_supported")
+        self.assertIsInstance(scopes, list)
+        self.assertIn("openid", scopes)
+
+    def test_issuer_is_absolute_https_or_http(self) -> None:
+        """
+        Discovery §3 — ``issuer`` is REQUIRED, MUST be a URL using
+        the ``https`` scheme. The test settings pin a placeholder
+        ``http://`` issuer for reproducibility; both schemes are
+        accepted here, the contract is "absolute URL string".
+        """
+        doc = self._doc()
+        issuer = doc.get("issuer")
+        self.assertIsInstance(issuer, str)
+        self.assertRegex(issuer, r"^https?://")
+
+
+class TestPublicClientPolicy(OIDCTestCase):
+    """
+    Public-client (``client_type=public``) contracts.
+
+    RFC 6749 §2.1 / §10.4: public clients cannot keep a confidential
+    secret. The token endpoint MUST authenticate them by client_id
+    alone (no secret required), and PKCE is the recommended
+    alternative — RFC 7636 was designed exactly for this case.
+
+    Pinned: public-client + PKCE code flow completes; presenting a
+    bogus client_secret on a public client does not cause a
+    spurious 500.
+    """
+
+    def _public_app(self, *, pkce_required: bool = True):
+        from oauth2_provider.models import AbstractApplication
+
+        from ._factories import make_app
+
+        return make_app(
+            owner=self.user1,
+            pkce_required=pkce_required,
+            skip_authorization=True,
+            client_type=AbstractApplication.CLIENT_PUBLIC,
+        )
+
+    def test_public_client_pkce_code_flow_succeeds_without_secret(
+        self,
+    ) -> None:
+        """
+        Public client + PKCE + no client_secret on /o/token/ — the
+        canonical mobile/native-app flow. MUST succeed.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        creds = self._public_app(pkce_required=True)
+        self.grant_oidc_access(self.user1)
+
+        verifier, challenge = self.make_pkce_pair()
+
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="public-pkce",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+        # Public-client token exchange: client_id + code_verifier,
+        # no client_secret.
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": creds.client_id,
+                "code": code,
+                "code_verifier": verifier,
+                "redirect_uri": REDIRECT_URI,
+            },
+        )
+        self.assertEqual(200, token_resp.status_code)
+        body = json.loads(token_resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)
+
+    def test_public_client_with_garbage_secret_does_not_500(self) -> None:
+        """
+        Public client presented with a (bogus) secret — either DOT
+        silently ignores it (RFC 6749: secret is meaningless for
+        public clients) or rejects with invalid_client. Either is
+        spec-compliant; a 5xx would be the regression.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        creds = self._public_app(pkce_required=True)
+        self.grant_oidc_access(self.user1)
+        verifier, challenge = self.make_pkce_pair()
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="public-with-garbage-secret",
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+        token_resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": creds.client_id,
+                "client_secret": "WRONG_SECRET",  # nosec B106 pragma: allowlist secret
+                "code": code,
+                "code_verifier": verifier,
+                "redirect_uri": REDIRECT_URI,
+            },
+        )
+        self.assertLess(
+            token_resp.status_code,
+            500,
+            "public client + bogus secret MUST NOT 5xx; got "
+            f"{token_resp.status_code}",
         )
