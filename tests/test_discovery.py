@@ -251,3 +251,111 @@ class TestDiscoveryFieldTypes(OIDCTestCase):
         issuer = doc.get("issuer")
         self.assertIsInstance(issuer, str)
         self.assertRegex(issuer, r"^https?://")
+
+
+class TestJWKSCryptoHygiene(OIDCTestCase):
+    """
+    Cryptographic-hygiene contracts on the published JWKS.
+
+    Three invariants, each closing a foot-gun that has bitten real
+    OIDC deployments:
+
+    1. RSA modulus ≥ 2048 bits. Sub-2048 RSA is broken by modern
+       factoring research and disallowed by NIST SP 800-131A as of
+       2014. An operator who generates a quick 1024-bit test key
+       for a demo and forgets to rotate gives every RP a trivially
+       impersonable provider.
+
+    2. ``alg`` field, when present per key, MUST be a strong
+       signing algorithm — ``RS256/384/512``, ``PS256/384/512``,
+       ``ES256/384/512``, or ``EdDSA``. ``none`` and ``HS256`` MUST
+       NOT be advertised; the former is unsigned, the latter is
+       symmetric and would leak the shared secret via the public
+       JWKS.
+
+    3. JWKS MUST NOT expose private-key components. RSA public key
+       fields are ``n`` and ``e``. The private fields
+       (``d``, ``p``, ``q``, ``dp``, ``dq``, ``qi``, ``oth``) are
+       the entire attack — if any of these leaks, every signed JWT
+       can be forged.
+    """
+
+    def _jwks(self) -> dict:
+        resp = self.client.get("/o/.well-known/jwks.json")
+        self.assertEqual(200, resp.status_code)
+        return json.loads(resp.content.decode("utf-8"))
+
+    @staticmethod
+    def _decode_b64url_uint(value: str) -> int:
+        # Padding-safe URL-base64 decode of the big-endian integer.
+        padding = "=" * (-len(value) % 4)
+        raw = base64.urlsafe_b64decode(value + padding)
+        return int.from_bytes(raw, "big")
+
+    def test_rsa_modulus_at_least_2048_bits(self) -> None:
+        keys = self._jwks().get("keys", [])
+        self.assertTrue(keys, "JWKS endpoint returned no keys")
+        rsa_keys = [k for k in keys if k.get("kty") == "RSA"]
+        self.assertTrue(rsa_keys, "no RSA keys advertised in JWKS")
+        for key in rsa_keys:
+            n = key.get("n")
+            self.assertIsInstance(n, str)
+            modulus = self._decode_b64url_uint(n)
+            bits = modulus.bit_length()
+            self.assertGreaterEqual(
+                bits,
+                2048,
+                f"RSA key kid={key.get('kid')!r} has only {bits}-bit "
+                f"modulus; NIST SP 800-131A retired sub-2048 RSA in 2014",
+            )
+
+    def test_no_weak_alg_advertised_in_jwks(self) -> None:
+        """
+        ``alg`` per-key (if present) MUST be in the strong-sig set.
+
+        DOT advertises ``alg=RS256`` on its JWKS keys when an app
+        uses RS256; pin that no future code accidentally adds a
+        symmetric or unsigned algorithm to the public set.
+        """
+        strong = {
+            "RS256",
+            "RS384",
+            "RS512",
+            "PS256",
+            "PS384",
+            "PS512",
+            "ES256",
+            "ES384",
+            "ES512",
+            "EdDSA",
+        }
+        keys = self._jwks().get("keys", [])
+        for key in keys:
+            alg = key.get("alg")
+            # ``alg`` is OPTIONAL per RFC 7517 §4.4; only check when
+            # present.
+            if alg is not None:
+                self.assertIn(
+                    alg,
+                    strong,
+                    f"weak alg {alg!r} on key kid={key.get('kid')!r} "
+                    f"invites alg-confusion attacks",
+                )
+
+    def test_jwks_does_not_expose_private_key_components(self) -> None:
+        """
+        RSA private components leak the entire signing key. The
+        contract: NONE of these fields appears on any published
+        key — only the public ``n`` / ``e`` (and ``alg`` / ``kid``
+        metadata).
+        """
+        private_fields = {"d", "p", "q", "dp", "dq", "qi", "oth"}
+        keys = self._jwks().get("keys", [])
+        for key in keys:
+            leaked = set(key) & private_fields
+            self.assertFalse(
+                leaked,
+                f"JWKS key kid={key.get('kid')!r} leaks private "
+                f"component(s) {sorted(leaked)} — the entire signing "
+                "key is compromised",
+            )
