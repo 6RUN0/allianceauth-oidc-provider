@@ -359,3 +359,35 @@ class TestJWKSCryptoHygiene(OIDCTestCase):
                 f"component(s) {sorted(leaked)} — the entire signing "
                 "key is compromised",
             )
+
+
+class TestDiscoveryAndJWKSCORS(OIDCTestCase):
+    """
+    Browser-based RPs (SPA / mobile-web) fetch discovery + JWKS
+    cross-origin. Both endpoints SHOULD carry
+    ``Access-Control-Allow-Origin: *`` — the documents are public
+    metadata, no per-request authorization, and any RP MUST be able
+    to read them.
+
+    ``AllianceAuthDiscoveryView`` sets the header explicitly. JWKS
+    is served by DOT's ``JwksInfoView``; pinning the contract here
+    documents whether DOT default is sufficient (current: no CORS
+    header on JWKS — a gap if SPA clients hit JWKS via fetch()).
+    """
+
+    def test_discovery_advertises_wildcard_cors_origin(self) -> None:
+        """Set explicitly in AllianceAuthDiscoveryView.get."""
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        self.assertEqual("*", resp.headers.get("Access-Control-Allow-Origin"))
+
+    def test_jwks_advertises_wildcard_cors_origin(self) -> None:
+        """
+        DOT's ``JwksInfoView`` emits ``Access-Control-Allow-Origin: *``
+        by default. Pin the contract so a future middleware override
+        that strips or restricts the header is caught — SPA clients
+        that fetch /jwks.json cross-origin depend on this.
+        """
+        resp = self.client.get("/o/.well-known/jwks.json")
+        self.assertEqual(200, resp.status_code)
+        self.assertEqual("*", resp.headers.get("Access-Control-Allow-Origin"))

@@ -254,3 +254,60 @@ class TestRPLogoutIdTokenHintValidation(OIDCTestCase):
                 f"forged hint must not redirect outside allowlist; "
                 f"got {loc!r}",
             )
+
+
+class TestLogoutCSRF(OIDCTestCase):
+    """
+    OIDC RP-Initiated Logout 1.0 §2 — GET on /o/logout/ renders a
+    confirmation UI (no CSRF token needed; it's a navigation). POST
+    that submits the form MUST be CSRF-protected like any other
+    state-changing Django POST.
+
+    Without CSRF protection on POST, an attacker can craft a form
+    on their site that auto-submits to ``/o/logout/`` and logs the
+    victim out — annoying at minimum, and a phishing pivot
+    (post-logout redirect to attacker page that mimics the AS login
+    screen and harvests credentials).
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.addCleanup(oauth2_settings.reload)
+
+    def test_post_logout_without_csrf_token_rejected(self) -> None:
+        """
+        Enforce CSRF: POST to /logout/ without a CSRF token MUST be
+        rejected (403). The Django test client defaults to
+        ``enforce_csrf_checks=False`` for ergonomics, which silently
+        hides CSRF regressions; this test opts in explicitly.
+        """
+        with override_settings(OAUTH2_PROVIDER=_enable_rp_logout()):
+            oauth2_settings.reload()
+            client = self.client_class(enforce_csrf_checks=True)
+            self.grant_oidc_access(self.user1)
+            client.force_login(self.user1)
+            resp = client.post(
+                "/o/logout/",
+                data={"allow": True},
+            )
+            self.assertEqual(
+                403,
+                resp.status_code,
+                "POST /o/logout/ without CSRF token MUST yield 403; "
+                f"got {resp.status_code}",
+            )
+
+    def test_get_logout_renders_confirmation_without_csrf_token(
+        self,
+    ) -> None:
+        """
+        GET is navigation, not a state change — CSRF irrelevant. The
+        confirmation template should render without 403.
+        """
+        with override_settings(OAUTH2_PROVIDER=_enable_rp_logout()):
+            oauth2_settings.reload()
+            client = self.client_class(enforce_csrf_checks=True)
+            self.grant_oidc_access(self.user1)
+            client.force_login(self.user1)
+            resp = client.get("/o/logout/")
+            self.assertNotEqual(403, resp.status_code)
