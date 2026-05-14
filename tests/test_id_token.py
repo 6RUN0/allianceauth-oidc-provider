@@ -396,3 +396,124 @@ class TestIdTokenAudienceShape(OIDCTestCase):
         body = self.run_code_flow(self.user1, state="aud-client-match")
         claims = self._decode_id_token_payload(body["id_token"])
         self.assertEqual(self.oauth_id, claims.get("aud"))
+
+
+class TestNonceInIdToken(OIDCTestCase):
+    """
+    OIDC Core 1.0 §3.1.3.7 step 11 + §15.5.2 — ``nonce`` propagation
+    invariants.
+
+    ``nonce`` is the OIDC-layer replay defence (``state`` covers the
+    OAuth code-flow; ``nonce`` binds the id_token to the original
+    browser session). Three pinned contracts:
+
+    1. **Authorize echo** — if the RP passes ``nonce`` to /authorize/,
+       the issued id_token MUST carry that exact value
+       (already covered by
+       :meth:`TestDiscoveryAndJWKS.test_id_token_round_trips_nonce_when_provided`;
+       redundancy here is deliberate — anchor for the refresh and
+       absence tests below).
+    2. **Refresh propagation** — if the refresh response includes an
+       id_token, the nonce claim MUST equal the value bound at
+       original authentication. RP libraries cache the original
+       nonce and reject a refreshed id_token with a different one,
+       so a regression here breaks every RP that follows the spec.
+    3. **No-nonce requests** — if the RP omitted ``nonce`` from
+       /authorize/, the id_token MUST NOT carry a ``nonce`` claim;
+       a forged or empty-string nonce would silently bypass the
+       RP's replay check.
+    """
+
+    def _decode_id_token_payload(self, id_token: str) -> dict:
+        seg = id_token.split(".", 2)[1]
+        padding = "=" * (-len(seg) % 4)
+        return json.loads(
+            base64.urlsafe_b64decode(seg + padding).decode("utf-8")
+        )
+
+    def test_nonce_echoed_in_id_token_from_authorize(self) -> None:
+        """
+        Anchor test — round-trip of the original nonce through the
+        authorize/code/token chain. Twin of the discovery test but
+        kept here so this class fails standalone if echo regresses.
+        """
+        self.grant_oidc_access(self.user1)
+        nonce = "n-0S6_WzA2Mj-anchor"
+        body = self.run_code_flow(
+            self.user1,
+            state="nonce-echo",
+            extra_authorize_params={"nonce": nonce},
+        )
+        claims = self._decode_id_token_payload(body["id_token"])
+        self.assertEqual(nonce, claims.get("nonce"))
+
+    def test_nonce_on_refresh_is_absent_or_equal_to_original(self) -> None:
+        """
+        Pin OIDC §15.5.2 conditional contract for refreshed id_tokens.
+
+            "If the ID Token returned by Token Refresh contains a
+            nonce Claim, ... the nonce Claim values ... MUST be the
+            same."
+
+        Two outcomes are spec-compliant on refresh:
+
+        1. ``nonce`` is **absent** from the refreshed id_token (DOT's
+           current behaviour — ``validate_refresh_token`` does not
+           re-populate ``request.nonce``, so the id_token builder
+           skips the claim).
+        2. ``nonce`` is **present and equal** to the value from the
+           original /authorize/ call.
+
+        The forbidden outcome — and the regression this test catches
+        — is a refreshed id_token carrying a ``nonce`` claim with a
+        *different* value (empty string, NULL, attacker-supplied,
+        cached-from-another-session). Any RP that follows §15.5.2
+        treats that as a replay attempt and rejects the token.
+        """
+        self.grant_oidc_access(self.user1)
+        nonce = "refresh-replay-binding"
+        original = self.run_code_flow(
+            self.user1,
+            state="nonce-refresh",
+            extra_authorize_params={"nonce": nonce},
+        )
+        original_claims = self._decode_id_token_payload(original["id_token"])
+        self.assertEqual(nonce, original_claims.get("nonce"))
+
+        refreshed = self.refresh_token(
+            refresh_token=original["refresh_token"],
+        )
+        refreshed_body = json.loads(refreshed.content.decode("utf-8"))
+        if "id_token" not in refreshed_body:
+            # No id_token in refresh response — nothing to assert.
+            self.skipTest(
+                "refresh response carries no id_token in this DOT config"
+            )
+        refreshed_claims = self._decode_id_token_payload(
+            refreshed_body["id_token"]
+        )
+        if "nonce" in refreshed_claims:
+            self.assertEqual(
+                nonce,
+                refreshed_claims["nonce"],
+                "refreshed id_token, when it carries ``nonce``, MUST "
+                "echo the value bound at original /authorize/",
+            )
+        # Else: absence is spec-compliant; nothing to assert.
+
+    def test_no_nonce_claim_when_not_requested(self) -> None:
+        """
+        Negative contract: omitting ``nonce`` on /authorize/ MUST NOT
+        result in an id_token carrying an empty / placeholder nonce
+        claim. RP replay checks are conditional on the presence of
+        the claim — a stray empty string would either be accepted as
+        valid (silent bypass) or rejected as malformed (DoS).
+        """
+        self.grant_oidc_access(self.user1)
+        body = self.run_code_flow(self.user1, state="no-nonce")
+        claims = self._decode_id_token_payload(body["id_token"])
+        self.assertNotIn(
+            "nonce",
+            claims,
+            "id_token MUST NOT carry ``nonce`` when none was requested",
+        )
