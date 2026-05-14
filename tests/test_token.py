@@ -1422,3 +1422,66 @@ class TestRedirectURIInjection(OIDCTestCase):
             resp,
             expected_error={"invalid_grant", "invalid_request"},
         )
+
+
+class TestTokenEndpointCacheControl(OIDCTestCase):
+    """
+    RFC 6749 §5.1 — successful token responses MUST carry
+    ``Cache-Control: no-store`` and ``Pragma: no-cache``.
+
+    Token bodies contain access_token / refresh_token / id_token —
+    anything cached upstream of the RP is a credential disclosure
+    risk. DOT's ``TokenView`` emits both headers by default; this
+    class pins the contract against a regression where a future
+    custom middleware strips or relaxes them.
+
+    Symmetric error-response check: §5.2 does not explicitly
+    require ``no-store`` on 4xx, but DOT applies it uniformly and
+    cached errors leak request shape regardless. Pin the uniform
+    application.
+    """
+
+    def test_successful_token_response_has_no_store_cache_control(
+        self,
+    ) -> None:
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="cache-pin-200")
+        resp = self.exchange_code_for_token(
+            code=code, redirect_uri=REDIRECT_URI
+        )
+        self.assertEqual(200, resp.status_code)
+        self.assertIn(
+            "no-store",
+            resp.headers.get("Cache-Control", ""),
+            "RFC 6749 §5.1: 200 token response MUST carry no-store",
+        )
+
+    def test_successful_token_response_has_pragma_no_cache(self) -> None:
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="cache-pin-pragma")
+        resp = self.exchange_code_for_token(
+            code=code, redirect_uri=REDIRECT_URI
+        )
+        self.assertEqual("no-cache", resp.headers.get("Pragma"))
+
+    def test_token_error_response_also_has_no_store_cache_control(
+        self,
+    ) -> None:
+        """4xx token-error responses uniformly carry no-store under DOT."""
+        resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": "definitely-not-a-real-code",
+            },
+        )
+        self.assertGreaterEqual(resp.status_code, 400)
+        self.assertLess(resp.status_code, 500)
+        self.assertIn(
+            "no-store",
+            resp.headers.get("Cache-Control", ""),
+            f"4xx token response missing no-store; status={resp.status_code}",
+        )

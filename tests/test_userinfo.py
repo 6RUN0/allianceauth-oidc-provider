@@ -805,3 +805,102 @@ class TestUserinfoClaimAntiLeak(OIDCTestCase):
             leaked,
             f"forbidden claim(s) leaked for superuser: {sorted(leaked)}",
         )
+
+
+class TestUserinfoWWWAuthenticateHeader(OIDCTestCase):
+    """
+    RFC 6750 §3 — protected-resource responses that reject a request
+    for lack of credentials or for an invalid token MUST include a
+    ``WWW-Authenticate`` challenge header so clients can recover
+    programmatically.
+
+    DOT's default ``/o/userinfo/`` handler emits this header; the
+    test class pins the contract against regressions where a future
+    custom middleware strips it or a wrapper view replaces the
+    default 401 with a bare Django response.
+    """
+
+    def _userinfo(self, **headers):
+        return self.client.get("/o/userinfo/", headers=headers)
+
+    def test_401_without_token_carries_www_authenticate_header(
+        self,
+    ) -> None:
+        resp = self._userinfo()
+        self.assertIn(resp.status_code, (401, 403))
+        self.assertIn(
+            "WWW-Authenticate",
+            resp.headers,
+            "RFC 6750 §3: 401 from /userinfo/ MUST carry a "
+            "WWW-Authenticate challenge header",
+        )
+
+    def test_401_with_invalid_token_includes_error_invalid_token(
+        self,
+    ) -> None:
+        """
+        RFC 6750 §3.1 — when the token is invalid the challenge
+        SHOULD include ``error="invalid_token"`` so the client can
+        distinguish recoverable from non-recoverable failures.
+        """
+        resp = self._userinfo(authorization="Bearer not-a-real-token")
+        self.assertIn(resp.status_code, (401, 403))
+        challenge = resp.headers.get("WWW-Authenticate", "")
+        self.assertIn("Bearer", challenge)
+        self.assertIn(
+            "invalid_token",
+            challenge,
+            f"expected error=invalid_token in challenge, got {challenge!r}",
+        )
+
+    def test_401_with_revoked_token_yields_invalid_token_challenge(
+        self,
+    ) -> None:
+        """Revoked AT presents same RFC 6750 §3.1 invalid_token signal."""
+        from oauth2_provider.models import get_access_token_model
+
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="wwwauth-revoked")
+        access = tokens["access_token"]
+        get_access_token_model().objects.filter(token=access).delete()
+
+        resp = self._userinfo(authorization=f"Bearer {access}")
+        self.assertIn(resp.status_code, (401, 403))
+        challenge = resp.headers.get("WWW-Authenticate", "")
+        self.assertIn("Bearer", challenge)
+
+
+class TestUserinfoCacheControlDocumentsGap(OIDCTestCase):
+    """
+    OIDC §5.3.2 — ``/o/userinfo/`` response SHOULD carry
+    ``Cache-Control: no-store`` so identity claims do not land in
+    browser caches, CDNs, or intermediate proxies.
+
+    Current state: DOT's ``UserInfoView`` does NOT emit this header.
+    The tests below document the gap — they pass today and will
+    fail (signalling the hardening landed) when ``no-store`` is
+    added to the response.
+
+    Hardening path: wrap DOT's view with
+    ``@method_decorator(cache_control(no_store=True), name="dispatch")``
+    in a thin subclass, then register that subclass in ``urls.py``.
+    """
+
+    def test_userinfo_response_lacks_no_store_header_today(self) -> None:
+        """If this fails, the no-store header was added — flip to assert."""
+        self.grant_oidc_access(self.user1)
+        tokens = self.run_code_flow(self.user1, state="cache-control-gap")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(200, resp.status_code)
+        # Currently absent — when this assertion flips to
+        # ``assertIn("no-store", ...)`` the gap is closed.
+        cache_control = resp.headers.get("Cache-Control", "")
+        self.assertNotIn(
+            "no-store",
+            cache_control,
+            "Cache-Control: no-store is now present on /userinfo/ — "
+            "update this test to assert presence",
+        )
