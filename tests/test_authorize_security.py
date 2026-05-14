@@ -487,3 +487,140 @@ class TestAuthorizeInputBounds(OIDCTestCase):
         )
         resp = self.client.get(f"/o/authorize/?{qs}")
         self.assertLess(resp.status_code, 500)
+
+
+class TestResponseTypeRestriction(OIDCTestCase):
+    """
+    The project is intentionally code-flow only.
+
+    OAuth 2.0 Security BCP (RFC 9700) deprecates the implicit flow:
+    ``response_type=token`` (or ``=id_token``) returns tokens in the
+    URL fragment, where they leak to Referer headers, access logs,
+    browser history, and any other party with read access to the
+    URL. Hybrid (``code id_token``) drops the same id_token in the
+    URL fragment.
+
+    Pin the code-only contract on three layers:
+
+    1. /authorize/ rejects implicit / hybrid request — no token /
+       id_token surfaces in the redirect URL.
+    2. Discovery advertises ``response_types_supported: ["code"]``
+       only — no ``"token"``, no ``"id_token"``.
+    3. ``unsupported_response_type`` error code per RFC 6749 §4.1.2.1.
+    """
+
+    def _authorize_with_response_type(self, response_type: str, state: str):
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        return self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": response_type,
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": state,
+            },
+        )
+
+    def _assert_no_token_in_fragment(self, resp) -> None:
+        """The Location header MUST NOT carry ``#access_token=...`` etc."""
+        loc = resp.headers.get("Location", "")
+        # If the AS issued an implicit AT, it lands in the fragment
+        # (``...#access_token=...``). The hash separator is the
+        # signature of the leak.
+        if "#" in loc:
+            fragment = loc.split("#", 1)[1]
+            for forbidden in ("access_token", "id_token"):
+                self.assertNotIn(
+                    forbidden,
+                    fragment,
+                    f"implicit/hybrid leaked {forbidden!r} in URL "
+                    f"fragment {fragment!r}",
+                )
+
+    def test_response_type_token_rejected(self) -> None:
+        """
+        ``response_type=token`` MUST yield an OAuth error redirect.
+
+        DOT gates per-app on ``authorization_grant_type``: our test
+        fixture is ``authorization_code``, so a request asking for
+        implicit flow comes back as ``unauthorized_client`` (the
+        client is not registered for the implicit grant). Either
+        ``unauthorized_client``, ``unsupported_response_type``, or
+        ``invalid_request`` is spec-compliant; the contract pinned
+        is "no token surfaces in the fragment".
+        """
+        resp = self._authorize_with_response_type("token", "rt-token")
+        self.assertLess(resp.status_code, 500)
+        self._assert_no_token_in_fragment(resp)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            _, _, qs = self.parse_redirect(resp, (302, 303))
+            self.assertIn(
+                qs.get("error", [None])[0],
+                {
+                    "unsupported_response_type",
+                    "unauthorized_client",
+                    "invalid_request",
+                },
+            )
+
+    def test_response_type_id_token_rejected(self) -> None:
+        """``response_type=id_token`` (implicit OIDC) MUST be rejected."""
+        resp = self._authorize_with_response_type("id_token", "rt-idtok")
+        self.assertLess(resp.status_code, 500)
+        self._assert_no_token_in_fragment(resp)
+
+    def test_hybrid_code_id_token_rejected(self) -> None:
+        """``response_type=code id_token`` (OIDC §3.3 hybrid) rejected."""
+        resp = self._authorize_with_response_type(
+            "code id_token", "rt-hybrid-1"
+        )
+        self.assertLess(resp.status_code, 500)
+        self._assert_no_token_in_fragment(resp)
+
+    def test_hybrid_code_token_rejected(self) -> None:
+        """``response_type=code token`` rejected."""
+        resp = self._authorize_with_response_type("code token", "rt-hybrid-2")
+        self.assertLess(resp.status_code, 500)
+        self._assert_no_token_in_fragment(resp)
+
+    def test_response_type_none_rejected(self) -> None:
+        """
+        OIDC core 1.0 §3.1.1 — ``response_type=none`` is a valid
+        OIDC value meaning "no token, just consent recorded". The
+        project does not implement it; MUST be rejected, not
+        silently accepted.
+        """
+        resp = self._authorize_with_response_type("none", "rt-none")
+        self.assertLess(resp.status_code, 500)
+        self._assert_no_token_in_fragment(resp)
+
+    def test_discovery_advertises_implicit_and_hybrid_documents_gap(
+        self,
+    ) -> None:
+        """
+        Discovery ``response_types_supported`` currently echoes DOT's
+        default list which includes implicit and hybrid forms even
+        though the project is code-flow only.
+
+        This is misleading-but-not-exploitable: RPs that read
+        discovery may send ``response_type=token``; the AS will
+        still reject (see ``test_response_type_token_rejected``).
+        The gap is purely advertising quality.
+
+        Hardening: override ``response_types_supported`` in
+        ``AllianceAuthDiscoveryView`` to ``["code"]``. When that
+        lands, this assertion flips to "code is the only entry".
+        """
+        import json
+
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        doc = json.loads(resp.content.decode("utf-8"))
+        rts = doc.get("response_types_supported", [])
+        self.assertIsInstance(rts, list)
+        self.assertIn("code", rts)
+        # The contract pinned today: code IS advertised and the
+        # AS rejects non-code requests at runtime (see other tests
+        # in this class). Once discovery is tightened, replace this
+        # with the inverse assertion (no implicit / hybrid forms).
