@@ -20,13 +20,13 @@ repos:
         args: [--maxkb=10000]
       - id: detect-private-key
         # ``tests/oidc-test.key`` is the JWT test key.
-        # ``tests/test_management_commands.py`` only contains the
+        # ``tests/test_command_jwks_rotate.py`` only contains the
         # literal PEM header / footer markers as a presence assert
         # on ``oidc_jwks_rotate`` stdout — no key material.
         exclude: |
           (?x)^(
               tests/oidc-test\.key
-            | tests/test_management_commands\.py
+            | tests/test_command_jwks_rotate\.py
           )$
       - id: debug-statements
       - id: end-of-file-fixer
