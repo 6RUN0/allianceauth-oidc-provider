@@ -391,3 +391,100 @@ class TestDiscoveryAndJWKSCORS(OIDCTestCase):
         resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, resp.status_code)
         self.assertEqual("*", resp.headers.get("Access-Control-Allow-Origin"))
+
+
+class TestExtensionEndpointsAbsence(OIDCTestCase):
+    """
+    Pin absence of OAuth/OIDC extension endpoints in discovery.
+
+    Discovery does **not** advertise a handful of OAuth/OIDC
+    extensions that the upstream stack (django-oauth-toolkit + this
+    project) does not implement. Pinning the absence catches two
+    classes of regression:
+
+    1. A silent flip to ``true`` when DOT (or a downstream override)
+       gains partial support — the corresponding feature would be
+       half-implemented and we want explicit review of the
+       semantics, not implicit advertisement.
+    2. A typo in the discovery builder that emits a key with a
+       confusing default (e.g. ``"pushed_authorization_request_endpoint": ""``).
+
+    When any of these features lands, flip the matching assertion
+    from ``assertNotIn`` to ``assertEqual`` against the actual
+    value.
+    """
+
+    def _doc(self) -> dict[str, Any]:
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        return json.loads(resp.content.decode("utf-8"))
+
+    def test_pushed_authorization_request_endpoint_absent(self) -> None:
+        """
+        RFC 9126 (PAR) — clients POST the authorize parameters to a
+        dedicated endpoint and receive a ``request_uri`` they then
+        hand to /o/authorize/. Mitigates URL-length limits and
+        authorize-param tampering. Not implemented upstream.
+        """
+        doc = self._doc()
+        self.assertNotIn(
+            "pushed_authorization_request_endpoint",
+            doc,
+            "DOT shipped PAR (RFC 9126); flip this assertion to "
+            "``assertIn`` and add a smoke test for the new endpoint.",
+        )
+        self.assertNotIn(
+            "require_pushed_authorization_requests",
+            doc,
+        )
+
+    def test_dpop_signing_alg_values_supported_absent(self) -> None:
+        """
+        RFC 9449 (DPoP) — sender-constrained tokens via a per-request
+        proof JWT signed with a key the client controls. Mitigates
+        bearer-token theft (XSS, log leakage). Not implemented
+        upstream.
+        """
+        doc = self._doc()
+        self.assertNotIn(
+            "dpop_signing_alg_values_supported",
+            doc,
+            "DOT shipped DPoP (RFC 9449); flip this assertion to "
+            "``assertIn`` and verify the supported algs include "
+            "ES256 / RS256 at minimum.",
+        )
+
+    def test_check_session_iframe_absent(self) -> None:
+        """
+        OIDC Session Management 1.0 §3 — ``check_session_iframe`` is
+        the URL of an iframe RPs embed to poll for end-user logout
+        at the OP. Superseded in modern stacks by back-channel
+        logout (OIDC BCL 1.0; already heavily tested in
+        ``test_back_channel_logout.py``). Not implemented upstream.
+        """
+        doc = self._doc()
+        self.assertNotIn(
+            "check_session_iframe",
+            doc,
+            "DOT shipped OIDC Session Management; consider whether "
+            "to deprecate it in favour of BCL or pin both.",
+        )
+
+    def test_introspection_endpoint_auth_methods_supported_absent(
+        self,
+    ) -> None:
+        """
+        RFC 7662 §3 RECOMMENDS advertising
+        ``introspection_endpoint_auth_methods_supported`` so RPs know
+        whether to authenticate the introspection call via Basic
+        auth, body credentials, or something exotic. DOT does not
+        advertise it today — RPs must fall back to ``token_endpoint_auth_methods_supported``
+        or hard-code the assumption.
+        """
+        doc = self._doc()
+        self.assertNotIn(
+            "introspection_endpoint_auth_methods_supported",
+            doc,
+            "DOT now advertises introspection auth methods; verify "
+            "the list matches token-endpoint auth methods.",
+        )
