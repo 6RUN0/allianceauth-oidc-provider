@@ -1542,3 +1542,57 @@ class TestTokenContentType(OIDCTestCase):
             f"4xx token Content-Type missing JSON; "
             f"got {resp.headers.get('Content-Type')!r}",
         )
+
+
+class TestTokenClientAuthenticationMethods(OIDCTestCase):
+    """
+    RFC 6749 §2.3.1 — confidential clients MAY authenticate at the
+    token endpoint via HTTP Basic (preferred) OR via body params
+    ``client_id`` / ``client_secret`` (legacy / debug). Both MUST
+    work; pinning ensures DOT default keeps accepting both forms.
+    """
+
+    def _exchange_via_body(self, *, code: str):
+        return self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+            },
+        )
+
+    def _exchange_via_basic_auth(self, *, code: str):
+        import base64
+
+        creds = f"{self.oauth_id}:{self.oauth_secret}".encode()
+        basic_b64 = base64.b64encode(creds).decode("ascii")
+        return self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+            },
+            headers={"authorization": f"Basic {basic_b64}"},
+        )
+
+    def test_body_credentials_yield_token(self) -> None:
+        """Body ``client_id`` + ``client_secret`` is the legacy form."""
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="body-auth")
+        resp = self._exchange_via_body(code=code)
+        self.assertEqual(200, resp.status_code)
+        body = json.loads(resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)
+
+    def test_basic_auth_credentials_yield_token(self) -> None:
+        """RFC 6749 §2.3.1: Basic auth is the RECOMMENDED form."""
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="basic-auth")
+        resp = self._exchange_via_basic_auth(code=code)
+        self.assertEqual(200, resp.status_code)
+        body = json.loads(resp.content.decode("utf-8"))
+        self.assertIn("access_token", body)

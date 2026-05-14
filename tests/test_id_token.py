@@ -350,3 +350,49 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
             f"id_token kid={token_kid!r} is not published in JWKS "
             f"{sorted(published_kids)!r}",
         )
+
+
+class TestIdTokenAudienceShape(OIDCTestCase):
+    """
+    OIDC Core 1.0 §2 — the ``aud`` claim MAY be either a single
+    string (when there is one audience) or an array of strings
+    (multi-audience). RP libraries that strictly type ``aud`` as one
+    or the other reject the unexpected shape.
+
+    DOT's default is the single-string form: ``aud`` equals the
+    ``client_id`` of the issuing application. The tests below pin
+    that contract — a future feature that introduces multi-audience
+    tokens (rare; usually for federated AS) would flip the
+    assertion.
+    """
+
+    def _decode_id_token_payload(self, id_token: str) -> dict:
+        seg = id_token.split(".", 2)[1]
+        padding = "=" * (-len(seg) % 4)
+        return json.loads(
+            base64.urlsafe_b64decode(seg + padding).decode("utf-8")
+        )
+
+    def test_aud_is_string_not_array(self) -> None:
+        self.grant_oidc_access(self.user1)
+        body = self.run_code_flow(self.user1, state="aud-shape")
+        claims = self._decode_id_token_payload(body["id_token"])
+        aud = claims.get("aud")
+        self.assertIsInstance(
+            aud,
+            str,
+            f"DOT default ``aud`` is single-string; got {type(aud).__name__}",
+        )
+        self.assertEqual(self.oauth_id, aud)
+
+    def test_aud_equals_client_id_of_issuing_application(self) -> None:
+        """
+        Cross-check with discovery: the issued ``aud`` matches the
+        client_id the RP used to drive the code-flow. A regression
+        that desyncs them (e.g. uses app.name or app.pk) breaks every
+        RP's aud-claim verification.
+        """
+        self.grant_oidc_access(self.user1)
+        body = self.run_code_flow(self.user1, state="aud-client-match")
+        claims = self._decode_id_token_payload(body["id_token"])
+        self.assertEqual(self.oauth_id, claims.get("aud"))
