@@ -26,7 +26,12 @@ from typing import Any
 from jwcrypto import jwk, jwt
 
 from ._factories import make_app
-from ._oidc_testcase import SCOPE_OPENID, OIDCTestCase
+from ._oidc_testcase import (
+    REDIRECT_URI,
+    SCOPE_FULL,
+    SCOPE_OPENID,
+    OIDCTestCase,
+)
 
 REQUIRED_DISCOVERY_KEYS = frozenset(
     {
@@ -842,4 +847,152 @@ class TestPerAppPkceRequired(OIDCTestCase):
         self.assertIn(
             body.get("error"),
             {"invalid_grant", "invalid_request"},
+        )
+
+
+class TestClaimsRequestParameterHTTP(OIDCTestCase):
+    """
+    OIDC Core 1.0 §5.5 — the ``claims`` request parameter is JSON
+    embedded in a query parameter. Mis-shaped input is an attractive
+    DoS / parser-confusion target.
+
+    The filter-level coverage lives in
+    :class:`TestRequestedIdTokenClaimsSelector`; this class closes
+    the HTTP-side contract that the conformance suite's
+    ``oidcc-claims-essential`` was supposed to verify (TIMEOUT
+    upstream, HtmlUnit 4.11.1). Each case asserts the AS does NOT
+    500 / does NOT block the flow on bad input — graceful handling
+    is the security property.
+    """
+
+    def test_authorize_accepts_well_formed_claims_param(self) -> None:
+        """
+        ``claims={"id_token":{"acr":{"essential":true}}}`` — the
+        spec-canonical example. Flow must complete and a code is
+        issued.
+        """
+        self.grant_oidc_access(self.user1)
+        claims_json = '{"id_token":{"acr":{"essential":true}}}'
+        code = self.authorize_to_code(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="claims-well-formed",
+            extra_authorize_params={"claims": claims_json},
+        )
+        self.assertIsInstance(code, str)
+        self.assertTrue(code)
+
+    def test_authorize_with_malformed_claims_param_does_not_500(self) -> None:
+        """
+        Malformed JSON in ``claims=`` must not crash. The selector
+        defends with a try/except (M5 in TestRequestedIdTokenClaimsSelector);
+        the HTTP path must surface that defence — either accept the
+        request and ignore the bad claim (the project's choice) or
+        reject with an OAuth error redirect. A 5xx is forbidden.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "claims-malformed",
+                "claims": "{not-valid-json",
+            },
+        )
+        self.assertLess(
+            resp.status_code,
+            500,
+            f"malformed claims= MUST NOT 5xx; got {resp.status_code}",
+        )
+
+    def test_authorize_with_empty_claims_param_does_not_500(self) -> None:
+        """An empty ``claims=`` query parameter must be tolerated."""
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "claims-empty",
+                "claims": "",
+            },
+        )
+        self.assertLess(resp.status_code, 500)
+
+
+class TestLocaleNegotiation(OIDCTestCase):
+    """
+    OIDC Core 1.0 §5.2 + §3.1.2.1 — ``ui_locales`` and
+    ``claims_locales`` are OPTIONAL request parameters. The
+    provider is permitted to ignore them, but it MUST NOT 5xx and
+    MUST NOT alter the OAuth flow on their presence.
+
+    The project ignores both (no locale negotiation; ``locale`` claim
+    derives from ``user.profile.language``). This class pins that
+    contract — replaces conformance modules ``oidcc-ui-locales`` and
+    ``oidcc-claims-locales`` which TIMEOUT upstream.
+    """
+
+    def test_ui_locales_does_not_break_authorize_flow(self) -> None:
+        """``ui_locales=fr,en`` must be accepted and a code issued."""
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="ui-locales",
+            extra_authorize_params={"ui_locales": "fr en"},
+        )
+        self.assertIsInstance(code, str)
+        self.assertTrue(code)
+
+    def test_claims_locales_does_not_break_authorize_flow(self) -> None:
+        """``claims_locales=de,en`` must be accepted and a code issued."""
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="claims-locales",
+            extra_authorize_params={"claims_locales": "de en"},
+        )
+        self.assertIsInstance(code, str)
+        self.assertTrue(code)
+
+    def test_locale_claim_follows_user_profile_not_request_locale(
+        self,
+    ) -> None:
+        """
+        The ``locale`` claim on /userinfo/ must reflect
+        ``user.profile.language`` — passing ``ui_locales=fr`` MUST
+        NOT change it to ``fr``. Pins the design choice to ignore
+        request-side locale negotiation.
+        """
+        self.user1.profile.language = "ru"
+        self.user1.profile.save()
+        self.user1.refresh_from_db()
+        self.grant_oidc_access(self.user1)
+
+        tokens = self.run_code_flow(
+            self.user1,
+            scope=SCOPE_FULL,
+            state="locale-vs-request",
+            extra_authorize_params={"ui_locales": "fr en"},
+        )
+        info = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(200, info.status_code)
+        body = json.loads(info.content.decode("utf-8"))
+        self.assertEqual(
+            "ru",
+            body.get("locale"),
+            "locale claim must come from user.profile.language, not "
+            "the ui_locales request parameter",
         )
