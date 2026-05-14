@@ -754,6 +754,156 @@ class TestPKCEAttackVectors(OIDCTestCase):
         self.assertIn("access_token", body)
 
 
+class TestTokenEndpointHTTPMethod(OIDCTestCase):
+    """
+    Reject GET on /o/token/ — RFC 6749 §3.2 mandates POST.
+
+    Two reasons GET MUST NOT be supported:
+
+    1. Credentials in URL: ``code``, ``client_secret``, and (in JWT-mode
+       at refresh) the refresh token would land in access logs,
+       Referer headers, CDN caches, browser history.
+    2. CSRF: GET requests are trivially forgeable from a third-party
+       site; POST + the credential check is the OAuth model.
+
+    DOT inherits this from Django's ``View`` + ``http_method_names``;
+    the test pins the contract so a future ``http_method_names = ['get',
+    'post']`` regression is caught.
+    """
+
+    def test_get_returns_405_method_not_allowed(self) -> None:
+        resp = self.client.get("/o/token/")
+        self.assertEqual(
+            405,
+            resp.status_code,
+            "RFC 6749 §3.2: token endpoint MUST reject GET with 405",
+        )
+        self.assertIn("Allow", resp.headers)
+        self.assertIn("POST", resp.headers["Allow"])
+
+
+class TestAuthorizationCodeLifetime(OIDCTestCase):
+    """
+    RFC 6749 §4.1.2: authorization codes are SHORT-lived (DOT default
+    60s in test settings). An expired code MUST be rejected with
+    ``invalid_grant`` on exchange — the window between issuance and
+    exchange is exactly the MITM/replay attack surface, and an
+    indefinitely-valid code reopens it.
+
+    Backdate the Grant row's ``expires`` field directly rather than
+    sleeping or freezing time — the test must run in milliseconds and
+    must not depend on system clock drift.
+    """
+
+    def test_expired_code_rejected_on_exchange(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_grant_model
+
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="expired-code")
+
+        # Force the Grant row's expires into the past. ``expires`` is
+        # a DateTimeField on AbstractGrant; queryset update bypasses
+        # signal handlers / auto_now and is the canonical way to fake
+        # a past timestamp.
+        Grant = get_grant_model()
+        Grant.objects.filter(code=code).update(
+            expires=timezone.now() - timedelta(seconds=60),
+        )
+
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI,
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+
+class TestRedirectURIExactMatch(OIDCTestCase):
+    """
+    RFC 6749 §3.1.2.2 + §4.1.3: registered ``redirect_uri`` matching
+    MUST be by simple string comparison — no substring / prefix /
+    case-insensitive / parameter-tolerant matching.
+
+    Pre-existing :meth:`TestTokenPolicy.test_token_exchange_denied_if_redirect_uri_mismatch`
+    covers a wholly-different URI. This class covers the subtle
+    near-miss vectors an attacker actually tries: query-string
+    injection, path suffix, scheme upgrade, IDN/punycode visual
+    spoofing. Each must reject as firmly as a wholly-different URI.
+    """
+
+    def test_path_suffix_rejected(self) -> None:
+        """Registered ``http://localhost/redir/`` ≠ ``http://localhost/redir/evil``."""
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="suffix-redir")
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI + "evil",
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_extra_query_param_rejected(self) -> None:
+        """Registered URI does not carry query — exchange with query MUST reject."""
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="query-redir")
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI + "?steal=1",
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_fragment_in_redirect_uri_rejected(self) -> None:
+        """
+        RFC 6749 §3.1.2: ``redirect_uri`` MUST NOT include a fragment.
+        Even if DOT happens to normalise it away, the exchange step
+        must reject the request — silent normalisation hides bugs.
+        """
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="frag-redir")
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=REDIRECT_URI + "#frag",
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+    def test_scheme_upgrade_rejected(self) -> None:
+        """
+        Registered scheme is ``http``; presenting the same authority
+        with ``https`` MUST reject — string match, not protocol-aware
+        comparison.
+        """
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="scheme-redir")
+        # Replace only the scheme on the registered URI.
+        https_variant = REDIRECT_URI.replace("http://", "https://", 1)
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=https_variant,
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
+
+
 class TestRefreshScopeBoundary(OIDCTestCase):
     """
     Refresh-token grant scope contract.
