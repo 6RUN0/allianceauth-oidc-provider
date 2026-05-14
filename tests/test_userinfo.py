@@ -747,3 +747,61 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
 
         resp = self._userinfo(access)
         self.assertIn(resp.status_code, (200, 401, 403))
+
+
+class TestUserinfoClaimAntiLeak(OIDCTestCase):
+    """
+    /o/userinfo/ claim emission MUST NOT leak Django auth flags
+    (``is_staff``, ``is_superuser``) or User model fields that look
+    like identity but carry security state.
+
+    A regression that adds these to ``get_additional_claims`` (e.g.
+    for "convenience" in a downstream RP) is a privilege escalation
+    for every consuming application. Pin the exclusion explicitly
+    rather than relying on the absence-by-default.
+    """
+
+    FORBIDDEN_CLAIMS = (
+        "is_staff",
+        "is_superuser",
+        "password",
+        "last_login",
+        "date_joined",
+        "user_permissions",
+    )
+
+    def _userinfo_keys(self, scope: str, user) -> set[str]:
+        self.grant_oidc_access(user)
+        tokens = self.run_code_flow(user, scope=scope, state="anti-leak")
+        resp = self.client.get(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(200, resp.status_code)
+        return set(json.loads(resp.content.decode("utf-8")).keys())
+
+    def test_regular_user_emits_no_auth_flag_claims(self) -> None:
+        keys = self._userinfo_keys(SCOPE_FULL, self.user1)
+        leaked = keys & set(self.FORBIDDEN_CLAIMS)
+        self.assertFalse(
+            leaked,
+            f"forbidden claim(s) leaked for regular user: {sorted(leaked)}",
+        )
+
+    def test_superuser_emits_no_is_superuser_claim(self) -> None:
+        """
+        Mutating the user to ``is_superuser=True`` MUST NOT cause the
+        claim to suddenly appear. Catches regressions where the
+        emission logic gates on ``user.is_superuser``.
+        """
+        self.user1.is_superuser = True
+        self.user1.is_staff = True
+        self.user1.save()
+        self.user1.refresh_from_db()
+
+        keys = self._userinfo_keys(SCOPE_FULL, self.user1)
+        leaked = keys & set(self.FORBIDDEN_CLAIMS)
+        self.assertFalse(
+            leaked,
+            f"forbidden claim(s) leaked for superuser: {sorted(leaked)}",
+        )

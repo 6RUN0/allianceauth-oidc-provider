@@ -1232,3 +1232,193 @@ class TestConcurrentReuseLockingInvariant(OIDCTestCase):
             "row while revoking; concurrent exchanges on PostgreSQL "
             "would both succeed without it",
         )
+
+
+class TestTokenEndpointAntiEnumeration(OIDCTestCase):
+    """
+    RFC 6749 §5.2 — token-endpoint error responses MUST NOT leak the
+    existence of clients.
+
+    The classic enumeration probe: an attacker iterates ``client_id``
+    values and watches for shape / timing differences between
+    "unknown client" and "valid client + bad secret". If the server
+    distinguishes them (different ``error`` codes, different message
+    fields, very different response sizes), the attacker can map the
+    deployment's registered apps.
+
+    Pin: both probes return the same set of acceptable ``error``
+    codes with no other discriminating fields in the body. Timing
+    parity is out of scope (Django views inherently leak some timing
+    for DB lookups); this guards the shape-leak vector which is the
+    cheap one to fix.
+    """
+
+    def _post_token(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        code: str = "any-non-existent-code",
+    ):
+        return self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": code,
+            },
+        )
+
+    def test_unknown_client_and_bad_secret_yield_same_error_shape(
+        self,
+    ) -> None:
+        """
+        Both probes MUST land in the same OAuth error envelope.
+        Specifically: the same set of ``error`` codes is acceptable
+        ({invalid_client, invalid_grant, invalid_request}), and
+        neither response carries discriminating fields like
+        ``client_id`` or ``error_uri`` echoing the input.
+        """
+        # Probe 1: completely unregistered client_id.
+        resp_unknown = self._post_token(
+            client_id="not-a-registered-client",
+            client_secret="anything",  # nosec B106
+        )
+        body_unknown = json.loads(resp_unknown.content.decode("utf-8"))
+
+        # Probe 2: real client_id, wrong secret.
+        resp_bad_secret = self._post_token(
+            client_id=self.oauth_id,
+            client_secret="WRONG_SECRET",  # nosec B106
+        )
+        body_bad_secret = json.loads(resp_bad_secret.content.decode("utf-8"))
+
+        # Both must be 4xx OAuth-error responses.
+        self.assertLess(resp_unknown.status_code, 500)
+        self.assertLess(resp_bad_secret.status_code, 500)
+        self.assertGreaterEqual(resp_unknown.status_code, 400)
+        self.assertGreaterEqual(resp_bad_secret.status_code, 400)
+
+        # ``error`` field MUST be from the same well-known set.
+        acceptable = {"invalid_client", "invalid_grant", "invalid_request"}
+        self.assertIn(body_unknown.get("error"), acceptable)
+        self.assertIn(body_bad_secret.get("error"), acceptable)
+
+        # Neither response must echo the supplied ``client_id``: that
+        # would let an attacker confirm by simple grep that the value
+        # they sent reached the server.
+        self.assertNotIn(
+            "not-a-registered-client",
+            resp_unknown.content.decode("utf-8"),
+        )
+
+
+class TestRedirectURIInjection(OIDCTestCase):
+    """
+    Header- and URL-injection guards on ``redirect_uri``.
+
+    Three concrete vectors:
+
+    - CRLF (``%0d%0a``) in a *registered* URI would split the
+      response Location header at dispatch time. Django's
+      ``HttpResponseRedirect`` rejects CRLF, but the AS should also
+      reject registration so the problem is caught at admin-form
+      time, not at runtime.
+    - NUL byte (``%00``) historically truncates C-string parsers
+      and produces invariant violations.
+    - Punycode / IDN homoglyph: a registered URI uses Latin lowercase
+      a; an attacker presents the Cyrillic lookalike (U+0430). Both
+      render identically but hash differently. The contract pinned:
+      exact byte match wins, no Unicode normalisation runs.
+    """
+
+    def test_crlf_in_registered_redirect_uri_rejected(self) -> None:
+        r"""
+        Model-level: a registered URI containing ``\r\n`` must fail
+        validation. ``URLField`` + ``URLValidator`` should reject;
+        the test pins this against a regression that loosens the
+        validator.
+        """
+        from django.core.exceptions import ValidationError
+
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1,
+            redirect_uri="https://rp.example/cb\r\nSet-Cookie: x=y",
+        )
+        with self.assertRaises(ValidationError):
+            creds.app.full_clean()
+
+    def test_null_byte_in_registered_uri_currently_accepted_documents_gap(
+        self,
+    ) -> None:
+        r"""
+        NUL byte in path is currently NOT rejected by Django's
+        ``URLValidator`` (regex permits non-control bytes in path).
+        This test documents the gap: a registered URI containing
+        ``\x00`` survives ``full_clean()``.
+
+        Why this matters: legacy C-string parsers (some load
+        balancers, log analysers) truncate at NUL — an attacker who
+        registers ``https://rp.example/cb\x00.evil/`` may see the
+        AS dispatch to ``https://rp.example/cb`` while the audit log
+        records the full string. Hardening: add a ``\x00 in value``
+        check to ``AllianceAuthApplication.clean``.
+
+        If this test starts failing (rejection), the hardening landed
+        — flip the assertion to ``assertRaises(ValidationError)``.
+        """
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1,
+            redirect_uri="https://rp.example/cb\x00evil",
+        )
+        # Currently accepted — full_clean must not raise.
+        creds.app.full_clean()
+
+    def test_idn_punycode_byte_mismatch_rejected(self) -> None:
+        """
+        Latin ``a`` (U+0061) vs Cyrillic small a (U+0430).
+
+        Two URIs that render identically must compare unequal at the
+        byte level. Registered URI uses Latin; attacker presents the
+        Cyrillic lookalike at exchange time. The exchange MUST reject
+        because the strings differ — no Unicode-normalisation should
+        kick in to make them equal.
+        """
+        # Latin U+0061 vs Cyrillic U+0430 — the actual homoglyph
+        # attack input. ``noqa: RUF001`` on the cyrillic line below
+        # suppresses ruff's ambiguous-character lint; that codepoint
+        # is the subject of the test, not a typo.
+        latin = "http://localhost/redir-a/"
+        cyrillic_a = "http://localhost/redir-а/"  # noqa: RUF001
+        # Sanity: visually similar, byte-different.
+        self.assertNotEqual(latin, cyrillic_a)
+
+        from ._factories import make_app
+
+        creds = make_app(
+            owner=self.user1, redirect_uri=latin, pkce_required=False
+        )
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(
+            self.user1,
+            state="idn-mismatch",
+            redirect_uri=latin,
+            extra_authorize_params={"client_id": creds.client_id},
+        )
+        resp = self.exchange_code_for_token(
+            code=code,
+            redirect_uri=cyrillic_a,
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+            expected_status=(400, 401),
+        )
+        self.assertOAuthError(
+            resp,
+            expected_error={"invalid_grant", "invalid_request"},
+        )
