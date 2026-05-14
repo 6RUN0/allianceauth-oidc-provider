@@ -271,8 +271,10 @@ convention = "pep257"
 "allianceauth_oidc/checks.py" = [ "ARG001", "BLE001", "N806" ]
 # Django ``View.post(self, request, *args, **kwargs)`` framework
 # signature is dispatched via ``method_decorator``; the override must
-# preserve ``*args, **kwargs`` even when the body ignores them.
-"allianceauth_oidc/views.py" = [ "ARG002" ]
+# preserve ``*args, **kwargs`` even when the body ignores them. The
+# ``views*`` glob covers the re-export shim plus the per-endpoint
+# siblings (``views_token`` / ``views_authorize`` / ``views_discovery``).
+"allianceauth_oidc/views*.py" = [ "ARG002" ]
 # Management commands: ``Foo = get_foo_model()`` returns a class, and
 # Django convention is to bind it to a PascalCase local — N806 would
 # flag every such call site. ``add_arguments`` / ``handle`` are
@@ -378,10 +380,18 @@ ignore_missing_imports = true
 module = [ "allianceauth_oidc.models" ]
 disable_error_code = [ "var-annotated" ]
 
-# super().dispatch() in DOT's AuthorizationView is untyped; the return type
-# is correct at runtime (HttpResponseBase) but mypy sees it as Any.
+# super().dispatch() in DOT's AuthorizationView is untyped; the return
+# type is correct at runtime (HttpResponseBase) but mypy sees it as
+# Any. Listed explicitly because mypy requires fully-qualified module
+# names (only whole-component wildcards are allowed — ``views*`` is
+# rejected).
 [[tool.mypy.overrides]]
-module = [ "allianceauth_oidc.views" ]
+module = [
+    "allianceauth_oidc.views",
+    "allianceauth_oidc.views_token",
+    "allianceauth_oidc.views_authorize",
+    "allianceauth_oidc.views_discovery",
+]
 disable_error_code = [ "no-any-return" ]
 
 [tool.basedpyright]

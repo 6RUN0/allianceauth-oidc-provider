@@ -1,5 +1,5 @@
 """
-Pure-Python tests for ``allianceauth_oidc.auth_provider.ClaimsBuilder``.
+Pure-Python tests for ``allianceauth_oidc.claims.ClaimsBuilder``.
 
 Each ``_xxx`` method is exercised on synthetic users built from
 ``types.SimpleNamespace`` plus a tiny in-memory queryset stub. No
@@ -21,7 +21,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from allianceauth_oidc.app_settings import OIDCSettings
-from allianceauth_oidc.auth_provider import ClaimsBuilder
+from allianceauth_oidc.claims import ClaimsBuilder
 
 
 def _settings(**overrides: object) -> OIDCSettings:
@@ -172,7 +172,7 @@ class TestEmailClaim(SimpleTestCase):
         # are by definition unverified, so ``email_verified`` MUST be
         # ``False`` regardless of REGISTRATION_VERIFY_EMAIL.
         with patch(
-            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
             return_value=True,
         ):
             builder = ClaimsBuilder(
@@ -188,7 +188,7 @@ class TestEmailClaim(SimpleTestCase):
         # placeholder must report ``email_verified=False``: the
         # placeholder is the marker that the user skipped verification.
         with patch(
-            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
             return_value=True,
         ):
             builder = ClaimsBuilder(
@@ -203,7 +203,7 @@ class TestEmailClaim(SimpleTestCase):
         # address, the detector returns False and we fall back to the
         # global verification policy.
         with patch(
-            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
             return_value=False,
         ):
             builder = ClaimsBuilder(
@@ -219,7 +219,7 @@ class TestEmailClaim(SimpleTestCase):
         # placeholder. This is the production path on installations
         # without aa_skip_email.
         with patch(
-            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
             None,
         ):
             builder = ClaimsBuilder(
@@ -248,7 +248,7 @@ class TestEmailClaim(SimpleTestCase):
         # this on accepts the trade-off described in the security
         # model.
         with patch(
-            "allianceauth_oidc.auth_provider._aa_skip_email_is_placeholder",
+            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
             return_value=True,
         ):
             builder = ClaimsBuilder(
@@ -324,7 +324,7 @@ class TestPictureClaim(SimpleTestCase):
             user=_user(main=_main(character_id=7)), settings=bad
         )
         with self.assertLogs(
-            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            "extensions.allianceauth_oidc.claims", level="WARNING"
         ) as cap:
             out = builder.build()
         self.assertNotIn("picture", out)
@@ -387,7 +387,7 @@ class TestGroupsClaim(SimpleTestCase):
             settings=_settings(),
         )
         with self.assertLogs(
-            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            "extensions.allianceauth_oidc.claims", level="WARNING"
         ):
             out = builder.build()
         self.assertEqual(257, len(out["groups"]))
@@ -400,7 +400,7 @@ class TestGroupsClaim(SimpleTestCase):
             max_groups=2,
         )
         with self.assertLogs(
-            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            "extensions.allianceauth_oidc.claims", level="WARNING"
         ):
             out = builder.build()
         self.assertEqual(["a", "b"], out["groups"])
@@ -422,7 +422,7 @@ class TestGroupsClaim(SimpleTestCase):
             max_groups=2,
         )
         with self.assertNoLogs(
-            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            "extensions.allianceauth_oidc.claims", level="WARNING"
         ):
             out = builder.build()
         # All groups kept (no truncation, no state-append).
@@ -483,7 +483,7 @@ class TestEveClaims(SimpleTestCase):
         # If the tuple is extended without updating the EveCharacter
         # accessor list or the ``_main`` test factory, this surfaces
         # the gap as a missing key in the output dict.
-        from allianceauth_oidc.auth_provider import _EVE_CLAIM_NAMES
+        from allianceauth_oidc.claims import _EVE_CLAIM_NAMES
 
         kwargs = {n: f"v_{n}" for n in _EVE_CLAIM_NAMES}
         # character_id / *_id are typically int; the builder doesn't

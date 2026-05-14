@@ -18,7 +18,7 @@ from ._oidc_testcase import (
 )
 from .test_jwt_access_tokens import _jwt_mode_oauth2_provider, split_jwt
 
-VIEWS_LOGGER = "extensions.allianceauth_oidc.views"
+TOKEN_VIEW_LOGGER = "extensions.allianceauth_oidc.views_token"
 
 
 class TestDebugLogging(OIDCTestCase):
@@ -35,8 +35,8 @@ class TestDebugLogging(OIDCTestCase):
         is emitted (which is precisely what the negative debug_mode test wants
         to verify).
         """
-        with self.assertLogs(VIEWS_LOGGER, level="NOTSET") as cm:
-            logging.getLogger(VIEWS_LOGGER).debug("test-anchor")
+        with self.assertLogs(TOKEN_VIEW_LOGGER, level="NOTSET") as cm:
+            logging.getLogger(TOKEN_VIEW_LOGGER).debug("test-anchor")
             self.exchange_code_for_token(
                 code=code,
                 redirect_uri=REDIRECT_URI,
@@ -46,10 +46,13 @@ class TestDebugLogging(OIDCTestCase):
 
     @staticmethod
     def _info_lines(records: list[logging.LogRecord]) -> list[str]:
+        # The debug-mode INFO line is emitted by TokenAudit, which
+        # lives in ``views_token``. Capture target and originating
+        # logger match exactly — no parent/child propagation needed.
         return [
             r.getMessage()
             for r in records
-            if r.levelno >= logging.INFO and r.name == VIEWS_LOGGER
+            if r.levelno >= logging.INFO and r.name == TOKEN_VIEW_LOGGER
         ]
 
     def test_debug_logging_does_not_leak_tokens_or_secrets(self):
@@ -173,8 +176,8 @@ class TestDebugLoggingJWTMode(OIDCTestCase):
     """
 
     def _capture_views_log_during_exchange(self, code: str) -> str:
-        with self.assertLogs(VIEWS_LOGGER, level="NOTSET") as cm:
-            logging.getLogger(VIEWS_LOGGER).debug("test-anchor")
+        with self.assertLogs(TOKEN_VIEW_LOGGER, level="NOTSET") as cm:
+            logging.getLogger(TOKEN_VIEW_LOGGER).debug("test-anchor")
             resp = self.exchange_code_for_token(
                 code=code,
                 redirect_uri=REDIRECT_URI,

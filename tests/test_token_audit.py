@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from allianceauth_oidc.views import (
+from allianceauth_oidc.views import TokenAudit
+from allianceauth_oidc.views_token import (
     _DEFAULT_MAX_BODY_BYTES_FOR_AUDIT_PARSE,
-    TokenAudit,
 )
 
 
@@ -78,7 +78,7 @@ class TestParseBody(SimpleTestCase):
         body = '{"access_token":"' + "a" * 200 + '"}'
         audit = _audit(body, max_body_bytes=10)
         with self.assertLogs(
-            "extensions.allianceauth_oidc.views", level="WARNING"
+            "extensions.allianceauth_oidc.views_token", level="WARNING"
         ) as cap:
             self.assertIsNone(audit.parse_body())
         self.assertTrue(
@@ -88,7 +88,7 @@ class TestParseBody(SimpleTestCase):
 
     def test_invalid_json_logged_and_returns_none(self):
         with self.assertLogs(
-            "extensions.allianceauth_oidc.views", level="ERROR"
+            "extensions.allianceauth_oidc.views_token", level="ERROR"
         ) as cap:
             self.assertIsNone(_audit("{not-json").parse_body())
         self.assertTrue(
@@ -169,7 +169,7 @@ class TestLogDebugDefault(SimpleTestCase):
             "/o/token/", data={"grant_type": "authorization_code"}
         )
         with self.assertNoLogs(
-            "extensions.allianceauth_oidc.views", level="INFO"
+            "extensions.allianceauth_oidc.views_token", level="INFO"
         ):
             audit._log_debug(token, {"access_token": "x"})
 
@@ -188,7 +188,7 @@ class TestEmitShortCircuits(SimpleTestCase):
         # No DB lookup is attempted; if it were, the stub request
         # without ``.POST`` would crash later in the chain.
         with self.assertLogs(
-            "extensions.allianceauth_oidc.views", level="ERROR"
+            "extensions.allianceauth_oidc.views_token", level="ERROR"
         ):
             _audit("{garbage").emit()  # logs parse error, returns
 

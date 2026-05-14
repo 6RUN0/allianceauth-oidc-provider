@@ -116,7 +116,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         )
 
         with self.assertLogs(
-            "extensions.allianceauth_oidc.views", level="ERROR"
+            "extensions.allianceauth_oidc.views_token", level="ERROR"
         ) as cm:
             body = self.run_code_flow(self.user1, state="receiver-failure")
 
@@ -148,7 +148,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
                 side_effect=access_token_model.DoesNotExist,
             ),
             self.assertLogs(
-                "extensions.allianceauth_oidc.views", level="DEBUG"
+                "extensions.allianceauth_oidc.views_token", level="DEBUG"
             ) as cm,
         ):
             body = self.run_code_flow(self.user1, state="hashed-storage")
@@ -189,7 +189,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
                 return_value=(None, {}, oversized_body, 200),
             ),
             self.assertLogs(
-                "extensions.allianceauth_oidc.views", level="WARNING"
+                "extensions.allianceauth_oidc.views_token", level="WARNING"
             ) as cm,
         ):
             self.client.post(

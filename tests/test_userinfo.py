@@ -171,7 +171,7 @@ class TestUserinfoClaims(OIDCTestCase):
         operator can spot the misconfiguration.
         """
         with self.assertLogs(
-            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            "extensions.allianceauth_oidc.claims", level="WARNING"
         ) as cm:
             info = self._userinfo_for_user1_with_scope(SCOPE_PROFILE)
 
@@ -206,7 +206,7 @@ class TestUserinfoClaims(OIDCTestCase):
             self.user1.groups.add(g)
 
         with self.assertLogs(
-            "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            "extensions.allianceauth_oidc.claims", level="WARNING"
         ) as cm:
             info = self._userinfo_for_user1_with_scope(
                 SCOPE_PROFILE, with_test_group=False
