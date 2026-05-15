@@ -81,13 +81,12 @@ OAUTH2_PROVIDER["AUTHORIZATION_CODE_EXPIRE_SECONDS"] = 60
 
 OAUTH2_PROVIDER["REFRESH_TOKEN_EXPIRE_SECONDS"] = 24 * 3600
 
-# OIDC RP-Initiated Logout 1.0 plan probes ``end_session_endpoint``;
-# DOT gates BOTH the endpoint AND its discovery advertising behind
-# ``OIDC_RP_INITIATED_LOGOUT_ENABLED`` (default False). Without this
-# the suite's discovery-endpoint-verification module fails 3-line-deep
-# ("end_session_endpoint absent"), and every downstream logout probe
-# never gets a URL to call.
-OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ENABLED"] = True
+# OIDC_RP_INITIATED_LOGOUT_ENABLED is default-on through
+# AllianceAuthOIDC.ready (``_apply_default_oauth2_provider_settings``)
+# — no explicit opt-in needed here. ALWAYS_PROMPT below stays
+# conformance-only because production deployers want the user to
+# see a confirm screen by default; only the headless suite needs to
+# bypass it.
 # DOT's stock ``RPInitiatedLogoutView`` renders an HTML confirm page
 # at ``oauth2_provider/logout_confirm.html`` when this is True; the
 # suite's headless HtmlUnit cannot follow a confirm-and-submit flow

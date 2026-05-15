@@ -225,6 +225,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. **Do not copy the test-suite literal `60`** — that value is test-only (used by `tests/test_settingsAA4.py` to exercise expiry paths without sleeps) and races against real RP login flows that need at least one /userinfo round-trip plus client-side `clockTolerance` (~5 s). The `passport-openidconnect` strategy used by Wiki.js, Outline, and similar reject sub-minute lifetimes outright. `3600` (1 hour) matches the production defaults of Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
 | `OIDC_ISS_ENDPOINT` | unset | **Required when ANY application has `backchannel_logout_uri` set.** Absolute issuer URL (e.g. `"https://auth.example.org/o"`). The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime — `oidc_issuer(None)` falls through to this setting. A Django system check (`allianceauth_oidc.E001`) fires at `manage.py check` if a back-channel logout is configured without this setting; CI fails loudly instead of crashing the first end-user logout. See [OIDC Back-Channel Logout 1.0](docs/BACK_CHANNEL_LOGOUT.md). |
+| `OIDC_RP_INITIATED_LOGOUT_ENABLED` | `True` (default-on) | OIDC RP-Initiated Logout 1.0 — `/o/logout/` + `end_session_endpoint` in discovery. DOT's upstream default is `False`; the AppConfig's `_apply_default_oauth2_provider_settings` flips it to `True` only when the key is absent, so an explicit `False` opt-out is preserved. Pair with `OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT` (DOT default `True`) — DOT renders `oauth2_provider/logout_confirm.html` on logout requests; set to `False` to skip the confirm step for headless flows. |
 
 ### Custom settings (ALLIANCEAUTH_OIDC_*)
 
@@ -273,7 +274,7 @@ against unauthorised re-runs.
 | JWKS | `/o/.well-known/jwks.json` | DOT default. |
 | Token revocation | `/o/revoke_token/` | RFC 7009. DOT default. |
 | Token introspection | `/o/introspect/` | RFC 7662. DOT default. |
-| RP-initiated logout | `/o/logout/` | DOT default. |
+| RP-initiated logout | `/o/logout/` | DOT view; default-on via AppConfig (`OIDC_RP_INITIATED_LOGOUT_ENABLED=True` set if absent). |
 | Issuer (`iss` claim) | `https://your.host/o/` | Whatever your discovery URL resolves to. |
 
 ### Claims

@@ -12,6 +12,65 @@ from . import __version__
 logger = logging.getLogger(f"extensions.{__name__}")
 
 
+def _apply_default_oauth2_provider_settings() -> None:
+    """
+    Default-on the OIDC RP-Initiated Logout endpoint.
+
+    DOT's stock ``OIDC_RP_INITIATED_LOGOUT_ENABLED`` defaults to
+    ``False`` (see ``oauth2_provider.settings.DEFAULTS``). That value
+    gates BOTH the ``/o/logout/`` route AND DOT's
+    ``end_session_endpoint`` advertising in discovery. Our
+    :class:`AllianceAuthDiscoveryView` already emits
+    ``backchannel_logout_supported=True``; advertising back-channel
+    logout without RP-initiated end-session is a half-paved street —
+    RP libraries can feature-detect on it but have no URL to call.
+
+    ``setdefault`` preserves operator opt-out: an explicit
+    ``OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ENABLED"] = False``
+    is respected and stays ``False``; only the absent-key case gets
+    the ``True`` default. The companion ``…_ALWAYS_PROMPT`` flag
+    stays at DOT's default (``True``) — surfacing a confirm-and-
+    submit page to the end user is the safer posture; deployers who
+    want silent logout opt in explicitly via the same
+    ``OAUTH2_PROVIDER`` dict.
+
+    ``oauth2_settings`` is synced after the dict edit because DOT's
+    ``OAuth2ProviderSettings`` is a lazy reader that caches each
+    attribute on first access. A dict mutation alone would not
+    propagate once an earlier app's ``ready()`` has already touched
+    the attribute.
+    """
+    from django.conf import settings
+
+    provider = getattr(settings, "OAUTH2_PROVIDER", None)
+    if not isinstance(provider, dict):
+        # No DOT configuration at all — nothing to default-on against.
+        # Letting the import below run would still no-op cleanly, but
+        # the early return makes the intent legible.
+        return
+    provider.setdefault("OIDC_RP_INITIATED_LOGOUT_ENABLED", True)
+    try:
+        from oauth2_provider.settings import oauth2_settings
+    except ImportError:
+        # DOT not installed yet (extremely degraded import order — the
+        # app config wouldn't even load without DOT). Logged at warning
+        # so the absence is visible in startup logs.
+        logger.warning(
+            "OIDC: oauth2_provider not importable; "
+            "OIDC_RP_INITIATED_LOGOUT_ENABLED default not synced.",
+        )
+        return
+    # DOT's ``OAuth2ProviderSettings`` exposes settings via a
+    # ``__getattr__``-driven lazy reader, so basedpyright flags a
+    # direct attribute assignment as ``reportAttributeAccessIssue``.
+    # ``setattr`` with a variable attr name is the cleanest
+    # cross-checker path: it bypasses basedpyright's static lookup
+    # AND ruff's ``B010`` (which only fires on a *constant* attr in
+    # ``setattr``). Runtime behaviour is identical.
+    attr_name = "OIDC_RP_INITIATED_LOGOUT_ENABLED"
+    setattr(oauth2_settings, attr_name, provider[attr_name])
+
+
 def _check_jwt_wiring() -> None:
     """
     Log a warning when JWT mode is on but the dispatcher is missing.
@@ -141,4 +200,7 @@ class AllianceAuthOIDC(AppConfig):
         # no-op stub, which preserves a single startup path and keeps
         # the receiver chain testable without conditional fixtures.
         connect_metrics_receivers()
+        # Apply settings defaults BEFORE the JWT-wiring advisory so
+        # both helpers observe the same final oauth2_settings state.
+        _apply_default_oauth2_provider_settings()
         _check_jwt_wiring()
