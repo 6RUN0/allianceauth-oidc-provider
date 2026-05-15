@@ -3,11 +3,36 @@ Tests for /o/logout/ — RP-initiated logout and post_logout_redirect_uri
 allowlist enforcement.
 """
 
+import hashlib
+import hmac
+
 from django.conf import settings
 from django.test import override_settings
 from oauth2_provider.settings import oauth2_settings
 
+from ._jwt_helpers import _b64url_encode_nopad, forge_unsigned_jwt
 from ._oidc_testcase import REDIRECT_STATUSES, SCOPE_PROFILE, OIDCTestCase
+
+
+def _forged_hs256_id_token_hint() -> str:
+    """
+    Build an HS256 JWT signed with an attacker-chosen secret.
+
+    The AS does not know the secret, so signature verification
+    must fail. The compact form follows ``header.payload.sig``
+    base64url-no-pad encoding; same payload shape as the
+    ``alg=none`` companion so the two cases differ only in the
+    alg header and the signature segment.
+    """
+    header_seg = _b64url_encode_nopad(
+        b'{"alg":"HS256","typ":"JWT","kid":"forged"}'
+    )
+    payload_seg = _b64url_encode_nopad(
+        b'{"sub":"1","aud":"victim","iss":"https://evil.example/"}'
+    )
+    signing_input = f"{header_seg}.{payload_seg}".encode("ascii")
+    sig = hmac.new(b"attacker-key", signing_input, hashlib.sha256).digest()
+    return f"{header_seg}.{payload_seg}.{_b64url_encode_nopad(sig)}"
 
 
 def _enable_rp_logout():
@@ -180,80 +205,51 @@ class TestRPLogoutIdTokenHintValidation(OIDCTestCase):
                 },
             )
 
-    def test_unsigned_id_token_hint_no_5xx_and_respects_allowlist(
+    def test_id_token_hint_forgery_sweep_no_5xx_or_open_redirect(
         self,
     ) -> None:
         """
-        ``alg=none`` JWT presented as id_token_hint. The AS may
-        ignore (200 confirm page) or reject (400) — what it MUST NOT
-        do is 500 or redirect to an attacker-supplied URI.
+        Sweep of forged/garbage id_token_hint shapes.
+
+        The AS does not know the attacker's signing key (HS256)
+        and does not accept ``alg=none``. Each row's MUST-NOT
+        shape is identical: no 5xx, no attacker-controlled
+        redirect outside the configured allowlist. The AS may
+        ignore (200 confirm page) or surface a controlled
+        error (400); both are acceptable.
+
+        * ``alg_none`` — unsigned JWT (``header.payload.``).
+        * ``garbage`` — hint that does not look like a JWT at
+          all; DOT must surface a controlled error, never 500.
+        * ``forged_hs256`` — HS256-signed JWT with an
+          attacker-chosen secret; signature verification fails.
         """
-        from base64 import urlsafe_b64encode
-
-        def _b64(raw: bytes) -> str:
-            return urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-        unsigned_header = _b64(b'{"alg":"none","typ":"JWT"}')
-        unsigned_payload = _b64(
-            b'{"sub":"1","aud":"victim","iss":"https://evil.example/"}'
+        allowed = "http://localhost/post-logout-ok/"
+        cases: tuple[tuple[str, str], ...] = (
+            (
+                "alg_none",
+                forge_unsigned_jwt(
+                    {
+                        "sub": "1",
+                        "aud": "victim",
+                        "iss": "https://evil.example/",
+                    }
+                ),
+            ),
+            ("garbage", "not-a-jwt"),
+            ("forged_hs256", _forged_hs256_id_token_hint()),
         )
-        unsigned_jwt = f"{unsigned_header}.{unsigned_payload}."
-
-        allowed = "http://localhost/post-logout-ok/"
-        resp = self._logout_with_hint(unsigned_jwt, post_logout=allowed)
-        self.assertNotEqual(500, resp.status_code)
-        if resp.status_code in REDIRECT_STATUSES:
-            loc = resp.headers.get("Location", "")
-            self.assertTrue(
-                loc.startswith((allowed, "/")),
-                f"unsigned hint must not redirect outside allowlist; "
-                f"got {loc!r}",
-            )
-
-    def test_garbage_id_token_hint_no_5xx(self) -> None:
-        """
-        Hint that does not look like a JWT at all (``not-a-jwt``).
-        DOT must surface a controlled error, never 500.
-        """
-        allowed = "http://localhost/post-logout-ok/"
-        resp = self._logout_with_hint("not-a-jwt", post_logout=allowed)
-        self.assertNotEqual(500, resp.status_code)
-
-    def test_forged_hs256_id_token_hint_no_5xx_and_respects_allowlist(
-        self,
-    ) -> None:
-        """
-        HS256-signed JWT using an attacker-controlled secret. The AS
-        does not know the secret, signature verification fails. The
-        contract is identical to the unsigned case: no 5xx, no
-        attacker-controlled redirect.
-        """
-        import hashlib
-        import hmac
-        from base64 import urlsafe_b64encode
-
-        def _b64(raw: bytes) -> str:
-            return urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-        header = _b64(b'{"alg":"HS256","typ":"JWT","kid":"forged"}')
-        payload = _b64(
-            b'{"sub":"1","aud":"victim","iss":"https://evil.example/"}'
-        )
-        signing_input = f"{header}.{payload}".encode("ascii")
-        # Attacker uses any secret they like — AS cannot match it.
-        sig = hmac.new(b"attacker-key", signing_input, hashlib.sha256).digest()
-        forged = f"{header}.{payload}.{_b64(sig)}"
-
-        allowed = "http://localhost/post-logout-ok/"
-        resp = self._logout_with_hint(forged, post_logout=allowed)
-        self.assertNotEqual(500, resp.status_code)
-        if resp.status_code in REDIRECT_STATUSES:
-            loc = resp.headers.get("Location", "")
-            self.assertTrue(
-                loc.startswith((allowed, "/")),
-                f"forged hint must not redirect outside allowlist; "
-                f"got {loc!r}",
-            )
+        for label, hint in cases:
+            with self.subTest(hint=label):
+                resp = self._logout_with_hint(hint, post_logout=allowed)
+                self.assertNotEqual(500, resp.status_code)
+                if resp.status_code in REDIRECT_STATUSES:
+                    loc = resp.headers.get("Location", "")
+                    self.assertTrue(
+                        loc.startswith((allowed, "/")),
+                        f"{label} hint must not redirect outside "
+                        f"allowlist; got {loc!r}",
+                    )
 
 
 class TestLogoutCSRF(OIDCTestCase):
