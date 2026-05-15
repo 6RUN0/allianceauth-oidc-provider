@@ -93,6 +93,16 @@ def tests_aa4(session: nox.Session) -> None:
         *TEST_RUNTIME_DEPS,
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
+    # Canary: import every tests/test_*.py once before handing off to
+    # the Django runner. Catches the TEST_RUNTIME_DEPS-drift class of
+    # bug (cosmic_ray and django-prometheus both surfaced this way)
+    # cheaply — failure here is reported as a list of broken module
+    # names, not a unittest-loader traceback halfway through discovery.
+    session.run(
+        "python",
+        "_nox/_canary_imports.py",
+        env=test_env(session),
+    )
     session.run(
         "python",
         "-m",
