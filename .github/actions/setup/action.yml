@@ -1,0 +1,59 @@
+name: Project setup
+description: |
+  Checkout + uv + Python interpreter + ``uv sync`` in one composite
+  step. Lets every CI job declare its environment with a single
+  ``uses:`` instead of repeating four near-identical steps across
+  ``test``, ``lint``, ``typecheck``, and ``package`` jobs — every
+  dependabot bump on ``actions/checkout`` or ``astral-sh/setup-uv``
+  now updates one file instead of four.
+
+inputs:
+  python-version:
+    description: |
+      Python interpreter to install via ``uv python install``. Default
+      tracks the project's primary Python (the lint / typecheck /
+      package jobs all run on this).
+    required: false
+    default: "3.12"
+  install-deps:
+    description: |
+      Run ``uv sync`` after the Python install. Set to ``false`` if the
+      caller provisions deps differently (e.g. AA4 off-lock matrix uses
+      ``uv pip install --group aa4`` instead).
+    required: false
+    default: "true"
+  enable-cache:
+    description: |
+      Enable setup-uv's wheel cache. Defaults to ``true`` for CI jobs.
+      Release jobs MUST pass ``false`` — a cache shared with PR builds
+      is an attacker-controlled inputs path (cache poisoning) that can
+      flip a signed wheel into a malicious artefact (zizmor
+      ``cache-poisoning`` audit).
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      with:
+        persist-credentials: false
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+      with:
+        enable-cache: ${{ inputs.enable-cache }}
+        cache-dependency-glob: "uv.lock"
+
+    - name: Set up Python ${{ inputs.python-version }}
+      shell: bash
+      env:
+        PY_VERSION: ${{ inputs.python-version }}
+      run: uv python install "${PY_VERSION}"
+
+    - name: Install dependencies
+      if: ${{ inputs.install-deps == 'true' }}
+      shell: bash
+      env:
+        PY_VERSION: ${{ inputs.python-version }}
+      run: uv sync --python "${PY_VERSION}"

@@ -52,21 +52,9 @@ jobs:
           - python-version: "3.12"
             aa-version: "4"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup
         with:
-          persist-credentials: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Run tests
         # ``tests`` is not nox-parametrised — it runs under whichever
@@ -92,28 +80,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync
+      - uses: ./.github/actions/setup
 
       - name: Cache pre-commit hook environments
         # Pre-commit builds a venv per hook in ``~/.cache/pre-commit/``
         # keyed on the rev pins in ``.pre-commit-config.yaml``. The
         # caches are deterministic by config hash, so reusing them
         # across CI runs saves ~30-60s on the lint job.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        #
+        # zizmor cache-poisoning: this cache is consumed only by the
+        # ``lint`` job which produces no published artefact — there is
+        # no path from a poisoned hook venv to a signed release wheel.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0 # zizmor: ignore[cache-poisoning]
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -135,21 +113,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync
+      - uses: ./.github/actions/setup
 
       - name: Run mypy + basedpyright
         run: uv run nox -s typecheck
@@ -159,28 +123,14 @@ jobs:
     timeout-minutes: 15
     needs: [test, lint, typecheck]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          persist-credentials: false
+      - uses: ./.github/actions/setup
 
       - name: Install GNU gettext
         # ``django-admin compilemessages`` shells out to ``msgfmt`` from
-        # GNU gettext; ubuntu-latest images don't include it by default.
+        # GNU gettext; ubuntu runner images don't include it by default.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gettext
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync
 
       - name: Compile message catalogues
         run: uv run nox -s compilemessages

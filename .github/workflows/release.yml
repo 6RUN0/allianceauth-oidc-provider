@@ -68,28 +68,19 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup
         with:
-          persist-credentials: false
+          # Release builds MUST NOT consume wheel cache that PR runs
+          # populated — that path is a cache-poisoning vector against
+          # the signed artefact (zizmor ``cache-poisoning`` audit).
+          enable-cache: "false"
 
       - name: Install GNU gettext
         # ``django-admin compilemessages`` shells out to ``msgfmt`` from
-        # GNU gettext; ubuntu-latest images don't include it by default.
+        # GNU gettext; ubuntu runner images don't include it by default.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gettext
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync
 
       # The single most common foot-gun for tag-driven releases is
       # ``git tag v0.1.0`` against a commit whose ``__version__`` still
@@ -194,8 +185,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          # See build job: release context MUST NOT read shared cache.
+          enable-cache: false
 
       - name: Publish to PyPI via uv
         run: uv publish dist/*
