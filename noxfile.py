@@ -322,16 +322,18 @@ def diagrams(session: nox.Session) -> None:
     Render diagram-as-code sources under ``assets/diagrams/`` to SVG
     via ``d2``, if installed.
 
-    ``d2`` is a single Go binary; install via the official script
-    (https://d2lang.com/install.sh) or the upstream releases page
-    (https://github.com/terrastruct/d2). The session is a noop with
-    a warning when the binary is missing — same opt-in pattern as
-    ``markdown_lint`` and ``actions_lint``.
+    ``d2`` is a single Go binary; install via your system package
+    manager (Gentoo: ``app-misc/d2``; brew/apt provide it too) or the
+    upstream releases page (https://github.com/terrastruct/d2). The
+    session is a noop with a warning when the binary is missing —
+    same opt-in pattern as ``markdown_lint`` and ``actions_lint``.
 
     Both the source (``.d2``) and the rendered output (``.svg``) are
     committed: source so the diagram is editable, output so the
     README renders without forcing every reader to install ``d2``.
-    The ``diagrams-fresh`` CI step asserts the two stay in sync.
+    Freshness is enforced by hand for now (run this session locally
+    before committing a diagram change); there is no CI step that
+    asserts the two stay in sync.
     """
     diagram_dir = pathlib.Path("assets/diagrams")
     sources = sorted(diagram_dir.glob("*.d2"))
@@ -340,9 +342,9 @@ def diagrams(session: nox.Session) -> None:
     if not shutil.which("d2"):
         session.warn(
             "d2 not installed; skipping. "
-            "Install via the official script "
-            "(curl -fsSL https://d2lang.com/install.sh | sh -s --) "
-            "or https://github.com/terrastruct/d2"
+            "Install via your system package manager "
+            "(Gentoo: app-misc/d2; brew: d2) or "
+            "https://github.com/terrastruct/d2/releases."
         )
         return
     for src in sources:

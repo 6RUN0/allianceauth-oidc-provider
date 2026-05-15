@@ -34,30 +34,50 @@ import time
 
 import nox
 
+from .shared import test_env
+
+# Directories that ``mutation_parallel`` excludes from the worker
+# source-tree copy. Split out from the call site so the list is
+# inspectable and the rationale documented in one place. Grouped:
+#
+# * VCS / venv / nox state — replicated via symlink instead
+#   (``.venv``) or never useful inside a worker (``.git``, ``.nox``).
+# * Mutation outputs — the worker should write its own, not inherit
+#   the host's (``mutation.sqlite*``, ``html``, ``htmlcov``,
+#   ``.coverage``).
+# * Build / package artefacts — never read at test time
+#   (``dist``, ``build``, ``*.egg-info``, ``__pycache__``, ``*.pyc``).
+# * Tool caches — large and re-derivable on demand
+#   (``.mypy_cache``, ``.ruff_cache``, ``.pytest_cache``).
+# * Local dev-environment scratch — present on contributor machines
+#   that opt in to those toolchains, irrelevant to mutation runs
+#   (``.omc``, ``.claude``).
+_NOISE_DIRS: tuple[str, ...] = (
+    ".git",
+    ".venv",
+    "mutation.sqlite",
+    "mutation.sqlite-*",
+    "html",
+    "htmlcov",
+    ".nox",
+    ".coverage",
+    "*.egg-info",
+    "dist",
+    "build",
+    "__pycache__",
+    "*.pyc",
+    ".omc",
+    ".claude",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+)
+
 # ``tomllib`` is stdlib only from Python 3.11+; the project supports
 # 3.10 per ``requires-python``. Lazy-importing it inside
 # ``mutation_parallel`` (the sole consumer) keeps ``nox -s tests`` /
 # ``nox -s lint`` working on 3.10 — those sessions never trigger this
 # module's parallel branch.
-
-# Local copy of the test-settings helper that the root ``noxfile.py``
-# defines for its other sessions. Duplicating five lines lets this
-# module stay self-contained; if more sessions move here later, both
-# helpers should be promoted to a shared ``_nox/_common.py``.
-_TEST_SETTINGS = "tests.test_settingsAA4"
-
-
-def _test_env(session: nox.Session) -> dict[str, str]:
-    """Build the env mutation sessions need (mirrors ``noxfile._test_env``)."""
-    # ``session.env.get(...)`` is typed ``str | None`` (nox treats
-    # env vars as nullable internally), so the two-arg form does not
-    # narrow back to ``str``. ``or "1"`` coalesces both ``None`` and
-    # an explicit empty string to the default — empty env values are
-    # equivalent to unset for AA_USE_FAKE_REDIS's bool-ish semantics.
-    return {
-        "DJANGO_SETTINGS_MODULE": _TEST_SETTINGS,
-        "AA_USE_FAKE_REDIS": session.env.get("AA_USE_FAKE_REDIS") or "1",
-    }
 
 
 def _backup_sqlite(
@@ -100,7 +120,7 @@ def _parse_reinit_and_n(
             reinit = True
         else:
             positional.append(arg)
-    # Same nullable-env caveat as ``_test_env``: ``.get(key, fallback)``
+    # Same nullable-env caveat as ``test_env``: ``.get(key, fallback)``
     # is typed ``str | None`` so ``or default_n`` re-narrows to ``str``.
     n_arg = (
         positional[0]
@@ -184,7 +204,7 @@ def mutation(session: nox.Session) -> None:
         "exec",
         "cosmic-ray.toml",
         session_file,
-        env=_test_env(session),
+        env=test_env(session),
         success_codes=list(range(256)),
     )
     session.run("cr-report", session_file)
@@ -237,7 +257,14 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
     venv_bin = project_dir / ".venv" / "bin"
     session_file = project_dir / "mutation.sqlite"
     base_config = project_dir / "cosmic-ray.toml"
-    base_port = int(session.env.get("CR_BASE_PORT") or "9876")
+    raw_port = session.env.get("CR_BASE_PORT") or "9876"
+    try:
+        base_port = int(raw_port)
+    except ValueError:
+        session.error(
+            f"CR_BASE_PORT={raw_port!r} is not an integer; "
+            "set it to the lowest worker port (default 9876)."
+        )
 
     n_workers, reinit = _parse_reinit_and_n(session)
 
@@ -292,6 +319,12 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
 
     # Read the base config so we can extract the test-command for the
     # baseline check and rewrite the distributor section for parallel.
+    # ``cosmic-ray.toml`` is treated as trusted-input territory — its
+    # ``test-command`` is fed straight into ``bash -c`` further down,
+    # so any future mechanism that lets PR-controlled context override
+    # the file (e.g. a workflow that reads a tag-supplied config path)
+    # turns this line into an RCE surface. Keep the file editable only
+    # by committers with merge access.
     config_text = base_config.read_text(encoding="utf-8")
     config = tomllib.loads(config_text)
     test_command = config.get("cosmic-ray", {}).get("test-command")
@@ -302,26 +335,7 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
     # equivalent of rsync's --exclude. We materialise N copies; each
     # gets a ``.venv`` symlink to the project's venv so all workers
     # share one Python install.
-    ignore = shutil.ignore_patterns(
-        ".git",
-        ".venv",
-        "mutation.sqlite",
-        "mutation.sqlite-*",
-        "html",
-        "htmlcov",
-        ".nox",
-        ".coverage",
-        "*.egg-info",
-        "dist",
-        "build",
-        "__pycache__",
-        "*.pyc",
-        ".omc",
-        ".claude",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".pytest_cache",
-    )
+    ignore = shutil.ignore_patterns(*_NOISE_DIRS)
 
     # ``tempfile.mkdtemp`` is wrapped in a single ``try/finally`` so
     # ``shutil.rmtree`` runs even when a downstream ``session.error``
