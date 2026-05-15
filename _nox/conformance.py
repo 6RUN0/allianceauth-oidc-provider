@@ -37,22 +37,16 @@ def conformance(session: nox.Session) -> None:
     takes 10-15 minutes; see tests/conformance/README.md for context.
     """
     compose_file = "tests/conformance/docker-compose.yml"
-    cert_path = "tests/conformance/tls/ca.crt"
-    gen_script = pathlib.Path("tests/conformance/tls/gen.sh")
+    tls_dir = pathlib.Path("tests/conformance/tls")
+    ca_crt = tls_dir / "ca.crt"
     # Generate the self-signed CA + provider cert if missing. The
     # conformance suite enforces ``https://`` for OIDC discovery, so
     # the provider container serves TLS via ``runsslserver`` and the
     # suite container imports the CA cert into its Java truststore on
-    # startup. Certs are gitignored — re-running ``gen.sh`` is safe
-    # (it overwrites). See ``tests/conformance/tls/`` for details.
-    if not pathlib.Path(cert_path).is_file():
-        if not gen_script.is_file():
-            session.error(
-                f"TLS bootstrap script {gen_script} missing; cannot "
-                "generate the CA / provider cert. Restore it from git "
-                "or skip the conformance session."
-            )
-        session.run("sh", str(gen_script), external=True)
+    # startup. Certs are gitignored — re-running is safe (overwrites).
+    # See ``tests/conformance/tls/`` for details.
+    if not ca_crt.is_file():
+        _generate_tls_certs(session, tls_dir)
     try:
         # ``--build`` forces a rebuild on every invocation so a stale
         # provider image does not silently mask code edits between
@@ -98,3 +92,101 @@ def conformance(session: nox.Session) -> None:
             "-v",
             external=True,
         )
+
+
+def _generate_tls_certs(session: nox.Session, tls_dir: pathlib.Path) -> None:
+    """
+    Generate the self-signed CA + provider cert via ``openssl``.
+
+    Pure Python orchestration — no shell — over the system
+    ``openssl`` binary, in three steps:
+
+    1. Root CA (10-year lifetime), signs the provider cert.
+    2. Provider key + CSR (subject ``/CN=provider``).
+    3. CA-signed provider cert with the SAN list the suite needs:
+       ``DNS:provider`` for docker-network access plus
+       ``DNS:localhost`` + ``IP:127.0.0.1`` so the operator can
+       ``curl`` from the host.
+
+    Transient artefacts (CSR, extension file, CA serial) are
+    deleted at the end so the directory only carries the four
+    files the compose stack mounts (``ca.{crt,key}``,
+    ``provider.{crt,key}``).
+    """
+    ca_key = tls_dir / "ca.key"
+    ca_crt = tls_dir / "ca.crt"
+    provider_key = tls_dir / "provider.key"
+    provider_csr = tls_dir / "provider.csr"
+    provider_crt = tls_dir / "provider.crt"
+    provider_ext = tls_dir / "provider.ext"
+    ca_srl = tls_dir / "ca.srl"
+
+    session.run(
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        str(ca_key),
+        "-out",
+        str(ca_crt),
+        "-days",
+        "3650",
+        "-subj",
+        "/CN=allianceauth-oidc-conformance-CA",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE,pathlen:0",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
+        external=True,
+    )
+
+    session.run(
+        "openssl",
+        "req",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        str(provider_key),
+        "-out",
+        str(provider_csr),
+        "-subj",
+        "/CN=provider",
+        external=True,
+    )
+
+    # SAN extension file — drives the third openssl call below.
+    # Written as plain ASCII so the file is portable and reviewable
+    # without locale assumptions.
+    provider_ext.write_text(
+        "subjectAltName = DNS:provider, DNS:localhost, "
+        "IP:127.0.0.1\n"
+        "extendedKeyUsage = serverAuth\n",
+        encoding="ascii",
+    )
+
+    session.run(
+        "openssl",
+        "x509",
+        "-req",
+        "-in",
+        str(provider_csr),
+        "-CA",
+        str(ca_crt),
+        "-CAkey",
+        str(ca_key),
+        "-CAcreateserial",
+        "-out",
+        str(provider_crt),
+        "-days",
+        "825",
+        "-extfile",
+        str(provider_ext),
+        external=True,
+    )
+
+    for path in (provider_csr, provider_ext, ca_srl):
+        path.unlink(missing_ok=True)

@@ -1,4 +1,5 @@
-# Generated key/cert files — re-create with ``sh gen.sh``.
+# Generated key/cert files — re-created on demand by
+# ``_nox.conformance._generate_tls_certs`` when ``ca.crt`` is absent.
 ca.crt
 ca.key
 provider.crt
