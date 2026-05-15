@@ -39,10 +39,16 @@ jobs:
         # The lock resolves to AA 5.x (current primary), so the default
         # ``tests`` nox session runs against AA 5 across every Python.
         # AA 4.x backward-compat is verified via the off-lock
-        # ``tests_aa4`` session — included on a single Python to keep
-        # CI minutes reasonable while still catching regressions.
+        # ``tests_aa4`` session, fanned out one cell per interpreter so
+        # a Python-specific regression points at the responsible cell.
+        # Python 3.13 is excluded from AA4 — allianceauth 4.13.x's
+        # ``requires-python < 3.13`` upstream cap rules it out.
         aa-version: ["5"]
         include:
+          - python-version: "3.10"
+            aa-version: "4"
+          - python-version: "3.11"
+            aa-version: "4"
           - python-version: "3.12"
             aa-version: "4"
     steps:
@@ -62,7 +68,24 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run nox -s ${{ matrix.aa-version == '4' && 'tests_aa4' || 'tests' }}
+        # ``tests`` is not nox-parametrised — it runs under whichever
+        # Python ``uv sync`` provisioned. ``tests_aa4`` IS parametrised
+        # via ``@nox.session(python=PYTHON_VERSIONS_AA4)`` and bare
+        # ``-s tests_aa4`` would fan out to every AA4 Python inside one
+        # cell, hiding which interpreter failed. Selecting the explicit
+        # sub-session (``tests_aa4-<py>``) keeps one matrix cell = one
+        # interpreter. Matrix values are trusted (no PR-controlled
+        # input), but the env passthrough still keeps run-block hygiene
+        # aligned with release.yml's shell-injection guard pattern.
+        env:
+          AA_VERSION: ${{ matrix.aa-version }}
+          PY_VERSION: ${{ matrix.python-version }}
+        run: |
+          if [ "$AA_VERSION" = "4" ]; then
+            uv run nox -s "tests_aa4-${PY_VERSION}"
+          else
+            uv run nox -s tests
+          fi
 
       - name: Upload test coverage
         if: ${{ !env.ACT }}
@@ -90,6 +113,14 @@ jobs:
 
       - name: Install dependencies
         run: uv sync
+
+      - name: Check Django migrations are in sync with models
+        # ``makemigrations --check --dry-run`` writes nothing and exits
+        # non-zero if a model change would produce a fresh migration.
+        # Runs before pre-commit so a model drift fails the lint job
+        # in ~3s rather than masquerading as a confusing Django startup
+        # error inside the longer test matrix.
+        run: uv run nox -s migrations_check
 
       - name: Run linters (pre-commit)
         run: uv run nox -s lint
