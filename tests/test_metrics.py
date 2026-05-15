@@ -129,6 +129,71 @@ class TestAuthorizeDeniedCounter(OIDCTestCase):
         )
 
 
+class TestPolicyRejectionsCounter(OIDCTestCase):
+    """
+    ``aa_oidc_policy_rejections_total{stage,reason}`` increments at
+    every enforcement stage. The counter is intentionally emitted
+    side-by-side with the older :data:`authorize_denied` so dashboards
+    can migrate without a flag-day cutover; the test below pins both
+    counters fire for the same authorize denial.
+    """
+
+    def test_authorize_global_denial_increments_both_counters(self) -> None:
+        """
+        Same authorize-time denial fires the legacy counter AND the
+        cross-stage counter — proves the parallel-emit contract for
+        the migration window.
+        """
+        legacy_labels = {"reason": "global"}
+        new_labels = {"stage": "authorize", "reason": "global"}
+        legacy_before = _sample_value(
+            "aa_oidc_authorize_denied_total", **legacy_labels
+        )
+        new_before = _sample_value(
+            "aa_oidc_policy_rejections_total", **new_labels
+        )
+
+        resp = self.authorize_get_default(self.user1, scope="openid")
+        self.assertDeniedGlobal(resp, self.user1)
+
+        legacy_after = _sample_value(
+            "aa_oidc_authorize_denied_total", **legacy_labels
+        )
+        new_after = _sample_value(
+            "aa_oidc_policy_rejections_total", **new_labels
+        )
+        self.assertEqual(1.0, legacy_after - legacy_before)
+        self.assertEqual(1.0, new_after - new_before)
+
+    def test_validate_code_denial_increments_policy_rejections(self) -> None:
+        """
+        Validator stage emits ``policy_rejections{stage="validate_code"}``
+        with the deny reason from ``policy.decide``. Exercises the
+        ``_enforce_policy`` path directly so the test does not need to
+        drive a full code-exchange round-trip (which would require the
+        DOT super().validate_code to return True first).
+        """
+        from types import SimpleNamespace
+
+        from allianceauth_oidc.auth_provider import AllianceAuthOAuth2Validator
+
+        # user1 has no global perm in the default fixture, so the real
+        # DEFAULT_POLICY returns a GlobalDeny here.
+        validator = AllianceAuthOAuth2Validator()
+        request = SimpleNamespace(user=self.user1)
+
+        labels = {"stage": "validate_code", "reason": "global"}
+        before = _sample_value("aa_oidc_policy_rejections_total", **labels)
+
+        allowed = validator._enforce_policy(
+            request, self.oauth_app, stage="validate_code"
+        )
+        self.assertFalse(allowed)
+
+        after = _sample_value("aa_oidc_policy_rejections_total", **labels)
+        self.assertEqual(1.0, after - before)
+
+
 class TestBclMetrics(OIDCTestCase):
     """
     ``aa_oidc_bcl_delivery_seconds`` histogram tracks HTTP round-trip
@@ -407,6 +472,7 @@ class TestNoopFallbackSmoke(SimpleTestCase):
         for name in (
             "tokens_issued",
             "authorize_denied",
+            "policy_rejections",
             "bcl_delivery_seconds",
             "bcl_dispatches",
             "tokens_cleaned",

@@ -24,7 +24,7 @@ from oauth2_provider.models import get_application_model
 from oauth2_provider.views.base import AuthorizationView
 from typing_extensions import assert_never
 
-from ._metrics import authorize_denied
+from ._metrics import authorize_denied, policy_rejections
 from .security import (
     DEFAULT_POLICY,
     AllowedDecision,
@@ -410,6 +410,14 @@ class AuthAuthorizationView(AuthorizationView):
 
             case GlobalDeny():
                 authorize_denied.labels(reason="global").inc()
+                # Cross-stage view alongside the legacy authorize-only
+                # counter. See ``_metrics.policy_rejections`` for the
+                # contract; the two counters intentionally double-emit
+                # on this stage so dashboards can migrate without a
+                # flag-day cutover.
+                policy_rejections.labels(
+                    stage="authorize", reason="global"
+                ).inc()
                 logger.warning(
                     "OIDC DENIED: global access user=%s path=%s method=%s",
                     user,
@@ -424,6 +432,7 @@ class AuthAuthorizationView(AuthorizationView):
 
             case AppDeny():
                 authorize_denied.labels(reason="app").inc()
+                policy_rejections.labels(stage="authorize", reason="app").inc()
                 denied_app = decision.app  # AppLike (non-None)
                 logger.warning(
                     "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501

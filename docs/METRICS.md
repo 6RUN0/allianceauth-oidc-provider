@@ -355,15 +355,32 @@ three real adopters.
 |----------------------------------------|-----------|-------------------------|-----------------------|-----------------------------------------|
 | `aa_oidc_tokens_issued_total`          | Counter   | `grant_type`, `client_id` | `_metrics.py`         | `oidc_token_issued` signal receiver.    |
 | `aa_oidc_tokens_cleaned_total`         | Counter   | (none)                  | `tasks.py`            | `clear_expired_tokens` Celery task — increments by per-run cleanup delta. |
-| `aa_oidc_authorize_denied_total`       | Counter   | `reason` (`global`/`app`) | `views.py`            | `AuthAuthorizationView.dispatch`.       |
+| `aa_oidc_authorize_denied_total`       | Counter   | `reason` (`global`/`app`) | `views_authorize.py`  | `AuthAuthorizationView.dispatch` — authorize endpoint only. Kept for backward compatibility; new dashboards should prefer `aa_oidc_policy_rejections_total`. |
+| `aa_oidc_policy_rejections_total`      | Counter   | `stage`, `reason`       | `_metrics.py`         | Cross-stage view of policy rejections: `stage` ∈ {`authorize`, `validate_code`, `validate_refresh`, `validate_bearer`, `save_bearer`}, `reason` ∈ {`global`, `app`, `app_unusable`, `unknown`}. Emitted alongside `authorize_denied` for the `authorize` stage so dashboards can migrate without a flag-day cutover. |
 | `aa_oidc_bcl_delivery_seconds`         | Histogram | `client_id`, `outcome`  | `tasks.py`            | `send_logout_token` — observed around `requests.post`. |
 | `aa_oidc_bcl_dispatches_total`         | Counter   | `client_id`, `outcome`  | `_metrics.py`         | `oidc_logout_dispatched` signal receiver — fires on every terminal event. |
 
 Anonymous authorize requests do not contribute to
-`aa_oidc_authorize_denied_total` — they redirect to `LOGIN_URL`
-rather than being denied. Operators tracking the login-required
-case query `django_http_responses_total_by_status` (provided by
+`aa_oidc_authorize_denied_total` (nor to
+`aa_oidc_policy_rejections_total{stage="authorize"}`) — they
+redirect to `LOGIN_URL` rather than being denied. Operators
+tracking the login-required case query
+`django_http_responses_total_by_status` (provided by
 `django-prometheus` middleware) against the authorize view.
+
+`aa_oidc_policy_rejections_total` answers the question
+*"how often does a previously-issued token get rejected because
+the user lost the required state/group between authorize and the
+next token operation?"* — a signal that the legacy `authorize_denied`
+counter cannot surface (it sees the authorize endpoint only). The
+`validate_refresh` and `validate_bearer` stages spike when
+group/state churn invalidates active sessions; `save_bearer`
+fires on the rare race where the policy flips between
+authorize-time and persistence. Dead-letter alerting recipe:
+
+```promql
+sum by (stage) (rate(aa_oidc_policy_rejections_total[5m])) > 0.1
+```
 
 There is no `aa_oidc_active_tokens` Gauge. Active-token
 approximation is the operator's responsibility via PromQL:

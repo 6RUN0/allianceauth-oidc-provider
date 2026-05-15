@@ -5,13 +5,21 @@ from __future__ import annotations
 import logging
 from typing import Any, Final
 
-from django.core.exceptions import PermissionDenied
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
+from ._metrics import policy_rejections
 from .app_settings import OIDCSettings
 from .claims import ClaimsBuilder, build_oidc_claim_scope
-from .security import DEFAULT_POLICY, AppLike, OAuthRequestLike, UserLike
+from .security import (
+    DEFAULT_POLICY,
+    AllowedDecision,
+    AppDeny,
+    AppLike,
+    GlobalDeny,
+    OAuthRequestLike,
+    UserLike,
+)
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
@@ -127,7 +135,11 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         return user, client
 
     def _enforce_policy(
-        self, request: OAuthRequestLike, client: AppLike | None
+        self,
+        request: OAuthRequestLike,
+        client: AppLike | None,
+        *,
+        stage: str,
     ) -> bool:
         """
         Run the per-app state/groups gate against ``request.user``.
@@ -136,23 +148,48 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         as a post-validation hook by validate_code and validate_refresh_token
         so the same gate runs on every token-issuing path; missing it on either
         side leaves a hole.
+
+        ``stage`` is mandatory keyword-only so the ``policy_rejections``
+        counter label cannot be accidentally omitted at a new call
+        site (and so a reader of the emit can grep one identifier
+        across stages — ``"validate_refresh"`` etc.).
         """
         user, resolved_client = self._resolve_user_and_client(request, client)
         if user is None or resolved_client is None:
             return True
-        allowed = self.policy.is_allowed(user, resolved_client)
-        if not allowed:
-            # Validator path doesn't render a denied page (the OAuth
-            # response is the bool → invalid_grant translation), so log
-            # here for operator visibility — the policy gate itself is
-            # decision-only after the M1 consolidation.
-            logger.warning(
-                "OIDC DENIED: validator user=%s client=%s client_id=%s",
-                user,
-                resolved_client,
-                getattr(resolved_client, "client_id", None),
-            )
-        return allowed
+        # ``decide`` is structurally a superset of ``is_allowed`` —
+        # same gate, but also returns the reason on rejection so the
+        # metric can carry it as a label. Tiny extra cost (one
+        # dataclass construction per request) for a major dashboard
+        # win on "which gate fired in which stage".
+        decision = self.policy.decide(user, resolved_client)
+        # ``match`` over the AccessDecision discriminated union — both
+        # mypy and basedpyright narrow ``decision.deny_reason`` to a
+        # non-Optional ``DenyReason`` inside the deny arms, which the
+        # plain ``if decision.allowed`` shape did not give basedpyright
+        # (reportOptionalMemberAccess). Mirrors the pattern in
+        # ``views_authorize.AuthAuthorizationView.dispatch``.
+        match decision:
+            case AllowedDecision():
+                return True
+            case GlobalDeny() | AppDeny():
+                reason = decision.deny_reason.value
+                policy_rejections.labels(stage=stage, reason=reason).inc()
+                # Validator path doesn't render a denied page (the
+                # OAuth response is the bool → invalid_grant
+                # translation), so log here for operator visibility —
+                # the policy gate itself is decision-only after the
+                # M1 consolidation.
+                logger.warning(
+                    "OIDC DENIED: validator stage=%s reason=%s "
+                    "user=%s client=%s client_id=%s",
+                    stage,
+                    reason,
+                    user,
+                    resolved_client,
+                    getattr(resolved_client, "client_id", None),
+                )
+                return False
 
     def validate_silent_login(self, request):
         """
@@ -297,8 +334,14 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         # ``True`` mirrors DOT's "if you can't tell, accept".
         is_usable = getattr(client, "is_usable", None)
         if callable(is_usable) and not is_usable(request):
+            # Distinct ``reason`` so a Grafana panel can split
+            # "deactivated app" (operator-driven, often planned) from
+            # "user lost group" (policy churn, often unplanned).
+            policy_rejections.labels(
+                stage="validate_bearer", reason="app_unusable"
+            ).inc()
             return False
-        return self._enforce_policy(request, client)
+        return self._enforce_policy(request, client, stage="validate_bearer")
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """
@@ -330,7 +373,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                     "invalid_grant still returned"
                 )
             return False
-        return self._enforce_policy(request, client)
+        return self._enforce_policy(request, client, stage="validate_code")
 
     def validate_refresh_token(
         self, refresh_token, client, request, *args, **kwargs
@@ -340,7 +383,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             refresh_token, client, request, *args, **kwargs
         ):
             return False
-        return self._enforce_policy(request, client)
+        return self._enforce_policy(request, client, stage="validate_refresh")
 
     def save_bearer_token(self, token, request, *args, **kwargs):
         """
@@ -350,22 +393,33 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         user, client = self._resolve_user_and_client(request)
         if user is not None and client is not None:
-            try:
-                self.policy.enforce(user, client)
-            except PermissionDenied:
-                logger.warning(
-                    "OIDC DENIED: save_bearer_token user=%s client=%s client_id=%s",  # noqa: E501
-                    user,
-                    client,
-                    getattr(client, "client_id", None),
-                )
-                # Convert to OAuth error response (no 500). ``from None``
-                # suppresses the PermissionDenied chain so the OAuth
-                # client only sees the protocol-level error, not Django
-                # internals.
-                raise oauth_errors.InvalidGrantError(
-                    description="Access denied"
-                ) from None
+            decision = self.policy.decide(user, client)
+            # ``match`` narrows ``deny_reason`` for basedpyright; see
+            # the ``_enforce_policy`` site for the rationale.
+            match decision:
+                case AllowedDecision():
+                    pass
+                case GlobalDeny() | AppDeny():
+                    reason = decision.deny_reason.value
+                    policy_rejections.labels(
+                        stage="save_bearer", reason=reason
+                    ).inc()
+                    logger.warning(
+                        "OIDC DENIED: save_bearer_token reason=%s "
+                        "user=%s client=%s client_id=%s",
+                        reason,
+                        user,
+                        client,
+                        getattr(client, "client_id", None),
+                    )
+                    # Convert the policy decision into the protocol-
+                    # level error response (no 500). ``from None``
+                    # keeps the OAuth response stack-trace-free even
+                    # if a future change to ``decide`` starts raising
+                    # under us.
+                    raise oauth_errors.InvalidGrantError(
+                        description="Access denied"
+                    ) from None
         elif user is not None and client is None:
             # The policy gate is intentionally skipped on grant types
             # that do not carry a client on the oauthlib request

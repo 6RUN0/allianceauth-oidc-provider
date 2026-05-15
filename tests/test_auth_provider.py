@@ -14,15 +14,57 @@ from django.contrib.auth.models import AnonymousUser
 from django.test import SimpleTestCase, override_settings
 
 from allianceauth_oidc.auth_provider import AllianceAuthOAuth2Validator
+from allianceauth_oidc.security import (
+    AccessDecision,
+    AllowedDecision,
+    AppDeny,
+    DenyReason,
+    GlobalDeny,
+)
 
 from ._oidc_testcase import OIDCTestCase
 
 
-def _stub_policy(*, is_allowed: bool = True) -> MagicMock:
-    """Build a ``MagicMock`` that mimics the ``AccessPolicy`` surface."""
+def _stub_policy(
+    *,
+    is_allowed: bool = True,
+    deny_reason: DenyReason = DenyReason.APP,
+) -> MagicMock:
+    """
+    Build a ``MagicMock`` that mimics the ``AccessPolicy`` surface.
+
+    ``_enforce_policy`` and ``save_bearer_token`` both branch on
+    ``policy.decide(...)`` via ``match`` against the real
+    ``AllowedDecision`` / ``GlobalDeny`` / ``AppDeny`` dataclasses —
+    a structural ``SimpleNamespace`` would fall through the match
+    arms and the function would silently return ``None``. The stub
+    therefore returns the same concrete types production code emits.
+    ``is_allowed`` / ``enforce`` are still wired so legacy assertions
+    keep their meaning, but production no longer calls either.
+    """
     pol = MagicMock(name="StubAccessPolicy")
     pol.is_allowed.return_value = is_allowed
     pol.enforce.return_value = None
+    decision: AccessDecision
+    if is_allowed:
+        decision = AllowedDecision(app=None)
+    elif deny_reason is DenyReason.GLOBAL:
+        decision = GlobalDeny()
+    else:
+        # ``AppDeny`` requires a non-None ``app`` by dataclass
+        # construction. The test exercises behaviour, not identity,
+        # so a ``SimpleNamespace`` with the AppLike-shape attributes
+        # is sufficient; the policy does not introspect ``app`` here.
+        decision = AppDeny(
+            app=SimpleNamespace(
+                debug_mode=False,
+                states=None,
+                groups=None,
+                pkce_required=False,
+                access_token_format=None,
+            )
+        )
+    pol.decide.return_value = decision
     return pol
 
 
@@ -49,9 +91,11 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         request = SimpleNamespace(user=AnonymousUser())
         pol = _stub_policy()
         with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
-            allowed = self.validator._enforce_policy(request, self.client_obj)
+            allowed = self.validator._enforce_policy(
+                request, self.client_obj, stage="validate_code"
+            )
         self.assertTrue(allowed)
-        pol.is_allowed.assert_not_called()
+        pol.decide.assert_not_called()
 
     def test_none_user_skips_policy_check(self):
         """
@@ -61,21 +105,25 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         request = SimpleNamespace(user=None)
         pol = _stub_policy()
         with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
-            allowed = self.validator._enforce_policy(request, self.client_obj)
+            allowed = self.validator._enforce_policy(
+                request, self.client_obj, stage="validate_code"
+            )
         self.assertTrue(allowed)
-        pol.is_allowed.assert_not_called()
+        pol.decide.assert_not_called()
 
     def test_authenticated_user_runs_policy_check(self):
         """
-        Authenticated user with a permissive policy ⇒ ``is_allowed`` runs
+        Authenticated user with a permissive policy ⇒ ``decide`` runs
         once and the policy passes.
         """
         request = SimpleNamespace(user=self.user1)
         pol = _stub_policy(is_allowed=True)
         with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
-            allowed = self.validator._enforce_policy(request, self.client_obj)
+            allowed = self.validator._enforce_policy(
+                request, self.client_obj, stage="validate_code"
+            )
         self.assertTrue(allowed)
-        pol.is_allowed.assert_called_once_with(self.user1, self.client_obj)
+        pol.decide.assert_called_once_with(self.user1, self.client_obj)
 
     def test_authenticated_user_denied_returns_false(self):
         """
@@ -85,7 +133,9 @@ class TestEnforcePolicyAuthGuard(OIDCTestCase):
         request = SimpleNamespace(user=self.user1)
         pol = _stub_policy(is_allowed=False)
         with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
-            allowed = self.validator._enforce_policy(request, self.client_obj)
+            allowed = self.validator._enforce_policy(
+                request, self.client_obj, stage="validate_code"
+            )
         self.assertFalse(allowed)
 
 
@@ -119,7 +169,7 @@ class TestSaveBearerTokenAuthGuard(OIDCTestCase):
             ) as super_save,
         ):
             self.validator.save_bearer_token({"access_token": "x"}, request)
-        pol.enforce.assert_not_called()
+        pol.decide.assert_not_called()
         super_save.assert_called_once()
 
 
@@ -259,7 +309,9 @@ class TestEnforcePolicyLogs(OIDCTestCase):
             ) as cap,
         ):
             self.assertFalse(
-                self.validator._enforce_policy(request, self.oauth_app)
+                self.validator._enforce_policy(
+                    request, self.oauth_app, stage="validate_code"
+                )
             )
         self.assertTrue(
             any("DENIED: validator" in m for m in cap.output),
@@ -278,37 +330,37 @@ class TestEnforcePolicyLogs(OIDCTestCase):
             ),
         ):
             self.assertTrue(
-                self.validator._enforce_policy(request, self.oauth_app)
+                self.validator._enforce_policy(
+                    request, self.oauth_app, stage="validate_code"
+                )
             )
 
 
 class TestSaveBearerTokenExceptionGuard(OIDCTestCase):
     """
-    ``save_bearer_token`` wraps ``policy.enforce(...)`` in ``try /
-    except PermissionDenied``. The narrow exception type is the
-    correctness contract: any other exception (programmer error,
-    config bug) MUST propagate to a real 500 rather than be
-    swallowed into ``invalid_grant``. ``ExceptionReplacer`` widens or
-    narrows the caught type — both directions break the contract.
+    ``save_bearer_token`` translates a denying ``decide(...)``
+    decision into ``InvalidGrantError``. Anything the policy raises
+    on its way (programmer error, config bug) MUST propagate
+    unwrapped — turning it into ``InvalidGrantError`` would silently
+    convert bugs into protocol-level errors.
     """
 
     def setUp(self) -> None:
         super().setUp()
         self.validator = AllianceAuthOAuth2Validator()
 
-    def test_permission_denied_translates_to_invalid_grant(self):
-        # Original contract: PermissionDenied is caught and re-raised
-        # as InvalidGrantError. A mutant that narrows the catch (e.g.
-        # to a subclass that never fires) would let PermissionDenied
-        # escape as a 500 to the OAuth client.
-        from django.core.exceptions import PermissionDenied
+    def test_denying_decision_translates_to_invalid_grant(self):
+        # Original contract: a denying decision becomes
+        # InvalidGrantError, not a 500. A mutant that drops the
+        # ``not decision.allowed`` guard would let the request fall
+        # through to ``super().save_bearer_token`` and persist a
+        # token for a denied user.
         from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 
         request = SimpleNamespace(
             user=self.user1, client=self.oauth_app, application=None
         )
-        pol = _stub_policy()
-        pol.enforce.side_effect = PermissionDenied("nope")
+        pol = _stub_policy(is_allowed=False)
         with (
             patch.object(AllianceAuthOAuth2Validator, "policy", pol),
             patch(
@@ -323,13 +375,13 @@ class TestSaveBearerTokenExceptionGuard(OIDCTestCase):
     def test_unrelated_exception_propagates_unwrapped(self):
         # A widening mutant (``except Exception``) would swallow
         # ``RuntimeError`` and convert it into ``InvalidGrantError``,
-        # masking a real bug. The narrow ``except PermissionDenied``
-        # MUST let unrelated exceptions surface.
+        # masking a real bug. The guard around ``decide(...)`` MUST
+        # let unrelated exceptions surface.
         request = SimpleNamespace(
             user=self.user1, client=self.oauth_app, application=None
         )
         pol = _stub_policy()
-        pol.enforce.side_effect = RuntimeError("config bug")
+        pol.decide.side_effect = RuntimeError("config bug")
         with (
             patch.object(AllianceAuthOAuth2Validator, "policy", pol),
             patch(
@@ -389,7 +441,7 @@ class TestSaveBearerTokenNoClientSkip(OIDCTestCase):
             any("no_client" in m for m in cap.output),
             f"skip-INFO missing in {cap.output!r}",
         )
-        pol.enforce.assert_not_called()
+        pol.decide.assert_not_called()
 
 
 class TestValidateSilentAuthorization(OIDCTestCase):

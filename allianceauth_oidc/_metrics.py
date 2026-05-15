@@ -188,6 +188,38 @@ bcl_dispatches = _counter(
     labelnames=("client_id", "outcome"),
 )
 
+# Cross-stage view of policy rejections. Complements the older
+# :data:`authorize_denied` (which only sees the authorize endpoint) by
+# also tracking layer-2/3 rejections at ``validate_code``,
+# ``validate_refresh_token``, ``validate_bearer_token`` and
+# ``save_bearer_token`` — the four sites where an end-user who lost
+# state/groups (or whose app went inactive) still attempts to exchange
+# or refresh a token.
+#
+# Labels:
+# - ``stage`` — one of ``"authorize"``, ``"validate_code"``,
+#   ``"validate_refresh"``, ``"validate_bearer"``, ``"save_bearer"``.
+#   Matches the value set callers pass at the emit site, so a Grafana
+#   panel can rate-limit to specific stages (e.g. "spike in
+#   ``validate_refresh`` after a group rename").
+# - ``reason`` — one of ``DenyReason`` values
+#   (``"global"`` / ``"app"``) plus the validator-specific
+#   ``"app_unusable"`` (app row has ``active=False``). ``"unknown"``
+#   is a defensive fallback for partially-mocked decisions in
+#   integration tests; production paths always populate a real reason.
+#
+# Why not extend ``authorize_denied`` with a ``stage`` label: that
+# counter is part of the public METRICS.md contract since 0.1; adding
+# a label would invalidate every existing series and break recording
+# rules. Side-by-side emission keeps backward compatibility and lets
+# operators migrate dashboards at their own pace.
+policy_rejections = _counter(
+    "aa_oidc_policy_rejections",
+    "OIDC policy rejections across all enforcement stages.",
+    labelnames=("stage", "reason"),
+)
+
+
 # AccessToken rows removed by the periodic ``clear_expired_tokens``
 # Celery task. The counter increments by the per-run delta, so
 # ``rate(aa_oidc_tokens_cleaned_total[5m])`` matches the observed
