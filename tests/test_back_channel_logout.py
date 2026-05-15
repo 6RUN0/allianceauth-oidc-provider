@@ -136,58 +136,58 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         self.assertIn("public IP", joined)
 
     @override_settings(DEBUG=False)
-    def test_ac3a_loopback_rejected(self) -> None:
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("127.0.0.1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
+    def test_ac3a_private_address_family_rejected_sweep(self) -> None:
+        """
+        Pin private/reserved IP rejection across IPv4 + IPv6.
 
-    @override_settings(DEBUG=False)
-    def test_ac3a_link_local_rejected(self) -> None:
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("169.254.1.1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
+        Sweep of address shapes the DNS-resolution arm must
+        reject. Each case pins one ``IPv4Address`` /
+        ``IPv6Address`` predicate in the validator's chain
+        ``is_private | is_loopback | is_link_local |
+        is_multicast | is_reserved``. Non-obvious cases:
 
-    @override_settings(DEBUG=False)
-    def test_ac3a_multicast_rejected(self) -> None:
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("224.0.0.1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
+        * ``ipv4_reserved`` — ``240.0.0.0/4`` IETF-reserved
+          block; pins the ``is_reserved`` arm against a
+          ``ReplaceOrWithAnd`` survivor.
+        * ``ipv4_mapped_ipv6_loopback`` — kernel/resolver may
+          return ``::ffff:127.0.0.1``; ``IPv6Address.is_loopback``
+          is True so the validator MUST reject, otherwise an
+          IPv4-only check is bypassable.
+        * ``cloud_metadata`` — ``169.254.169.254`` is the
+          AWS/GCP/Azure instance-metadata IP, the most famous
+          SSRF target. Caught by the link-local arm but named
+          to keep SSRF intent visible and to guard against a
+          future "carve out link-local except metadata"
+          misconfiguration.
 
-    @override_settings(DEBUG=False)
-    def test_ac3a_reserved_rejected(self) -> None:
-        # The ``or`` chain ``is_private | is_loopback | is_link_local |
-        # is_multicast | is_reserved`` carried a ``ReplaceOrWithAnd``
-        # survivor on the ``is_reserved`` arm — no existing test
-        # exercises the reserved-block path. ``240.0.0.0/4`` is the
-        # canonical IETF-reserved range; ``ipaddress.is_reserved`` is
-        # True for any address inside it.
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("240.0.0.1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
+        Companion to ``test_ac3a_private_ip_rejected`` which
+        additionally pins the operator-grep-friendly
+        ``"public IP"`` text in the error message — that
+        assertion stays in its dedicated method so a wording
+        regression is not masked here.
+        """
+        cases: tuple[tuple[str, str], ...] = (
+            ("ipv4_loopback", "127.0.0.1"),
+            ("ipv4_link_local", "169.254.1.1"),
+            ("ipv4_multicast", "224.0.0.1"),
+            ("ipv4_reserved", "240.0.0.1"),
+            ("ipv6_loopback", "::1"),
+            ("ipv6_link_local", "fe80::1"),
+            ("ipv6_ula_private", "fc00::1"),
+            ("ipv4_mapped_ipv6_loopback", "::ffff:127.0.0.1"),
+            ("cloud_metadata", "169.254.169.254"),
+        )
+        for label, ip in cases:
+            with self.subTest(address=label):
+                app = self._new_app(uri="https://rp.example.com/bcl")
+                with (
+                    mock.patch(
+                        "allianceauth_oidc.models._resolve_host_bounded",
+                        return_value=_stub_resolver(ip),
+                    ),
+                    self.assertRaises(ValidationError),
+                ):
+                    app.full_clean()
 
     @override_settings(DEBUG=False)
     def test_ac3a_unparseable_ip_continues_to_next_address(self) -> None:
@@ -261,91 +261,6 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         with mock.patch(
             "allianceauth_oidc.models._resolve_host_bounded",
             return_value=_stub_resolver(_PUBLIC_IP),
-        ):
-            app.full_clean()
-
-    # ---------- AC-3a — IPv6 and cross-family SSRF variants ----------
-
-    @override_settings(DEBUG=False)
-    def test_ac3a_ipv6_loopback_rejected(self) -> None:
-        """
-        ``ipaddress.IPv6Address("::1").is_loopback`` is True; the
-        validator's existing ``is_loopback`` arm MUST catch it. Closes
-        the IPv6-equivalent gap of the existing IPv4 loopback test.
-        """
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("::1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
-
-    @override_settings(DEBUG=False)
-    def test_ac3a_ipv6_link_local_rejected(self) -> None:
-        """``fe80::/10`` is the IPv6 link-local block."""
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("fe80::1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
-
-    @override_settings(DEBUG=False)
-    def test_ac3a_ipv6_ula_private_rejected(self) -> None:
-        """``fc00::/7`` is the IPv6 Unique-Local Address private block."""
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("fc00::1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
-
-    @override_settings(DEBUG=False)
-    def test_ac3a_ipv4_mapped_ipv6_loopback_rejected(self) -> None:
-        """
-        ``::ffff:127.0.0.1`` is the IPv4-mapped-into-IPv6 form of the
-        loopback address. If a kernel/resolver returns this form,
-        ``ipaddress.IPv6Address.is_loopback`` is True and the
-        validator MUST reject — otherwise an attacker who controls a
-        domain that resolves to an IPv4-mapped IPv6 loopback can
-        bypass an IPv4-only check.
-        """
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("::ffff:127.0.0.1"),
-            ),
-            self.assertRaises(ValidationError),
-        ):
-            app.full_clean()
-
-    @override_settings(DEBUG=False)
-    def test_ac3a_cloud_metadata_ip_rejected(self) -> None:
-        """
-        ``169.254.169.254`` is the AWS/GCP/Azure instance-metadata IP
-        — the most famous SSRF target. It is in ``169.254.0.0/16``
-        (link-local) so the existing link-local arm catches it, but
-        a named test makes the SSRF intent visible to anyone reading
-        the test file (and protects against a future "carve out
-        link-local except metadata" misconfiguration).
-        """
-        app = self._new_app(uri="https://rp.example.com/bcl")
-        with (
-            mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
-                return_value=_stub_resolver("169.254.169.254"),
-            ),
-            self.assertRaises(ValidationError),
         ):
             app.full_clean()
 
@@ -1799,47 +1714,43 @@ class TestSendLogoutTokenBoundaries(OIDCTestCase):
             )
         return dispatches
 
-    # ---- 2xx range boundary -----------------------------------
+    # ---- 2xx/3xx/4xx boundary matrix --------------------------
 
-    def test_status_200_routes_to_success(self) -> None:
-        # Lowest of the 2xx range. ``<=`` -> ``<`` on ``200 <=``
-        # makes 200 fall through to the 3xx-or-below branches and
-        # report a wrong reason — pin success here.
-        out = self._exercise_status(status_code=200)
-        self.assertEqual(1, len(out))
-        self.assertTrue(out[0]["success"])
-        self.assertIsNone(out[0]["reason"])
+    def test_status_routing_boundary_matrix(self) -> None:
+        """
+        Sweep 2xx/3xx/4xx boundary status codes.
 
-    def test_status_299_routes_to_success(self) -> None:
-        # Highest of the 2xx range. ``status < 300`` -> ``status <=
-        # 300`` would accidentally route 299 to the 3xx branch via
-        # the next ``300 <= status`` check.
-        out = self._exercise_status(status_code=299)
-        self.assertTrue(out[0]["success"])
+        Each row pins one HTTP-status branch in the dispatcher's
+        success/reason routing. Boundary values (lowest+highest
+        of each range) discriminate against ``<=``/``<``
+        mutations on the comparison operators:
 
-    # ---- 3xx range boundary -----------------------------------
+        * ``200`` — lowest 2xx. ``<=`` → ``<`` on ``200 <=``
+          would make 200 fall through to the 3xx branch.
+        * ``299`` — highest 2xx. ``status < 300`` upper bound;
+          ``<=`` → ``<`` would route 299 to the 3xx branch via
+          the next ``300 <= status`` check.
+        * ``300`` — lowest 3xx; ``300 <= status`` lower bound.
+        * ``399`` — highest 3xx; ``status < 400`` upper bound.
+        * ``400`` / ``499`` — 4xx range bounds.
 
-    def test_status_300_routes_to_redirect_blocked(self) -> None:
-        # ``300 <= status`` lower bound; ``<=`` -> ``<`` makes 300
-        # fall through to the 2xx-success branch above.
-        out = self._exercise_status(status_code=300)
-        self.assertEqual("redirect_blocked", out[0]["reason"])
-
-    def test_status_399_routes_to_redirect_blocked(self) -> None:
-        # ``status < 400`` upper bound.
-        out = self._exercise_status(status_code=399)
-        self.assertEqual("redirect_blocked", out[0]["reason"])
-
-    # ---- 4xx range boundary -----------------------------------
-
-    def test_status_400_routes_to_rp_client_error(self) -> None:
-        out = self._exercise_status(status_code=400)
-        self.assertEqual("rp_client_error", out[0]["reason"])
-        self.assertFalse(out[0]["success"])
-
-    def test_status_499_routes_to_rp_client_error(self) -> None:
-        out = self._exercise_status(status_code=499)
-        self.assertEqual("rp_client_error", out[0]["reason"])
+        5xx routing is retries-aware and has its own dedicated
+        tests below.
+        """
+        cases: tuple[tuple[int, bool, str | None], ...] = (
+            (200, True, None),
+            (299, True, None),
+            (300, False, "redirect_blocked"),
+            (399, False, "redirect_blocked"),
+            (400, False, "rp_client_error"),
+            (499, False, "rp_client_error"),
+        )
+        for status_code, expected_success, expected_reason in cases:
+            with self.subTest(status=status_code):
+                out = self._exercise_status(status_code=status_code)
+                self.assertEqual(1, len(out))
+                self.assertIs(expected_success, out[0]["success"])
+                self.assertEqual(expected_reason, out[0]["reason"])
 
     # ---- 5xx routes to retry-or-deadletter --------------------
 
