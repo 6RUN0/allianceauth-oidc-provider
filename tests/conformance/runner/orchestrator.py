@@ -136,44 +136,71 @@ def run_plan(
     module_variant = module_variant or {}
 
     results: list[ModuleResult] = []
-    for index, entry in enumerate(selected):
-        # Plan modules look like
-        # ``{"testModule": "oidcc-server", "variant": {...}, ...}``.
-        # Plans pre-bake the right variant for each module; using
-        # ours globally breaks modules whose plan-variant differs
-        # from the runner default (e.g.
-        # ``oidcc-server-client-secret-post`` needs
-        # ``client_auth_type=client_secret_post``). Prefer the
-        # plan-supplied variant; fall back to the runner default
-        # only if the plan didn't ship one.
-        name = module_name(entry)
-        per_module_variant = entry.get("variant") or module_variant
-        if isolated:
-            fresh = create_plan(
+    try:
+        for index, entry in enumerate(selected):
+            # Plan modules look like
+            # ``{"testModule": "oidcc-server", "variant": {...}, ...}``.
+            # Plans pre-bake the right variant for each module; using
+            # ours globally breaks modules whose plan-variant differs
+            # from the runner default (e.g.
+            # ``oidcc-server-client-secret-post`` needs
+            # ``client_auth_type=client_secret_post``). Prefer the
+            # plan-supplied variant; fall back to the runner default
+            # only if the plan didn't ship one.
+            name = module_name(entry)
+            per_module_variant = entry.get("variant") or module_variant
+            if isolated:
+                fresh = create_plan(
+                    session,
+                    plan_name=plan_name,
+                    plan_variant=plan_variant,
+                )
+                target_plan_id = _plan_id(fresh)
+            else:
+                target_plan_id = catalogue_id
+            result = run_module(
                 session,
-                plan_name=plan_name,
-                plan_variant=plan_variant,
+                plan_id=target_plan_id,
+                module_name=name,
+                module_variant=per_module_variant,
             )
-            target_plan_id = _plan_id(fresh)
-        else:
-            target_plan_id = catalogue_id
-        result = run_module(
-            session,
-            plan_id=target_plan_id,
-            module_name=name,
-            module_variant=per_module_variant,
-        )
-        results.append(result)
-        logger.info("  %s -> %s", result.name, result.result)
-        # Avoid alias conflict with the next module: suite's
-        # WebRunner thread can still hold the plan alias for a
-        # second or two after the module reports FINISHED. Skip
-        # the pause after the last module.
-        if sleep_between_s > 0 and index < len(selected) - 1:
-            time.sleep(sleep_between_s)
+            results.append(result)
+            logger.info("  %s -> %s", result.name, result.result)
+            # Avoid alias conflict with the next module: suite's
+            # WebRunner thread can still hold the plan alias for a
+            # second or two after the module reports FINISHED. Skip
+            # the pause after the last module.
+            if sleep_between_s > 0 and index < len(selected) - 1:
+                time.sleep(sleep_between_s)
+    finally:
+        # Persist whatever results we have even on
+        # ``KeyboardInterrupt`` or unhandled exception — a 30-minute
+        # basic-cert run that crashes after module 28 still produces
+        # actionable JSON for the operator and any aggregator. A
+        # write failure here must not mask the original exception:
+        # log and swallow.
+        if summary_json is not None:
+            try:
+                write_summary_json(
+                    summary_json,
+                    results=results,
+                    skipped_filtered=skipped_filtered,
+                    expected_failures=expected_failures or {},
+                    plan_name=plan_name,
+                    plan_id=str(catalogue_id),
+                )
+                logger.info("wrote summary json: %s", summary_json)
+            except OSError as exc:
+                logger.warning(
+                    "summary json write to %s failed: %s",
+                    summary_json,
+                    exc,
+                )
 
     # Best-effort HTML archive — failure here logs and continues so
-    # an export hiccup does not mask test outcomes.
+    # an export hiccup does not mask test outcomes. Skipped on an
+    # interrupted run: the ``try`` body raised, ``finally`` ran, and
+    # the exception is already propagating past this point.
     if export_dir is not None:
         try:
             archive = export_plan_html(
@@ -182,17 +209,6 @@ def run_plan(
             logger.info("exported plan archive: %s", archive)
         except requests.RequestException as exc:
             logger.warning("export to %s failed: %s", export_dir, exc)
-
-    if summary_json is not None:
-        write_summary_json(
-            summary_json,
-            results=results,
-            skipped_filtered=skipped_filtered,
-            expected_failures=expected_failures or {},
-            plan_name=plan_name,
-            plan_id=str(catalogue_id),
-        )
-        logger.info("wrote summary json: %s", summary_json)
 
     return emit_summary(
         results,
