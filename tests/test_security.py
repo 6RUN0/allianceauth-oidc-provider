@@ -13,6 +13,7 @@ gate rules have their own coverage in the HTTP-level
 
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from django.db import connection
@@ -265,59 +266,124 @@ class TestAccessDecisionStructuralInvariants(SimpleTestCase):
     def _stub_app():
         return SimpleNamespace(name="stub")
 
-    # ---- AllowedDecision ------------------------------------------
+    # The decision trio shares three invariants — ``allowed`` and
+    # ``deny_reason`` defaults, ``frozen=True`` immutability,
+    # ``slots=True`` __dict__-absence — plus a kwarg-rejection
+    # contract on the ``init=False`` fields. One sweep per
+    # invariant pins all three classes; the two genuinely
+    # asymmetric facts (``GlobalDeny.app is None`` for
+    # anti-enumeration, ``AppDeny`` echoes its constructor arg)
+    # remain as dedicated tests below.
 
-    def test_allowed_decision_pins_allowed_true(self):
-        # field(default=True): if a mutation flips the default to
-        # ``False`` an "allowed" decision would still report
-        # ``allowed=False``, silently letting denial branches reject
-        # legitimate access.
-        self.assertIs(True, AllowedDecision(app=self._stub_app()).allowed)
+    def test_decision_pins_allowed_and_deny_reason_defaults(self):
+        """
+        field(default=…, init=False) pin for every decision.
 
-    def test_allowed_decision_pins_deny_reason_none(self):
-        # ``init=False`` on deny_reason: constructor must NOT accept
-        # an override. The flip-side flow (caller hand-rolling
-        # ``AllowedDecision(deny_reason=GLOBAL)``) would create an
-        # incoherent decision; the type forbids it by design.
-        self.assertIsNone(AllowedDecision(app=self._stub_app()).deny_reason)
-
-    def test_allowed_decision_rejects_allowed_kwarg(self):
-        # init=False ⇒ TypeError on ``allowed=...`` to __init__.
-        with self.assertRaises(TypeError):
-            AllowedDecision(app=self._stub_app(), allowed=False)  # type: ignore[call-arg]
-
-    def test_allowed_decision_rejects_deny_reason_kwarg(self):
-        with self.assertRaises(TypeError):
-            AllowedDecision(
-                app=self._stub_app(),
-                deny_reason=DenyReason.GLOBAL,  # type: ignore[call-arg]
-            )
-
-    def test_allowed_decision_is_frozen(self):
-        # frozen=True: any field write after construction must raise.
-        # Removing the decorator or flipping ``frozen=True`` to
-        # ``False`` allows in-place mutation and breaks the
-        # "decisions are values, not state" contract validators rely
-        # on.
-        decision = AllowedDecision(app=self._stub_app())
-        with self.assertRaises(FrozenInstanceError):
-            decision.app = None  # type: ignore[misc]
-
-    def test_allowed_decision_uses_slots(self):
-        # slots=True: instance has no __dict__. Mutating slots=True
-        # to False would silently let downstream code attach random
-        # attributes to a decision and rely on them.
-        self.assertFalse(
-            hasattr(AllowedDecision(app=self._stub_app()), "__dict__")
+        A mutation that flips ``default=True`` on AllowedDecision
+        to ``False`` (or vice versa on a deny path) would silently
+        invert the policy answer. The three rows lock both
+        ``allowed`` and ``deny_reason`` against any such flip.
+        """
+        stub = self._stub_app()
+        cases: tuple[tuple[str, Any, bool, Any], ...] = (
+            ("AllowedDecision", AllowedDecision(app=stub), True, None),
+            ("GlobalDeny", GlobalDeny(), False, DenyReason.GLOBAL),
+            ("AppDeny", AppDeny(app=stub), False, DenyReason.APP),
         )
+        for label, decision, expected_allowed, expected_reason in cases:
+            with self.subTest(decision=label):
+                self.assertIs(expected_allowed, decision.allowed)
+                if expected_reason is None:
+                    self.assertIsNone(decision.deny_reason)
+                else:
+                    self.assertIs(expected_reason, decision.deny_reason)
 
-    # ---- GlobalDeny -----------------------------------------------
+    def test_decision_rejects_disallowed_kwargs(self):
+        """
+        ``init=False`` fields must TypeError on constructor override.
 
-    def test_global_deny_pins_allowed_false(self):
-        self.assertIs(False, GlobalDeny().allowed)
+        A caller hand-rolling ``AllowedDecision(allowed=False)``
+        or ``GlobalDeny(app=…)`` would create an incoherent
+        decision; ``init=False`` forbids it by design and the
+        type system surfaces the violation as TypeError.
+        """
+        stub = self._stub_app()
+        cases: tuple[tuple[str, Any], ...] = (
+            (
+                "AllowedDecision allowed=",
+                lambda: AllowedDecision(  # type: ignore[call-arg]
+                    app=stub, allowed=False
+                ),
+            ),
+            (
+                "AllowedDecision deny_reason=",
+                lambda: AllowedDecision(  # type: ignore[call-arg]
+                    app=stub, deny_reason=DenyReason.GLOBAL
+                ),
+            ),
+            (
+                "GlobalDeny allowed=",
+                lambda: GlobalDeny(allowed=True),  # type: ignore[call-arg]
+            ),
+            (
+                "GlobalDeny app=",
+                lambda: GlobalDeny(app=stub),  # type: ignore[call-arg]
+            ),
+            (
+                "AppDeny allowed=",
+                lambda: AppDeny(  # type: ignore[call-arg]
+                    app=stub, allowed=True
+                ),
+            ),
+        )
+        for label, factory in cases:
+            with (
+                self.subTest(case=label),
+                self.assertRaises(TypeError),
+            ):
+                factory()
 
-    def test_global_deny_pins_deny_reason_global(self):
-        self.assertIs(DenyReason.GLOBAL, GlobalDeny().deny_reason)
+    def test_decision_is_frozen(self):
+        """
+        ``frozen=True`` forbids in-place mutation post-construction.
+
+        Removing the decorator or flipping ``frozen=True`` to
+        ``False`` allows in-place mutation and breaks the
+        "decisions are values, not state" contract validators
+        rely on. Any field write must raise FrozenInstanceError.
+        """
+        stub = self._stub_app()
+        decisions = (
+            ("AllowedDecision", AllowedDecision(app=stub)),
+            ("GlobalDeny", GlobalDeny()),
+            ("AppDeny", AppDeny(app=stub)),
+        )
+        for label, decision in decisions:
+            with (
+                self.subTest(decision=label),
+                self.assertRaises(FrozenInstanceError),
+            ):
+                decision.app = None  # type: ignore[misc]
+
+    def test_decision_uses_slots(self):
+        """
+        ``slots=True`` keeps instances dict-less.
+
+        Mutating slots=True to False would silently let
+        downstream code attach random attributes to a decision
+        and rely on them.
+        """
+        stub = self._stub_app()
+        decisions = (
+            ("AllowedDecision", AllowedDecision(app=stub)),
+            ("GlobalDeny", GlobalDeny()),
+            ("AppDeny", AppDeny(app=stub)),
+        )
+        for label, decision in decisions:
+            with self.subTest(decision=label):
+                self.assertFalse(hasattr(decision, "__dict__"))
+
+    # ---- Asymmetric, decision-specific invariants -----------------
 
     def test_global_deny_pins_app_none(self):
         # Anti-enumeration: GlobalDeny.app must be None so the
@@ -326,31 +392,6 @@ class TestAccessDecisionStructuralInvariants(SimpleTestCase):
         # would re-introduce the leak.
         self.assertIsNone(GlobalDeny().app)
 
-    def test_global_deny_rejects_allowed_kwarg(self):
-        with self.assertRaises(TypeError):
-            GlobalDeny(allowed=True)  # type: ignore[call-arg]
-
-    def test_global_deny_rejects_app_kwarg(self):
-        with self.assertRaises(TypeError):
-            GlobalDeny(app=self._stub_app())  # type: ignore[call-arg]
-
-    def test_global_deny_is_frozen(self):
-        with self.assertRaises(FrozenInstanceError):
-            GlobalDeny().app = SimpleNamespace()  # type: ignore[misc]
-
-    def test_global_deny_uses_slots(self):
-        self.assertFalse(hasattr(GlobalDeny(), "__dict__"))
-
-    # ---- AppDeny --------------------------------------------------
-
-    def test_app_deny_pins_allowed_false(self):
-        self.assertIs(False, AppDeny(app=self._stub_app()).allowed)
-
-    def test_app_deny_pins_deny_reason_app(self):
-        self.assertIs(
-            DenyReason.APP, AppDeny(app=self._stub_app()).deny_reason
-        )
-
     def test_app_deny_echoes_app(self):
         # Symmetry with AllowedDecision: AppDeny carries the
         # offending app so the renderer can show its name. The
@@ -358,18 +399,6 @@ class TestAccessDecisionStructuralInvariants(SimpleTestCase):
         # allowed/deny_reason pair.
         app = self._stub_app()
         self.assertIs(app, AppDeny(app=app).app)
-
-    def test_app_deny_rejects_allowed_kwarg(self):
-        with self.assertRaises(TypeError):
-            AppDeny(app=self._stub_app(), allowed=True)  # type: ignore[call-arg]
-
-    def test_app_deny_is_frozen(self):
-        decision = AppDeny(app=self._stub_app())
-        with self.assertRaises(FrozenInstanceError):
-            decision.app = None  # type: ignore[misc]
-
-    def test_app_deny_uses_slots(self):
-        self.assertFalse(hasattr(AppDeny(app=self._stub_app()), "__dict__"))
 
 
 class TestAccessPolicyStructure(SimpleTestCase):
