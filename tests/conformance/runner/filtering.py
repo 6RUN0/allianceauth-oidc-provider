@@ -15,6 +15,8 @@ import fnmatch
 import json
 from typing import TYPE_CHECKING, Any
 
+from .config import module_name
+
 if TYPE_CHECKING:
     import pathlib
 
@@ -52,14 +54,11 @@ def filter_modules(
     surfaced as a warning so a typo (or stale glob) in ``--include``
     does not silently produce an empty run.
     """
-    plan_names = {
-        (entry.get("testModule") or entry.get("name", "?"))
-        for entry in modules
-    }
+    plan_names = {module_name(entry) for entry in modules}
     selected: list[dict[str, Any]] = []
     skipped: list[str] = []
     for entry in modules:
-        name = entry.get("testModule") or entry.get("name", "?")
+        name = module_name(entry)
         if include is not None and not _matches_any(name, include):
             skipped.append(name)
             continue

@@ -17,7 +17,7 @@ import sys
 import requests
 
 from .client import create_plan, wait_for_suite_ready
-from .config import DEFAULT_VARIANT, PLAN_VARIANT_DEFAULTS
+from .config import DEFAULT_VARIANT, PLAN_VARIANT_DEFAULTS, module_name
 from .filtering import load_expected_failures
 from .orchestrator import run_plan
 
@@ -205,8 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             session, plan_name=args.plan, plan_variant=plan_variant
         )
         for entry in catalogue.get("modules", []):
-            name = entry.get("testModule") or entry.get("name", "?")
-            sys.stdout.write(f"{name}\n")
+            sys.stdout.write(f"{module_name(entry)}\n")
         return 0
     return run_plan(
         args.plan,

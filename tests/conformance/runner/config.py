@@ -96,3 +96,17 @@ class ModuleResult:
     test_id: str
     result: str  # PASSED / FAILED / WARNING / REVIEW / SKIPPED
     log_excerpt: list[dict[str, Any]] = field(default_factory=list)
+
+
+def module_name(entry: dict[str, Any]) -> str:
+    """
+    Extract the module name from a plan-catalogue entry.
+
+    Plans returned by ``POST /api/plan`` carry entries of the shape
+    ``{"testModule": "oidcc-server", ...}``; older suite revisions
+    used ``{"name": ...}`` in the same slot. The fallback to ``"?"``
+    preserves the diagnostic value when the suite returns a record
+    we cannot label — the literal flows verbatim into log lines /
+    summary tables and is visibly wrong on inspection.
+    """
+    return entry.get("testModule") or entry.get("name") or "?"

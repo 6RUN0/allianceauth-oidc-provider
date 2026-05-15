@@ -21,6 +21,7 @@ from .client import (
     run_module,
     wait_for_suite_ready,
 )
+from .config import module_name
 from .filtering import filter_modules
 from .summary import emit_summary, write_summary_json
 
@@ -30,6 +31,22 @@ if TYPE_CHECKING:
     from .config import ModuleResult
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_id(payload: dict[str, object]) -> str:
+    """
+    Return the plan id from a ``POST /api/plan`` response payload.
+
+    The suite spells the id field ``"id"`` on current releases but
+    historical responses used ``"_id"``; the fallback covers both
+    without forcing every call site to remember the contract.
+    """
+    plan_id = payload.get("id") or payload.get("_id")
+    if not plan_id:
+        raise KeyError(
+            f"plan response missing both 'id' and '_id': {payload!r}"
+        )
+    return str(plan_id)
 
 
 def run_plan(
@@ -93,7 +110,7 @@ def run_plan(
     catalogue = create_plan(
         session, plan_name=plan_name, plan_variant=plan_variant
     )
-    catalogue_id = catalogue.get("id") or catalogue["_id"]
+    catalogue_id = _plan_id(catalogue)
     modules = catalogue.get("modules", [])
     logger.info("plan id=%s contains %d modules", catalogue_id, len(modules))
 
@@ -129,7 +146,7 @@ def run_plan(
         # ``client_auth_type=client_secret_post``). Prefer the
         # plan-supplied variant; fall back to the runner default
         # only if the plan didn't ship one.
-        module_name = entry.get("testModule") or entry.get("name", "?")
+        name = module_name(entry)
         per_module_variant = entry.get("variant") or module_variant
         if isolated:
             fresh = create_plan(
@@ -137,13 +154,13 @@ def run_plan(
                 plan_name=plan_name,
                 plan_variant=plan_variant,
             )
-            target_plan_id = fresh.get("id") or fresh["_id"]
+            target_plan_id = _plan_id(fresh)
         else:
             target_plan_id = catalogue_id
         result = run_module(
             session,
             plan_id=target_plan_id,
-            module_name=module_name,
+            module_name=name,
             module_variant=per_module_variant,
         )
         results.append(result)

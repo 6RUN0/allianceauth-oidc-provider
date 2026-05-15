@@ -23,6 +23,33 @@ from .config import (
 )
 
 
+def _login_task(host_root: str) -> dict[str, Any]:
+    """
+    Build the suite-browser task that submits AA's admin login form.
+
+    Two top-level browser entries (``*/callback/*`` and
+    ``/o/authorize*``) both need an identical login task to drive
+    AA's Django admin form — anonymous users land on
+    ``/admin/login/`` before the OIDC happy-path resumes. Marked
+    ``optional: true`` so a session that arrives already
+    authenticated does not stall waiting for a form that never
+    renders. Selectors track admin's template:
+    ``id_username`` / ``id_password`` are the field IDs Django ships,
+    and ``[type=submit]`` matches both ``<input>`` and ``<button>``
+    submit elements across AA versions.
+    """
+    return {
+        "task": "Login",
+        "match": f"{host_root}/admin/login*",
+        "optional": True,
+        "commands": [
+            ["text", "id", "id_username", USERNAME],
+            ["text", "id", "id_password", PASSWORD],
+            ["click", "css", "[type=submit]"],
+        ],
+    }
+
+
 def _host_root(public_url: str) -> str:
     """
     Strip the OIDC path prefix from ``public_url`` to recover the
@@ -132,16 +159,7 @@ def build_plan_config() -> dict[str, Any]:
                 # ``/o/authorize*`` entry below would otherwise win.
                 "match": "*/callback/*",
                 "tasks": [
-                    {
-                        "task": "Login",
-                        "match": f"{host_root}/admin/login*",
-                        "optional": True,
-                        "commands": [
-                            ["text", "id", "id_username", USERNAME],
-                            ["text", "id", "id_password", PASSWORD],
-                            ["click", "css", "[type=submit]"],
-                        ],
-                    },
+                    _login_task(host_root),
                     {
                         # Provider rejects the unregistered
                         # redirect_uri and renders
@@ -176,16 +194,7 @@ def build_plan_config() -> dict[str, Any]:
             {
                 "match": f"{host_root}/o/authorize*",
                 "tasks": [
-                    {
-                        "task": "Login",
-                        "match": f"{host_root}/admin/login*",
-                        "optional": True,
-                        "commands": [
-                            ["text", "id", "id_username", USERNAME],
-                            ["text", "id", "id_password", PASSWORD],
-                            ["click", "css", "[type=submit]"],
-                        ],
-                    },
+                    _login_task(host_root),
                     {
                         "task": "Authorize",
                         "match": f"{host_root}/o/authorize*",
