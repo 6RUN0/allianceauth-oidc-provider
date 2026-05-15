@@ -52,8 +52,16 @@ import logging
 import pathlib
 import sys
 
-from cosmic_ray.work_db import use_db
-from cosmic_ray.work_item import WorkerOutcome, WorkResult
+# cosmic_ray is only needed by the WorkDB transport path
+# (``filter_session``). The AST core (``_annotation_binop_spots``) has
+# no runtime dependency on it, and is exercised by tests that run on
+# every CI matrix — including matrices that do not install cosmic_ray
+# (the ``mutation`` nox session installs it; the regular ``tests``
+# session does not). Importing cosmic_ray at module top-level made
+# test discovery itself fail with ``ModuleNotFoundError`` on those
+# matrices; moving the import into ``filter_session`` keeps the AST
+# helper importable everywhere and surfaces the missing dependency
+# only when the mutation path is actually invoked.
 
 _BITOR_PREFIX = "core/ReplaceBinaryOperator_BitOr_"
 
@@ -143,6 +151,9 @@ def filter_session(
     project_root: pathlib.Path,
 ) -> tuple[int, int]:
     """Mark PEP 604 BinOp mutants as SKIPPED. Return ``(skipped, scanned)``."""
+    from cosmic_ray.work_db import use_db
+    from cosmic_ray.work_item import WorkerOutcome, WorkResult
+
     cache: dict[str, set[tuple[int, int]]] = {}
     skipped = 0
     scanned = 0
