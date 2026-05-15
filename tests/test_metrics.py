@@ -18,6 +18,10 @@ runner.
 
 from __future__ import annotations
 
+import subprocess  # nosec B404
+import sys
+import textwrap
+
 from django.test import SimpleTestCase
 from prometheus_client import REGISTRY
 
@@ -364,6 +368,91 @@ class TestNoOpMetricAPISurface(SimpleTestCase):
         self.assertIsInstance(_metrics.bcl_delivery_seconds, Histogram)
         self.assertIsInstance(_metrics.bcl_dispatches, Counter)
         self.assertIsInstance(_metrics.tokens_cleaned, Counter)
+
+
+class TestNoopFallbackSmoke(SimpleTestCase):
+    """
+    Smoke the no-op fallback in a clean subprocess.
+
+    The in-process tests above exercise the live (enabled) gate and
+    the ``_NoOpMetric`` class directly; this test fills the only
+    remaining gap — that the module **itself** falls back cleanly
+    when ``django_prometheus`` is unimportable. A reload inside the
+    suite cannot prove that: the live ``Counter`` / ``Histogram``
+    objects are already registered against the default ``REGISTRY``,
+    so re-executing the module body raises
+    ``ValueError: Duplicated timeseries``. A fresh subprocess starts
+    with an empty registry and an unloaded ``allianceauth_oidc``
+    package — every module-level metric resolves to ``_NoOpMetric``
+    on first import.
+
+    Implementation note: ``sys.modules["django_prometheus"] = None``
+    is the PEP-328 idiom for "mask this package even if it is on
+    sys.path" — subsequent ``import django_prometheus`` raises
+    ``ImportError`` regardless of what the venv actually has
+    installed. That is the production path on any deployment that
+    does not pull the ``[metrics]`` extra (or another AA module's
+    dependency chain) into the AA venv.
+    """
+
+    _SCRIPT = textwrap.dedent(
+        """
+        import sys
+
+        sys.modules["django_prometheus"] = None
+
+        from allianceauth_oidc import _metrics as m
+
+        assert m._ENABLED is False, f"_ENABLED={m._ENABLED!r}"
+        for name in (
+            "tokens_issued",
+            "authorize_denied",
+            "bcl_delivery_seconds",
+            "bcl_dispatches",
+            "tokens_cleaned",
+        ):
+            obj = getattr(m, name)
+            cls = type(obj).__name__
+            assert cls == "_NoOpMetric", f"{name}: {cls}"
+        m.tokens_issued.labels(grant_type="x", client_id="y").inc()
+        m.tokens_issued.labels(grant_type="x", client_id="y").inc(2.5)
+        m.bcl_delivery_seconds.labels(
+            client_id="x", outcome="success"
+        ).observe(0.5)
+        m.tokens_cleaned.inc(7)
+        m.connect_metrics_receivers()
+        print("OK")
+        """
+    ).strip()
+
+    def test_metrics_falls_back_to_noop_when_django_prometheus_missing(
+        self,
+    ) -> None:
+        """
+        ``_metrics`` must import cleanly with ``django_prometheus``
+        masked; every module-level metric must be a ``_NoOpMetric``;
+        chained ``.labels().inc()`` / ``.observe()`` must be silent
+        no-ops; ``connect_metrics_receivers()`` must not raise (the
+        ``_on_token_issued`` / ``_on_logout_dispatched`` receivers
+        early-return on ``not _ENABLED``, so a wired-up receiver
+        firing under the no-op gate stays harmless).
+        """
+        result = subprocess.run(  # nosec B603
+            [sys.executable, "-c", self._SCRIPT],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            0,
+            result.returncode,
+            (
+                f"subprocess smoke failed (rc={result.returncode})\n"
+                f"STDOUT:\n{result.stdout}\n"
+                f"STDERR:\n{result.stderr}"
+            ),
+        )
+        self.assertEqual("OK", result.stdout.strip())
 
 
 class TestTokensCleanedCounter(OIDCTestCase):
