@@ -1,0 +1,72 @@
+name: Dependency advisory audit
+
+# Weekly non-blocking pip-audit run. The project deliberately accepts a
+# small set of CVEs because Alliance Auth pins old transitive deps that
+# we cannot upgrade from this repository (decision documented in
+# .pre-commit-config.yaml — pip-audit is opt-in, ``stages: manual``).
+# That trade-off needs evidence: a periodic, archived audit log that
+# shows the accepted set hasn't grown without anyone noticing, and that
+# no *new* CVE has appeared we should react to.
+#
+# Non-blocking by design: ``continue-on-error: true`` on the audit step
+# keeps a fresh CVE from breaking unrelated CI overnight. The artefact
+# is the signal — operators check the latest run weekly. If a finding
+# warrants action, file an issue and either upgrade the dep or add a
+# justified ``--ignore-vuln`` entry below with the issue number.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC — runs on the active main branch's HEAD via the
+    # default schedule semantics. Pick a day-of-week that surfaces in
+    # the weekly triage rhythm; avoid the weekend so a finding doesn't
+    # idle for 48h before anyone sees it.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two scheduled runs cannot race meaningfully; cancelling the older one
+# saves a few runner minutes if a manual ``workflow_dispatch`` lands on
+# top of the cron firing.
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: ./.github/actions/setup
+
+      - name: Run pip-audit (non-blocking)
+        id: audit
+        continue-on-error: true
+        # The nox session installs pip-audit from the dev group and
+        # writes both human-readable output to stdout (visible in the
+        # Actions log) and a JSON report to ``audit.json`` for the
+        # artefact upload below. Exit code is non-zero on findings; we
+        # absorb it with ``continue-on-error`` so the audit log is the
+        # signal, not a CI red.
+        run: uv run nox -s audit -- --format=json --output=audit.json
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pip-audit-${{ github.run_id }}
+          path: audit.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Annotate workflow with audit outcome
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          if [ "$AUDIT_OUTCOME" = "success" ]; then
+            echo "::notice::pip-audit reports no known CVEs against the current dep tree"
+          else
+            echo "::warning::pip-audit reported findings — inspect the uploaded audit.json artefact"
+          fi

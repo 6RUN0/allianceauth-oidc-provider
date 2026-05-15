@@ -166,8 +166,15 @@ def typecheck(session: nox.Session) -> None:
 
 @nox.session
 def audit(session: nox.Session) -> None:
-    """Audit dependencies for known vulnerabilities."""
-    session.run("pip-audit")
+    """
+    Audit dependencies for known vulnerabilities.
+
+    Extra args after ``--`` are forwarded to ``pip-audit`` — used by
+    ``.github/workflows/audit.yml`` to request a JSON report
+    (``-- --format=json --output=audit.json``) that gets archived as
+    a workflow artefact.
+    """
+    session.run("pip-audit", *session.posargs)
 
 
 @nox.session
