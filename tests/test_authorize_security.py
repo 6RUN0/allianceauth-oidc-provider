@@ -7,6 +7,8 @@ request itself (i.e. before the user reaches the consent screen). Full code-
 exchange flows belong in test_token.py.
 """
 
+from typing import Any
+
 from ._factories import make_app
 from ._jwt_helpers import forge_unsigned_jwt, split_jwt
 from ._oidc_testcase import (
@@ -811,4 +813,92 @@ class TestIssParamInAuthzResponse(OIDCTestCase):
             self.discovery(),
             "DOT discovery shipped RFC 9207 advert — flip this test "
             "to a positive ``assertTrue(config[...]) is True``.",
+        )
+
+
+class TestAuthorizeClickjackingHeaders(OIDCTestCase):
+    """
+    OIDC Core §16.16 mandates clickjacking protection on the consent
+    screen. ``AuthAuthorizationView.dispatch`` applies both legacy
+    ``X-Frame-Options`` and the modern
+    ``Content-Security-Policy: frame-ancestors`` directive to every
+    response path leaving the view — consent screen, denied page,
+    reauth bounce.
+
+    The application-level pin in ``_apply_clickjacking_headers`` is
+    defence-in-depth on top of
+    ``django.middleware.clickjacking.XFrameOptionsMiddleware``, which
+    operators may not have wired (the middleware is in Django's
+    recommended set but not required for any other reason).
+    """
+
+    def _assert_frame_protections(self, response: Any) -> None:
+        """Both headers MUST be present with the spec-mandated values."""
+        self.assertEqual("DENY", response.headers.get("X-Frame-Options"))
+        csp = response.headers.get("Content-Security-Policy", "")
+        self.assertIn(
+            "frame-ancestors 'none'",
+            csp,
+            f"CSP missing frame-ancestors directive; got {csp!r}",
+        )
+
+    def test_consent_screen_carries_clickjacking_headers(self) -> None:
+        """
+        The consent template is the spec-target of §16.16 — it is
+        the surface an attacker would frame to steal authorisation
+        clicks. Headers MUST be present on the 200 render.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        resp = self.authorize_get_default(self.user1)
+        self.assertEqual(200, resp.status_code)
+        self._assert_frame_protections(resp)
+
+    def test_denied_response_carries_clickjacking_headers(self) -> None:
+        """
+        The 403 denied page is a defence-in-depth target too — a
+        framed denied page leaks "user X cannot access app Y" to a
+        framing attacker. Headers MUST cover the deny path.
+        """
+        # user2 lacks the global access_oidc permission → GlobalDeny
+        self.client.force_login(self.user2)
+        resp = self.authorize_get_default(self.user2)
+        self.assertEqual(403, resp.status_code)
+        self._assert_frame_protections(resp)
+
+    def test_operator_xframe_override_is_respected(self) -> None:
+        """
+        ``_apply_clickjacking_headers`` uses an additive write: an
+        operator-configured ``X-Frame-Options`` (e.g. ``SAMEORIGIN``
+        for an embedded consent screen) is NOT overwritten. The
+        contract is "set the header IF absent", not "force DENY".
+
+        Verified by patching ``_dispatch_inner`` to attach a
+        ``SAMEORIGIN`` header before the outer wrapper sees the
+        response.
+        """
+        from unittest import mock
+
+        from allianceauth_oidc.views_authorize import AuthAuthorizationView
+
+        real = AuthAuthorizationView._dispatch_inner
+
+        def patched(self, request, *args, **kwargs):
+            response = real(self, request, *args, **kwargs)
+            response["X-Frame-Options"] = "SAMEORIGIN"
+            return response
+
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        with mock.patch.object(
+            AuthAuthorizationView, "_dispatch_inner", patched
+        ):
+            resp = self.authorize_get_default(self.user1)
+        # Outer wrapper must NOT overwrite the operator-set value.
+        self.assertEqual("SAMEORIGIN", resp.headers.get("X-Frame-Options"))
+        # CSP frame-ancestors is still added (additive on the CSP
+        # header — coexists with whatever else lives on that line).
+        self.assertIn(
+            "frame-ancestors 'none'",
+            resp.headers.get("Content-Security-Policy", ""),
         )

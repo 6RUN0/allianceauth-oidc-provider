@@ -349,6 +349,66 @@ class AuthAuthorizationView(AuthorizationView):
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponseBase:
         """
+        Outer wrapper applying defence-in-depth security headers.
+
+        Every response leaving this view — consent screen, denied
+        page, reauth bounce, even DOT's downstream code redirect —
+        carries ``X-Frame-Options: DENY`` and a
+        ``frame-ancestors 'none'`` CSP directive. OIDC §16.16
+        mandates clickjacking protection on the consent screen;
+        applying it uniformly at the dispatch boundary closes the
+        bypass where one of the inner return paths skipped the
+        header. ``django.middleware.clickjacking.XFrameOptionsMiddleware``
+        is a deploy-time middleware that operators may not have
+        wired — this is the belt-and-suspenders fallback.
+
+        ``_dispatch_inner`` is the previous body of ``dispatch`` —
+        the policy / reauth / decision-render flow remains
+        unchanged; only the response-tail is decorated.
+        """
+        response = self._dispatch_inner(request, *args, **kwargs)
+        return self._apply_clickjacking_headers(response)
+
+    @staticmethod
+    def _apply_clickjacking_headers(
+        response: HttpResponseBase,
+    ) -> HttpResponseBase:
+        """
+        Pin OIDC §16.16 clickjacking defences on the outgoing response.
+
+        Two headers, both belt-and-suspenders:
+
+        * ``X-Frame-Options: DENY`` — the legacy header still
+          honoured by every shipping browser. Set via
+          ``setdefault``-equivalent: do not overwrite an
+          operator-configured value (some deployments use
+          ``SAMEORIGIN`` to embed the consent screen in a
+          first-party shell).
+        * ``Content-Security-Policy: frame-ancestors 'none'`` — the
+          modern equivalent; takes precedence over XFO on browsers
+          that support CSP. Appended to any existing CSP rather
+          than overwriting it (a future per-app CSP customisation
+          stays composable).
+
+        Both writes are no-ops when the equivalent value is already
+        present, which means the headers can be safely emitted from
+        an inner return path AND from this outer wrapper without
+        double-applying.
+        """
+        if "X-Frame-Options" not in response:
+            response["X-Frame-Options"] = "DENY"
+        existing_csp = response.get("Content-Security-Policy", "")
+        if "frame-ancestors" not in existing_csp.lower():
+            directive = "frame-ancestors 'none'"
+            response["Content-Security-Policy"] = (
+                f"{existing_csp}; {directive}" if existing_csp else directive
+            )
+        return response
+
+    def _dispatch_inner(
+        self, request: HttpRequest, *args: Any, **kwargs: Any
+    ) -> HttpResponseBase:
+        """
         Run the access policy gate on every request, GET or POST.
 
         Centralising the check here closes the POST-bypass that arises if the
