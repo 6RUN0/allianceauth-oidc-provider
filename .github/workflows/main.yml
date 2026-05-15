@@ -52,6 +52,14 @@ jobs:
           - python-version: "3.12"
             aa-version: "4"
     steps:
+      # Local composite actions (``./.github/actions/...``) require the
+      # repo to be checked out before the runner can find ``action.yml``.
+      # See ``.github/actions/setup/action.yml`` for the upstream issue
+      # reference. ``persist-credentials: false`` keeps the GITHUB_TOKEN
+      # out of ``.git/config`` once checkout completes.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           python-version: ${{ matrix.python-version }}
@@ -80,6 +88,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      # Local composite actions (``./.github/actions/...``) require the
+      # repo to be checked out before the runner can find ``action.yml``.
+      # See ``.github/actions/setup/action.yml`` for the upstream issue
+      # reference. ``persist-credentials: false`` keeps the GITHUB_TOKEN
+      # out of ``.git/config`` once checkout completes.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Cache pre-commit hook environments
@@ -113,6 +129,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      # Local composite actions (``./.github/actions/...``) require the
+      # repo to be checked out before the runner can find ``action.yml``.
+      # See ``.github/actions/setup/action.yml`` for the upstream issue
+      # reference. ``persist-credentials: false`` keeps the GITHUB_TOKEN
+      # out of ``.git/config`` once checkout completes.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Run mypy + basedpyright
@@ -123,6 +147,14 @@ jobs:
     timeout-minutes: 15
     needs: [test, lint, typecheck]
     steps:
+      # Local composite actions (``./.github/actions/...``) require the
+      # repo to be checked out before the runner can find ``action.yml``.
+      # See ``.github/actions/setup/action.yml`` for the upstream issue
+      # reference. ``persist-credentials: false`` keeps the GITHUB_TOKEN
+      # out of ``.git/config`` once checkout completes.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Install GNU gettext
