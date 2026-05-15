@@ -51,7 +51,36 @@ WORKDIR /app
 # ``readme`` source.
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY allianceauth_oidc ./allianceauth_oidc
-COPY tests ./tests
+
+# Granular ``tests/`` slice — the conformance provider runtime needs
+# only Django settings + URLConf + the fakeredis hook + the RSA key.
+# Excluded by omission: ``tests/test_*.py`` (the unit-test suite,
+# ~50 files run via ``nox -s tests`` on the host, never in this
+# container) and ``tests/_factories.py`` / ``_jwt_helpers.py`` /
+# ``_oidc_testcase.py`` (test fixtures and helpers with the same
+# host-only lifecycle).
+COPY tests/__init__.py tests/_fakeredis.py tests/celery.py \
+     tests/oidc-test.key tests/test_settingsAA4.py \
+     tests/urls.py tests/views.py \
+     ./tests/
+
+# Conformance runtime — provider-side only. ``runner/`` is the
+# *host-side* plan driver (``run_plan.py`` + ``aggregate_summaries.py``
+# + the orchestrator/client/filtering/summary modules); the only
+# runner module the container needs is ``runner/config.py``, which
+# ``seed.py`` imports for the credential constants.
+COPY tests/conformance/conformance_settings.py \
+     tests/conformance/entrypoint.sh \
+     tests/conformance/seed.py \
+     tests/conformance/wsgi.py \
+     ./tests/conformance/
+COPY tests/conformance/runner/__init__.py \
+     tests/conformance/runner/config.py \
+     ./tests/conformance/runner/
+COPY tests/conformance/tls/ca.crt \
+     tests/conformance/tls/provider.crt \
+     tests/conformance/tls/provider.key \
+     ./tests/conformance/tls/
 
 ARG UV_VERSION=0.11.11
 

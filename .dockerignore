@@ -1,1 +1,30 @@
 .artifacts/
+
+# Generic noise that should never reach any Docker build context.
+# Granular per-image inclusion lives in each Dockerfile's COPY list —
+# this file only filters universally-useless artefacts.
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local dev environments and packaging artefacts.
+.venv/
+.nox/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+dist/
+build/
+*.egg-info/
+
+# VCS + editor state has no place in any image.
+.git/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
