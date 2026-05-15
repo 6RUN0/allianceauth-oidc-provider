@@ -168,6 +168,14 @@ def _ensure_app(
     # apps but blocks every basic-cert module that does not opt into
     # PKCE. The suite has its own dedicated ``oidcc-pkce-*`` plans
     # for verifying PKCE behaviour.
+    # ``post_logout_redirect_uris`` mirrors the conformance suite's
+    # post-logout callback path so the RP-Initiated Logout plan can
+    # validate the AS accepts a registered URI. The suite derives the
+    # path from the same ``test/a/<alias>`` namespace as the auth
+    # callback — keep both lists aligned with ``REDIRECT_URI*`` above.
+    post_logout_redirect = redirect_uri.replace(
+        "/callback", "/post_logout_redirect"
+    )
     Application.objects.update_or_create(
         client_id=client_id,
         defaults={
@@ -179,6 +187,7 @@ def _ensure_app(
                 AbstractApplication.GRANT_AUTHORIZATION_CODE
             ),
             "redirect_uris": redirect_uri,
+            "post_logout_redirect_uris": post_logout_redirect,
             "algorithm": "RS256",
             "skip_authorization": True,
             "active": True,

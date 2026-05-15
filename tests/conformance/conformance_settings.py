@@ -81,6 +81,22 @@ OAUTH2_PROVIDER["AUTHORIZATION_CODE_EXPIRE_SECONDS"] = 60
 
 OAUTH2_PROVIDER["REFRESH_TOKEN_EXPIRE_SECONDS"] = 24 * 3600
 
+# OIDC RP-Initiated Logout 1.0 plan probes ``end_session_endpoint``;
+# DOT gates BOTH the endpoint AND its discovery advertising behind
+# ``OIDC_RP_INITIATED_LOGOUT_ENABLED`` (default False). Without this
+# the suite's discovery-endpoint-verification module fails 3-line-deep
+# ("end_session_endpoint absent"), and every downstream logout probe
+# never gets a URL to call.
+OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ENABLED"] = True
+# DOT's stock ``RPInitiatedLogoutView`` renders an HTML confirm page
+# at ``oauth2_provider/logout_confirm.html`` when this is True; the
+# suite's headless HtmlUnit cannot follow a confirm-and-submit flow
+# (same Bootstrap 5 / ES6+ stall that brakes
+# ``oidcc-userinfo-post-header`` upstream). Skip the prompt so the
+# logout path completes inline. Operators wanting an interactive
+# logout confirm in production keep the default True.
+OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT"] = False
+
 # The conformance suite POSTs to /account/login/ with a normal Django
 # session cookie. Production AA sets Secure on the session cookie; the
 # suite-facing httpd terminates TLS and forwards plain HTTP, so we

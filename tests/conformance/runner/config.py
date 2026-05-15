@@ -43,9 +43,22 @@ SUITE_URL = _env("SUITE_URL", "https://localhost.emobix.co.uk:8443")
 # imports at startup via ``USE_SYSTEM_CA_CERTS=1``.
 PUBLIC_URL = _env("PUBLIC_URL", "https://provider:8443/o")
 CLIENT_ID = _env("CLIENT_ID", "conformance-client")
-CLIENT_SECRET = _env("CLIENT_SECRET", "conformance-secret")  # nosec B105
+# Secrets are >=32 bytes so the suite's HS256 preflight task
+# ``GenerateJWKsFromClientSecret`` accepts them. Shorter secrets fail
+# every module that signs a JWT with the symmetric key (every logout
+# / introspection / userinfo probe after the basic discovery one)
+# with a hard FAILURE before browser flow even starts. The values
+# stay hard-coded test fixtures — production deployers generate their
+# own per-client via ``manage.py`` or admin.
+CLIENT_SECRET = _env(  # nosec B105
+    "CLIENT_SECRET",
+    "conformance-secret-conformance-secret-pad",
+)
 CLIENT2_ID = _env("CLIENT2_ID", "conformance-client2")
-CLIENT2_SECRET = _env("CLIENT2_SECRET", "conformance-secret-2")  # nosec B105
+CLIENT2_SECRET = _env(  # nosec B105
+    "CLIENT2_SECRET",
+    "conformance-secret-2-conformance-secret-2-pad",
+)
 USERNAME = _env("USERNAME", "conformance")
 PASSWORD = _env("PASSWORD", "conformance-pass")  # nosec B105
 
