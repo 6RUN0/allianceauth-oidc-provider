@@ -318,6 +318,82 @@ class TestDiscoveryFieldTypes(OIDCTestCase):
         self.assertRegex(issuer, r"^https?://")
 
 
+class TestDiscoveryPkceAcrSilentAuthMetadata(OIDCTestCase):
+    """
+    OIDC Discovery 1.0 §3 / RFC 8414 §2 OPTIONAL feature-detect fields.
+
+    Pinned by ``AllianceAuthDiscoveryView`` to the values that mirror
+    the concrete provider behaviour: PKCE S256 only (RFC 9700
+    forbids ``plain``); ACR fallback ``"0"`` (the value
+    :meth:`_inject_acr_fallback` emits); three response_mode values
+    DOT actually implements; the three prompt values
+    ``AuthAuthorizationView.dispatch`` understands; ``claims``
+    request parameter honoured; JAR / PAR not implemented.
+
+    The two negative-flag tests (``request_parameter_supported`` /
+    ``request_uri_parameter_supported``) document the deliberate
+    refusal to advertise capabilities the provider does not have —
+    when a future PR adds JAR or PAR support, flip the assertion to
+    ``assertTrue`` and remove the matching row from
+    :class:`TestExtensionEndpointsAbsence`.
+    """
+
+    def _doc(self) -> dict[str, Any]:
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        return json.loads(resp.content.decode("utf-8"))
+
+    def test_code_challenge_methods_supported_is_s256_only(self) -> None:
+        doc = self._doc()
+        self.assertEqual(["S256"], doc.get("code_challenge_methods_supported"))
+
+    def test_acr_values_supported_carries_rfc6711_zero(self) -> None:
+        """
+        ``"0"`` is RFC 6711 "no specific level" — the fallback
+        ``_inject_acr_fallback`` emits when the RP requested ``acr``
+        but the AS cannot satisfy a concrete level. Advertising it
+        keeps the discovery + token contract in sync.
+        """
+        doc = self._doc()
+        self.assertEqual(["0"], doc.get("acr_values_supported"))
+
+    def test_response_modes_supported_lists_three_modes(self) -> None:
+        doc = self._doc()
+        self.assertEqual(
+            ["query", "fragment", "form_post"],
+            doc.get("response_modes_supported"),
+        )
+
+    def test_prompt_values_supported_matches_implementation(self) -> None:
+        """
+        The three values are the ones ``AuthAuthorizationView.dispatch``
+        understands: ``none`` (silent auth via
+        ``validate_silent_login`` + ``validate_silent_authorization``),
+        ``login`` (force-reauth in ``_enforce_reauth``), ``consent``
+        (``_ForceConsentRequired`` sentinel). ``select_account`` is
+        deliberately absent — no multi-account UX.
+        """
+        doc = self._doc()
+        self.assertEqual(
+            ["none", "login", "consent"],
+            doc.get("prompt_values_supported"),
+        )
+
+    def test_claims_parameter_supported_is_true(self) -> None:
+        doc = self._doc()
+        self.assertIs(True, doc.get("claims_parameter_supported"))
+
+    def test_request_parameter_supported_is_false(self) -> None:
+        """JAR (RFC 9101 ``request`` JWT) is not implemented."""
+        doc = self._doc()
+        self.assertIs(False, doc.get("request_parameter_supported"))
+
+    def test_request_uri_parameter_supported_is_false(self) -> None:
+        """PAR (RFC 9126 ``request_uri``) is not implemented."""
+        doc = self._doc()
+        self.assertIs(False, doc.get("request_uri_parameter_supported"))
+
+
 class TestJWKSCryptoHygiene(OIDCTestCase):
     """
     Cryptographic-hygiene contracts on the published JWKS.

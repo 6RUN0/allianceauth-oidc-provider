@@ -67,6 +67,39 @@ _KEY_TOS_URI: Final[str] = "ALLIANCEAUTH_OIDC_TOS_URI"
 _RESPONSE_TYPES_SUPPORTED: Final[list[str]] = ["code"]
 
 
+# RFC 8414 §2 / OIDC Discovery 1.0 §3 OPTIONAL fields a security-aware
+# RP feature-detects on before sending PKCE / ACR / silent-auth flows.
+# Each constant corresponds to behaviour already implemented elsewhere
+# in this provider; advertising it explicitly closes the conformance
+# gap that ``oidcc-discovery-endpoint-verification`` flags as a
+# warning ("server claims OIDC but advertises no code_challenge
+# method").
+#
+# * ``S256`` — the only PKCE transform RFC 7636 §4.2 allows in a
+#   modern AS; ``plain`` is forbidden by RFC 9700 §2.1.1.
+# * ``0`` — RFC 6711 "no specific level" fallback emitted by
+#   :meth:`AllianceAuthOAuth2Validator._inject_acr_fallback` when the
+#   RP requested ``acr`` but the AS cannot satisfy a concrete level.
+# * ``query`` / ``fragment`` / ``form_post`` — the three response
+#   delivery modes DOT's authorize view actually implements. SAML-
+#   style ``form_post`` is rarely the default but tested via
+#   ``response_mode=form_post`` in DOT's own suite.
+# * ``none`` / ``login`` / ``consent`` — the prompt values
+#   :meth:`AuthAuthorizationView.dispatch` understands (silent auth
+#   via ``validate_silent_login`` / ``validate_silent_authorization``;
+#   force-reauth via :meth:`_enforce_reauth`; force-consent via
+#   :class:`_ForceConsentRequired`). ``select_account`` is
+#   deliberately omitted — the provider has no multi-account UX.
+_CODE_CHALLENGE_METHODS_SUPPORTED: Final[list[str]] = ["S256"]
+_ACR_VALUES_SUPPORTED: Final[list[str]] = ["0"]
+_RESPONSE_MODES_SUPPORTED: Final[list[str]] = [
+    "query",
+    "fragment",
+    "form_post",
+]
+_PROMPT_VALUES_SUPPORTED: Final[list[str]] = ["none", "login", "consent"]
+
+
 class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
     """
     DOT discovery view augmented with OIDC Discovery 1.0 §3 RECOMMENDED
@@ -113,6 +146,30 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         tos_uri = getattr(settings, _KEY_TOS_URI, "") or ""
         if tos_uri:
             data["op_tos_uri"] = tos_uri
+        # PKCE / ACR / silent-auth feature flags — emitted
+        # unconditionally because each one mirrors a concrete
+        # behaviour already implemented in the authorize / token
+        # path (see the constants above for the cross-reference).
+        data["code_challenge_methods_supported"] = list(
+            _CODE_CHALLENGE_METHODS_SUPPORTED
+        )
+        data["acr_values_supported"] = list(_ACR_VALUES_SUPPORTED)
+        data["response_modes_supported"] = list(_RESPONSE_MODES_SUPPORTED)
+        data["prompt_values_supported"] = list(_PROMPT_VALUES_SUPPORTED)
+        # OIDC Core 1.0 §5.5 ``claims`` request parameter is honoured
+        # by ``_select_requested_id_token_claims`` on the validator
+        # (used to narrow the id_token and to inject ``acr=0``); RPs
+        # that send it depend on this flag to decide whether the
+        # request will be respected or silently dropped.
+        data["claims_parameter_supported"] = True
+        # JAR (RFC 9101 ``request`` JWT) and PAR (RFC 9126 ``request_uri``)
+        # are NOT implemented. OIDC Discovery 1.0 §3 requires the
+        # flags to default to ``false`` when absent, but several RP
+        # libraries fail closed when the keys are missing entirely;
+        # emit them explicitly so RP-side preflight logic does not
+        # fall over.
+        data["request_parameter_supported"] = False
+        data["request_uri_parameter_supported"] = False
         # Mutate the upstream ``JsonResponse`` in place rather than
         # constructing a fresh one. ``JsonResponse(data)`` would
         # silently drop every header DOT or downstream middleware
