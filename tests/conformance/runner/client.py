@@ -144,13 +144,25 @@ def poll_module(
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        resp = session.get(
-            f"{SUITE_URL}/api/info/{module_id}",
-            verify=False,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        body = resp.json()
+        try:
+            resp = session.get(
+                f"{SUITE_URL}/api/info/{module_id}",
+                verify=False,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        except requests.RequestException as exc:
+            # A transient blip on the suite (Spring GC pause,
+            # docker-network hiccup, brief SSL renegotiation) during
+            # the 6-minute polling window must not crash the whole
+            # runner. Symmetric with ``wait_for_suite_ready`` which
+            # already absorbs ``RequestException`` against the same
+            # endpoint family. A genuine suite outage falls out as
+            # TIMEOUT once the deadline elapses.
+            logger.warning("poll %s: %s; retrying", module_id, exc)
+            time.sleep(poll_interval_s)
+            continue
         status = body.get("status", "")
         if status not in {"CREATED", "WAITING", "RUNNING"}:
             return body.get("result") or status or "UNKNOWN"
