@@ -20,6 +20,15 @@ Both are paired with a ``manage.py check`` integration assertion: it
 is the integration test that historically protects E001 from a
 regression where ``register`` is dropped and the check becomes
 unreachable.
+
+Warning-level checks covered here:
+
+* **W001** — masked-fragment secret logging enabled with
+  ``DEBUG=False``. Production-shaped log streams should not carry
+  token head/tail bytes.
+
+* **W002** — half-wired JWT mode: default format and dispatcher
+  generator agree on neither ``"jwt"`` nor ``"opaque"`` together.
 """
 
 from __future__ import annotations
@@ -270,3 +279,148 @@ class TestChecksBootstrapPaths(TestCase):
         )
         # And the check returns [] (deferred), not a hard error.
         self.assertEqual(msgs, [])
+
+
+class TestMaskedSecretLoggingInProductionCheck(TestCase):
+    """W001 fires when masked-secret logging is on in production."""
+
+    def test_w001_clean_when_setting_unset(self) -> None:
+        """Default posture: ``<redacted>`` everywhere → no warning."""
+        from allianceauth_oidc.checks import (
+            check_masked_secret_logging_in_production,
+        )
+
+        # Explicitly drive DEBUG=False to make sure the gate fires
+        # only on the masked-logging flag, not on DEBUG alone.
+        with override_settings(DEBUG=False):
+            msgs = check_masked_secret_logging_in_production(None)
+        self.assertEqual(msgs, [])
+
+    def test_w001_clean_when_debug_true(self) -> None:
+        """
+        Masked logging IS the documented development posture; with
+        ``DEBUG=True`` the operator gets head/tail fragments in a
+        local development context where that exposure is acceptable.
+        """
+        from allianceauth_oidc.checks import (
+            check_masked_secret_logging_in_production,
+        )
+
+        with override_settings(
+            DEBUG=True,
+            ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True,
+        ):
+            msgs = check_masked_secret_logging_in_production(None)
+        self.assertEqual(msgs, [])
+
+    def test_w001_warning_when_masked_logging_and_no_debug(self) -> None:
+        """The exposure case: production-shaped DEBUG=False + masked."""
+        from allianceauth_oidc.checks import (
+            W001_ID,
+            check_masked_secret_logging_in_production,
+        )
+
+        with override_settings(
+            DEBUG=False,
+            ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True,
+        ):
+            msgs = check_masked_secret_logging_in_production(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W001_ID)
+        # Severity is Warning, not Error — the trade-off is a
+        # documented operator choice.
+        self.assertEqual(msg.level, checks.WARNING)
+
+    def test_manage_check_does_not_raise_with_w001(self) -> None:
+        """
+        Warning-level checks do not abort ``manage.py check``. This
+        contract is the whole point of ``Warning`` vs ``Error`` —
+        regressing it (e.g. by setting level=ERROR) would block
+        production deploys for an operator-acceptable trade-off.
+        """
+        out = StringIO()
+        with override_settings(
+            DEBUG=False,
+            ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True,
+        ):
+            # No SystemCheckError; the W001 message is printed but
+            # the command exits 0.
+            call_command("check", stdout=out, stderr=out)
+        self.assertIn("allianceauth_oidc.W001", out.getvalue())
+
+
+class TestJwtModeWiringCheck(TestCase):
+    """W002 fires on half-wired JWT access-token mode."""
+
+    def _reload_dot(self) -> None:
+        oauth2_settings.reload()
+        self.addCleanup(oauth2_settings.reload)
+
+    def test_w002_clean_when_jwt_disabled(self) -> None:
+        """Default posture: opaque tokens, no dispatcher → no warning."""
+        from allianceauth_oidc.checks import check_jwt_mode_wiring
+
+        cfg = _override_oauth2_provider(
+            ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="opaque",
+        )
+        cfg.pop("ACCESS_TOKEN_GENERATOR", None)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            self._reload_dot()
+            msgs = check_jwt_mode_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_w002_clean_when_jwt_fully_wired(self) -> None:
+        """Default jwt + dispatcher generator → no warning."""
+        from allianceauth_oidc.checks import check_jwt_mode_wiring
+
+        cfg = _override_oauth2_provider(
+            ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="jwt",
+            ACCESS_TOKEN_GENERATOR=(
+                "allianceauth_oidc.tokens.dispatching_access_token_generator"
+            ),
+        )
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            self._reload_dot()
+            msgs = check_jwt_mode_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_w002_warning_when_default_jwt_but_no_dispatcher(self) -> None:
+        """default=jwt + generator missing → silent opaque fallback."""
+        from allianceauth_oidc.checks import (
+            W002_ID,
+            check_jwt_mode_wiring,
+        )
+
+        cfg = _override_oauth2_provider(
+            ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="jwt",
+        )
+        cfg.pop("ACCESS_TOKEN_GENERATOR", None)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            self._reload_dot()
+            msgs = check_jwt_mode_wiring(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W002_ID)
+        self.assertEqual(msg.level, checks.WARNING)
+
+    def test_w002_warning_when_dispatcher_but_default_opaque(self) -> None:
+        """Generator wired but default=opaque → global default no-op."""
+        from allianceauth_oidc.checks import (
+            W002_ID,
+            check_jwt_mode_wiring,
+        )
+
+        cfg = _override_oauth2_provider(
+            ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="opaque",
+            ACCESS_TOKEN_GENERATOR=(
+                "allianceauth_oidc.tokens.dispatching_access_token_generator"
+            ),
+        )
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            self._reload_dot()
+            msgs = check_jwt_mode_wiring(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W002_ID)
+        self.assertEqual(msg.level, checks.WARNING)

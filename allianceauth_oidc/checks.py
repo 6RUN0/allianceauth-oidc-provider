@@ -26,6 +26,28 @@ the README references the migration path.
 Severity is intentionally ``Error`` for all three (per plan v5
 m-V3-1): demoting any of them to ``Warning`` would let CI and
 startup succeed and crash much later in production.
+
+In addition, two ``Warning``-level checks surface misconfigurations
+that are not fatal but routinely cause incident-class confusion:
+
+* **W001** — ``ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True`` while
+  ``DEBUG=False``. Masked-fragment logging is a development aid;
+  enabling it in a production-shaped environment leaks identifiable
+  prefixes/suffixes of access tokens, refresh tokens, and client
+  secrets into the log stream. Warning (not Error) because some
+  operators run in an isolated staging environment with
+  ``DEBUG=False`` and intentionally accept this trade-off.
+
+* **W002** — half-wired JWT mode: either
+  ``ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`` without
+  ``ACCESS_TOKEN_GENERATOR`` pointing at our dispatcher (JWT mode
+  silently inactive), or the dispatcher wired without setting the
+  default format to ``'jwt'`` (per-app override still works but the
+  global default does not). Warning (not Error) because both halves
+  individually still permit a working ``'opaque'`` fallback —
+  operators should see this on ``manage.py check`` but not be
+  blocked from deploying while they finish the second half of the
+  opt-in.
 """
 
 from __future__ import annotations
@@ -46,6 +68,18 @@ logger = logging.getLogger(f"extensions.{__name__}")
 E001_ID = "allianceauth_oidc.E001"
 E002_ID = "allianceauth_oidc.E002"
 E003_ID = "allianceauth_oidc.E003"
+W001_ID = "allianceauth_oidc.W001"
+W002_ID = "allianceauth_oidc.W002"
+
+# Dotted-path the W002 check compares ``ACCESS_TOKEN_GENERATOR``
+# against. Kept as a module-level constant so the same string is
+# used by the check, the warning hint, and the runtime advisory in
+# ``apps._check_jwt_wiring`` — drift between the three is the
+# canonical "I followed the README but JWT mode still off" footgun
+# this check exists to catch.
+_DISPATCHING_GENERATOR_PATH: str = (
+    "allianceauth_oidc.tokens.dispatching_access_token_generator"
+)
 
 # Bootstrap-tolerant exception set. Narrower than a bare ``Exception``
 # (which would mask coding bugs and post-migration schema mismatches),
@@ -252,3 +286,152 @@ def _e003(expected: str, configured: Any) -> checks.Error:
             f"{expected!r} in your Django settings."
         ),
     )
+
+
+@checks.register(checks.Tags.security)
+def check_masked_secret_logging_in_production(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W001`` (Warning) when masked-fragment
+    secret logging is enabled in a production-shaped environment
+    (``DEBUG=False``).
+
+    Masked-fragment logging (``"he…il"`` style) is a development aid
+    for diagnosing "wrong secret was sent" without revealing the
+    full token. In production it leaks identifiable head/tail bytes
+    of access tokens, refresh tokens, and client secrets into log
+    streams that often outlive the secrets they reference. The
+    posture is "off in prod"; this check makes the deviation
+    visible on every ``manage.py check`` run.
+
+    Severity is **Warning** (not Error) because the trade-off is
+    legitimate in some operator contexts — isolated staging
+    environments with restricted log access, short-retention audit
+    pipelines, etc. The check exists to surface the choice, not to
+    veto it.
+    """
+    if not getattr(settings, "ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS", False):
+        return []
+    # ``DEBUG=True`` is the documented development posture; masked
+    # logging is safe there. ``DEBUG=False`` means the operator
+    # built a production-shaped image, and that is when the
+    # head/tail leak becomes a real exposure.
+    if getattr(settings, "DEBUG", False):
+        return []
+    return [
+        checks.Warning(
+            (
+                "ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True with "
+                "DEBUG=False — masked-fragment logging leaks "
+                "head/tail bytes of access tokens, refresh tokens, "
+                "and client secrets into production log streams."
+            ),
+            id=W001_ID,
+            hint=(
+                "Set ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS = False "
+                "(or remove the setting) in production. The default "
+                "redacts secrets to '<redacted>'."
+            ),
+        )
+    ]
+
+
+@checks.register(checks.Tags.compatibility)
+def check_jwt_mode_wiring(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W002`` (Warning) when JWT access-token
+    mode is half-wired.
+
+    Two ``OAUTH2_PROVIDER`` keys jointly activate RFC 9068 JWT
+    access tokens: ``ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT
+    = 'jwt'`` AND ``ACCESS_TOKEN_GENERATOR =
+    'allianceauth_oidc.tokens.dispatching_access_token_generator'``.
+    Two real misconfigurations have surfaced in operator deploys:
+
+    1. Default-format set to ``'jwt'`` but generator not pointing
+       at the dispatcher. Effective behaviour: opaque tokens with
+       no warning surface (per-app override still works, so the
+       state is technically valid but silent).
+    2. Generator pointing at the dispatcher but default-format
+       still ``'opaque'``. Effective behaviour: per-app override
+       works, but the global default does nothing.
+
+    Both produce confusing "I followed the docs and JWT still isn't
+    on" support tickets. Warning (not Error) because both halves
+    individually permit a working opaque fallback — operators see
+    the diagnostic on ``manage.py check`` but are not blocked.
+
+    Wrapped in the bootstrap-exception catch because
+    ``oauth2_settings.ACCESS_TOKEN_GENERATOR`` triggers DOT's
+    ``perform_import``, which can raise ``ImportError`` if the
+    dotted-path is bogus or the app registry is mid-boot.
+    """
+    try:
+        from oauth2_provider.settings import oauth2_settings
+
+        from .tokens import dispatching_access_token_generator
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.W002 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+
+    default_format = oauth2_settings.user_settings.get(
+        "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT", "opaque"
+    )
+    try:
+        actual_generator = oauth2_settings.ACCESS_TOKEN_GENERATOR
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.W002 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    is_dispatcher = actual_generator is dispatching_access_token_generator
+
+    if default_format == "jwt" and not is_dispatcher:
+        return [
+            checks.Warning(
+                (
+                    "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="
+                    "'jwt' but OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] "
+                    "is not the AllianceAuth dispatcher. JWT mode "
+                    "will NOT be active for the global default; "
+                    "per-app overrides still work."
+                ),
+                id=W002_ID,
+                hint=(
+                    "Set OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "
+                    f"{_DISPATCHING_GENERATOR_PATH!r}."
+                ),
+            )
+        ]
+    if default_format != "jwt" and is_dispatcher:
+        return [
+            checks.Warning(
+                (
+                    "OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] points "
+                    "at the AllianceAuth dispatcher but "
+                    "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT is "
+                    f"{default_format!r}. The global default issues "
+                    "opaque tokens; only per-app overrides activate "
+                    "JWT mode."
+                ),
+                id=W002_ID,
+                hint=(
+                    "Set ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT "
+                    "= 'jwt' in OAUTH2_PROVIDER to activate JWT mode "
+                    "globally, or unset ACCESS_TOKEN_GENERATOR if the "
+                    "per-app override is intentional."
+                ),
+            )
+        ]
+    return []
