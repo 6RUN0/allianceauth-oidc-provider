@@ -14,6 +14,7 @@ suites complement each other; do not collapse them.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -229,62 +230,87 @@ class TestEmailClaim(SimpleTestCase):
             out = builder.build()
         self.assertIs(True, out["email_verified"])
 
-    def test_force_true_overrides_settings_default_false(self):
-        # Escape hatch: operator forces verified=True even though AA's
-        # default would emit False. Use case: users imported from a
-        # trusted external IdP that already verified addresses.
-        builder = ClaimsBuilder(
-            user=_user(email="alice@example.test"),
-            settings=_settings(
-                email_verified_default=False,
-                force_email_verified=True,
+    def test_force_email_verified_matrix(self):
+        """
+        Sweep the force_email_verified x default x placeholder matrix.
+
+        Pins each branch of the escape-hatch decision tree:
+
+        * ``force_true_overrides_default_false`` — operator
+          forces verified=True even though AA's default emits
+          False. Use case: users imported from a trusted
+          external IdP.
+        * ``force_true_overrides_placeholder`` — Force takes
+          precedence over the placeholder check; that IS the
+          point of an escape hatch.
+        * ``force_false_overrides_default_true`` — site policy
+          distrusts AA's confirmation workflow and wants every
+          RP to re-verify on its own.
+        * ``force_none_uses_auto_decision_tree`` — sanity pin
+          on the default no-op: ``None`` leaves the placeholder
+          + REGISTRATION_VERIFY_EMAIL pipeline in charge.
+        """
+        cases: tuple[
+            tuple[str, bool | None, bool, bool | None, str, bool], ...
+        ] = (
+            (
+                "force_true_overrides_default_false",
+                True,
+                False,
+                None,
+                "alice@example.test",
+                True,
+            ),
+            (
+                "force_true_overrides_placeholder",
+                True,
+                True,
+                True,
+                "bob_42@noreply.example",
+                True,
+            ),
+            (
+                "force_false_overrides_default_true",
+                False,
+                True,
+                None,
+                "alice@example.test",
+                False,
+            ),
+            (
+                "force_none_uses_auto_decision_tree",
+                None,
+                True,
+                None,
+                "alice@example.test",
+                True,
             ),
         )
-        self.assertIs(True, builder.build()["email_verified"])
-
-    def test_force_true_overrides_placeholder_detection(self):
-        # Force takes precedence over the placeholder check too — that
-        # is the whole point of an escape hatch. Operator who flips
-        # this on accepts the trade-off described in the security
-        # model.
-        with patch(
-            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
-            return_value=True,
-        ):
-            builder = ClaimsBuilder(
-                user=_user(email="bob_42@noreply.example"),
-                settings=_settings(force_email_verified=True),
-            )
-            out = builder.build()
-        self.assertIs(True, out["email_verified"])
-
-    def test_force_false_overrides_settings_default_true(self):
-        # Mirror direction: force=False on a strict site that AA does
-        # verify. Use case: site policy that distrusts AA's
-        # confirmation workflow (e.g. self-service email reset is too
-        # easy) and wants every RP to re-verify on its own.
-        builder = ClaimsBuilder(
-            user=_user(email="alice@example.test"),
-            settings=_settings(
-                email_verified_default=True,
-                force_email_verified=False,
-            ),
-        )
-        self.assertIs(False, builder.build()["email_verified"])
-
-    def test_force_none_falls_through_to_auto_decision_tree(self):
-        # Sanity: ``force_email_verified=None`` is the default and
-        # leaves the placeholder + REGISTRATION_VERIFY_EMAIL pipeline
-        # in charge. The other tests in this class already exercise
-        # both branches; this one pins ``None`` itself as the no-op.
-        builder = ClaimsBuilder(
-            user=_user(email="alice@example.test"),
-            settings=_settings(
-                email_verified_default=True,
-                force_email_verified=None,
-            ),
-        )
-        self.assertIs(True, builder.build()["email_verified"])
+        for (
+            label,
+            force,
+            default,
+            placeholder_returns,
+            email,
+            expected,
+        ) in cases:
+            placeholder_ctx: contextlib.AbstractContextManager[object]
+            if placeholder_returns is None:
+                placeholder_ctx = contextlib.nullcontext()
+            else:
+                placeholder_ctx = patch(
+                    "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
+                    return_value=placeholder_returns,
+                )
+            with self.subTest(case=label), placeholder_ctx:
+                out = ClaimsBuilder(
+                    user=_user(email=email),
+                    settings=_settings(
+                        email_verified_default=default,
+                        force_email_verified=force,
+                    ),
+                ).build()
+                self.assertIs(expected, out["email_verified"])
 
 
 class TestPictureClaim(SimpleTestCase):
