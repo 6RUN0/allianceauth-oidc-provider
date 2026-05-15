@@ -619,80 +619,59 @@ class TestPKCEAttackVectors(OIDCTestCase):
         self.assertEqual(302, resp.status_code)
         return parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
 
-    def test_exchange_without_verifier_when_challenge_was_set(self):
+    def test_exchange_with_bad_pkce_verifier_rejected_sweep(self):
         """
-        RFC 7636 §4.6: when ``code_challenge`` was sent on authorize,
-        the token request MUST include ``code_verifier``. Omitting it
-        must yield ``invalid_grant``.
+        Sweep of PKCE verifier shapes that must reject.
+
+        RFC 7636 §4.6 requires the token request to present a
+        ``code_verifier`` that hashes (S256) to the registered
+        ``code_challenge``. Each row exercises a distinct failure
+        mode and must rule the same ``invalid_grant`` /
+        ``invalid_request`` error class:
+
+        * ``omitted`` — verifier missing entirely. RFC §4.6
+          mandates rejection when a challenge was sent.
+        * ``wrong_hash`` — well-formed verifier whose S256 does
+          not match the registered challenge (drawn as a second
+          fresh pair, 256-bit collision space).
+        * ``malformed_short`` — verifier shorter than the §4.1
+          43-character minimum. Pins that a length-shortcut
+          cannot bypass the hash check.
+
+        A fresh ``(challenge, code)`` pair per row keeps the
+        single-use-code semantics independent of the verifier
+        invariant under test.
         """
         creds = self._pkce_app()
-        _, challenge = self.make_pkce_pair()
-        code = self._issue_code_with_challenge(
-            creds, challenge=challenge, state="pkce-omit-verifier"
-        )
-
-        resp = self.exchange_code_with_verifier(
-            code=code,
-            verifier=None,
-            client_id=creds.client_id,
-            client_secret=creds.client_secret,
-        )
-        self.assertIn(resp.status_code, (400, 401))
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
-
-    def test_exchange_with_wrong_verifier(self):
-        """
-        RFC 7636 §4.6: a verifier that does NOT hash (S256) to the
-        registered challenge must be rejected. Drawing a second fresh
-        PKCE pair makes the mismatch overwhelmingly likely (the
-        challenge space is 256 bits).
-        """
-        creds = self._pkce_app()
-        _, challenge = self.make_pkce_pair()
-        wrong_verifier, _ = self.make_pkce_pair()
-        code = self._issue_code_with_challenge(
-            creds, challenge=challenge, state="pkce-wrong-verifier"
-        )
-
-        resp = self.exchange_code_with_verifier(
-            code=code,
-            verifier=wrong_verifier,
-            client_id=creds.client_id,
-            client_secret=creds.client_secret,
-        )
-        self.assertIn(resp.status_code, (400, 401))
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
-
-    def test_exchange_with_malformed_verifier_rejected(self):
-        """
-        A verifier shorter than RFC 7636 §4.1's 43-character minimum is
-        malformed; DOT rejects it via the same ``invalid_grant`` path
-        as a wrong-but-well-formed verifier. Pins that a length-shortcut
-        does not bypass the hash check.
-        """
-        creds = self._pkce_app()
-        _, challenge = self.make_pkce_pair()
-        code = self._issue_code_with_challenge(
-            creds, challenge=challenge, state="pkce-malformed-verifier"
-        )
-
-        resp = self.exchange_code_with_verifier(
-            code=code,
-            verifier="too-short",
-            client_id=creds.client_id,
-            client_secret=creds.client_secret,
-        )
-        self.assertIn(resp.status_code, (400, 401))
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
+        for label, verifier_factory in (
+            ("omitted", lambda: None),
+            (
+                "wrong_hash",
+                lambda: self.make_pkce_pair()[0],
+            ),
+            ("malformed_short", lambda: "too-short"),
+        ):
+            with self.subTest(verifier=label):
+                _, challenge = self.make_pkce_pair()
+                code = self._issue_code_with_challenge(
+                    creds,
+                    challenge=challenge,
+                    state=f"pkce-{label}-verifier",
+                )
+                resp = self.exchange_code_with_verifier(
+                    code=code,
+                    verifier=verifier_factory(),
+                    client_id=creds.client_id,
+                    client_secret=creds.client_secret,
+                )
+                self.assertIn(resp.status_code, (400, 401))
+                self.assertOAuthError(
+                    resp,
+                    expected_error={
+                        "invalid_grant",
+                        "invalid_request",
+                    },
+                )
 
     def test_authorize_without_challenge_when_pkce_required(self):
         """
@@ -837,71 +816,58 @@ class TestRedirectURIExactMatch(OIDCTestCase):
     spoofing. Each must reject as firmly as a wholly-different URI.
     """
 
-    def test_path_suffix_rejected(self) -> None:
-        """Registered ``http://localhost/redir/`` ≠ ``http://localhost/redir/evil``."""
-        self.grant_oidc_access(self.user1)
-        code = self.authorize_to_code(self.user1, state="suffix-redir")
-        resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri=REDIRECT_URI + "evil",
-            expected_status=(400, 401),
-        )
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
+    def test_near_miss_redirect_uri_mutations_rejected(self) -> None:
+        """
+        Sweep of near-miss redirect_uri mutations on exchange.
 
-    def test_extra_query_param_rejected(self) -> None:
-        """Registered URI does not carry query — exchange with query MUST reject."""
-        self.grant_oidc_access(self.user1)
-        code = self.authorize_to_code(self.user1, state="query-redir")
-        resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri=REDIRECT_URI + "?steal=1",
-            expected_status=(400, 401),
-        )
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
+        RFC 6749 §3.1.2.2 + §4.1.3 mandate simple string
+        comparison — no substring / prefix / case-insensitive /
+        parameter-tolerant matching. Each row pins one
+        near-miss attack vector:
 
-    def test_fragment_in_redirect_uri_rejected(self) -> None:
-        """
-        RFC 6749 §3.1.2: ``redirect_uri`` MUST NOT include a fragment.
-        Even if DOT happens to normalise it away, the exchange step
-        must reject the request — silent normalisation hides bugs.
-        """
-        self.grant_oidc_access(self.user1)
-        code = self.authorize_to_code(self.user1, state="frag-redir")
-        resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri=REDIRECT_URI + "#frag",
-            expected_status=(400, 401),
-        )
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
+        * ``path_suffix`` — appending a segment must NOT
+          prefix-match (``…/redir/`` ≠ ``…/redir/evil``).
+        * ``extra_query`` — registered URI does not carry
+          query; exchange with query MUST reject.
+        * ``fragment`` — RFC 6749 §3.1.2 forbids fragments in
+          redirect_uri. Even if DOT normalises it away, the
+          exchange step must reject — silent normalisation
+          hides bugs.
+        * ``scheme_upgrade`` — registered scheme is ``http``;
+          presenting the same authority with ``https`` MUST
+          reject (string match, not protocol-aware).
 
-    def test_scheme_upgrade_rejected(self) -> None:
-        """
-        Registered scheme is ``http``; presenting the same authority
-        with ``https`` MUST reject — string match, not protocol-aware
-        comparison.
+        Each iteration draws a fresh code; reusing one across
+        rows would conflate DOT's single-use-code semantics
+        with the redirect_uri-match invariant under test.
         """
         self.grant_oidc_access(self.user1)
-        code = self.authorize_to_code(self.user1, state="scheme-redir")
-        # Replace only the scheme on the registered URI.
-        https_variant = REDIRECT_URI.replace("http://", "https://", 1)
-        resp = self.exchange_code_for_token(
-            code=code,
-            redirect_uri=https_variant,
-            expected_status=(400, 401),
+        cases: tuple[tuple[str, str], ...] = (
+            ("path_suffix", REDIRECT_URI + "evil"),
+            ("extra_query", REDIRECT_URI + "?steal=1"),
+            ("fragment", REDIRECT_URI + "#frag"),
+            (
+                "scheme_upgrade",
+                REDIRECT_URI.replace("http://", "https://", 1),
+            ),
         )
-        self.assertOAuthError(
-            resp,
-            expected_error={"invalid_grant", "invalid_request"},
-        )
+        for label, mutated_redirect in cases:
+            with self.subTest(mutation=label):
+                code = self.authorize_to_code(
+                    self.user1, state=f"{label}-redir"
+                )
+                resp = self.exchange_code_for_token(
+                    code=code,
+                    redirect_uri=mutated_redirect,
+                    expected_status=(400, 401),
+                )
+                self.assertOAuthError(
+                    resp,
+                    expected_error={
+                        "invalid_grant",
+                        "invalid_request",
+                    },
+                )
 
 
 class TestRefreshScopeBoundary(OIDCTestCase):
