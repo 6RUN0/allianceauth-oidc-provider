@@ -70,6 +70,15 @@ TEST_RUNTIME_DEPS = [
     "parameterized>=0.9",
     "jwcrypto",
     "requests>=2.32",
+    # tests/test_metrics.py top-level-imports ``prometheus_client`` to
+    # measure the real Counter / Histogram / Gauge side effects from
+    # allianceauth_oidc._metrics; without the dep, AA4 test discovery
+    # crashes with ``ModuleNotFoundError`` before any test runs. The
+    # ``[metrics]`` extra is not pulled in by ``-e .``, and AA 4.13.x
+    # does not list ``django-prometheus`` transitively, so the AA4
+    # matrix must provision it the same way the dev / AA5 environments
+    # already do (see ``[dependency-groups].dev`` in pyproject.toml).
+    "django-prometheus>=2.3",
 ]
 
 
