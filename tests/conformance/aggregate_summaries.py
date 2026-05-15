@@ -40,7 +40,16 @@ def _collect_results(
     results: list[ModuleResult] = []
     skipped_seen: set[str] = set()
     for path in sorted(results_dir.glob("*.json")):
-        data = json.loads(path.read_text())
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            # A per-module run killed mid-write (SIGKILL, OOM, abrupt
+            # container teardown) leaves a partial JSON file. The
+            # per-module orchestrator is precisely the failure mode
+            # this aggregator must survive — skip the malformed file
+            # with a stderr note and keep walking the directory.
+            sys.stderr.write(f"skipping malformed {path}: {exc}\n")
+            continue
         results.extend(
             ModuleResult(
                 name=entry["name"],

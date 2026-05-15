@@ -213,7 +213,21 @@ def run_module(
             status,
         )
         return ModuleResult(name=module_name, test_id="", result="ERROR")
-    module_id = create_resp.json()["id"]
+    # Defensive id-extraction. ``POST /api/runner`` historically
+    # returned ``{"id": "..."}``; the orchestrator's plan-creation
+    # path already accepts the ``"_id"`` fallback for the same
+    # suite-side drift. Falling back here keeps the runner aligned
+    # — and surfaces a missing id as a logged ERROR instead of a
+    # raw ``KeyError`` that would crash the whole plan.
+    payload = create_resp.json()
+    module_id = payload.get("id") or payload.get("_id")
+    if not module_id:
+        logger.warning(
+            "could not start %s: response missing 'id' / '_id': %r",
+            module_name,
+            payload,
+        )
+        return ModuleResult(name=module_name, test_id="", result="ERROR")
     logger.info("started %s -> %s", module_name, module_id)
     result = poll_module(session, module_id=module_id)
     return ModuleResult(name=module_name, test_id=module_id, result=result)
