@@ -13,7 +13,12 @@ import json
 import sys
 from typing import TYPE_CHECKING
 
-from .config import FAIL_RESULTS, PASS_RESULTS, WARN_RESULTS, ModuleResult
+from .config import (
+    PASS_RESULTS,
+    TERMINAL_FAIL_RESULTS,
+    WARN_RESULTS,
+    ModuleResult,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -34,18 +39,18 @@ def _bucket_results(
     about. Single source of truth so ``emit_summary`` and
     ``write_summary_json`` count identically.
     """
-    fail_states = FAIL_RESULTS | {"TIMEOUT"}
     passed = [r for r in results if r.result in PASS_RESULTS]
     warned = [r for r in results if r.result in WARN_RESULTS]
     failed_real = [
         r
         for r in results
-        if r.result in fail_states and r.name not in expected_failures
+        if r.result in TERMINAL_FAIL_RESULTS
+        and r.name not in expected_failures
     ]
     xfail = [
         r
         for r in results
-        if r.result in fail_states and r.name in expected_failures
+        if r.result in TERMINAL_FAIL_RESULTS and r.name in expected_failures
     ]
     xpass = [r for r in passed if r.name in expected_failures]
     return passed, warned, failed_real, xfail, xpass
@@ -80,13 +85,21 @@ def emit_summary(
         results, expected_failures
     )
 
+    # Bucketing is by module name, not by ``ModuleResult`` identity:
+    # ``ModuleResult`` is a non-frozen dataclass with field-wise
+    # ``__eq__``, so two results that happened to share name/test_id/
+    # result/log_excerpt would collide under value equality. Name is
+    # the stable per-module key the suite itself addresses.
+    xfail_names = {r.name for r in xfail}
+    xpass_names = {r.name for r in xpass}
     sys.stdout.write("\n=== Conformance summary ===\n")
     for r in results:
-        marker = r.result
-        if r in xfail:
+        if r.name in xfail_names:
             marker = "XFAIL"
-        elif r in xpass:
+        elif r.name in xpass_names:
             marker = "XPASS"
+        else:
+            marker = r.result
         sys.stdout.write(f"{marker:<8} {r.name}  ({r.test_id})\n")
     for name in skipped_filtered:
         sys.stdout.write(f"{'FILTERED':<8} {name}\n")

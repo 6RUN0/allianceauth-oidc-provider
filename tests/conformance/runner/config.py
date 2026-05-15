@@ -86,6 +86,13 @@ PLAN_VARIANT_DEFAULTS: dict[str, dict[str, str]] = {
 PASS_RESULTS: frozenset[str] = frozenset({"PASSED", "REVIEW"})
 WARN_RESULTS: frozenset[str] = frozenset({"WARNING"})
 FAIL_RESULTS: frozenset[str] = frozenset({"FAILED", "SKIPPED", "ERROR"})
+# Failure classification used by the summary layer: ``FAIL_RESULTS``
+# plus the runner-side ``"TIMEOUT"`` pseudo-code emitted by
+# ``client.poll_module`` when a module never leaves the RUNNING state
+# within the deadline. Hoisted out of ``summary._bucket_results`` so
+# the value-set lives next to ``FAIL_RESULTS`` and is not rebuilt on
+# every summary call.
+TERMINAL_FAIL_RESULTS: frozenset[str] = FAIL_RESULTS | frozenset({"TIMEOUT"})
 
 
 @dataclass
