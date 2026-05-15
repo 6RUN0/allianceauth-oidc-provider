@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Final
 
+from django.conf import settings
 from oauth2_provider.views.oidc import ConnectDiscoveryInfoView
 
 if TYPE_CHECKING:
@@ -41,6 +42,18 @@ _GRANT_TYPES_SUPPORTED: Final[list[str]] = [
 # aggregated / distributed forms involve external claim providers
 # this provider does not implement.
 _CLAIM_TYPES_SUPPORTED: Final[list[str]] = ["normal"]
+
+
+# OIDC Discovery 1.0 §3 OPTIONAL provider-information URLs. Both are
+# operator-provided; emit them only when the corresponding Django
+# setting is non-empty so the discovery JSON stays minimal by default
+# and the GDPR / NIS2 compliance posture is opt-in. Reading via
+# ``getattr(settings, ...)`` rather than threading through
+# ``OIDCSettings`` because these are one-shot, request-path,
+# string-only knobs — the snapshot cache is overkill for two strings
+# that change at the same cadence as the rest of ``settings.py``.
+_KEY_POLICY_URI: Final[str] = "ALLIANCEAUTH_OIDC_POLICY_URI"
+_KEY_TOS_URI: Final[str] = "ALLIANCEAUTH_OIDC_TOS_URI"
 
 
 # OIDC Core 1.0 §3 — the only response_type this provider implements.
@@ -87,6 +100,19 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         # flag promises ``sid``-scoped logout, which the AS reserves
         # for feature v2.
         data["backchannel_logout_supported"] = True
+        # OIDC Discovery 1.0 §3 OPTIONAL ``op_policy_uri`` /
+        # ``op_tos_uri``: links to the AS's privacy policy and
+        # terms-of-service pages. Several compliance frameworks
+        # (GDPR Art. 13 transparency, NIS2 incident reporting)
+        # require RPs to surface these to end users; advertising
+        # them here lets RP-side login pages auto-link without
+        # static configuration on every relying party.
+        policy_uri = getattr(settings, _KEY_POLICY_URI, "") or ""
+        if policy_uri:
+            data["op_policy_uri"] = policy_uri
+        tos_uri = getattr(settings, _KEY_TOS_URI, "") or ""
+        if tos_uri:
+            data["op_tos_uri"] = tos_uri
         # Mutate the upstream ``JsonResponse`` in place rather than
         # constructing a fresh one. ``JsonResponse(data)`` would
         # silently drop every header DOT or downstream middleware

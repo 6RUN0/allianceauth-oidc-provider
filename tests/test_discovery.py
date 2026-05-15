@@ -22,6 +22,7 @@ import base64
 import json
 from typing import Any
 
+from django.test import override_settings
 from jwcrypto import jwk, jwt
 
 from ._oidc_testcase import (
@@ -188,6 +189,70 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         verified = jwt.JWT(jwt=tokens["id_token"], key=keyset)
         claims = json.loads(verified.claims)
         self.assertEqual(nonce, claims.get("nonce"))
+
+
+class TestDiscoveryPolicyAndTosUris(OIDCTestCase):
+    """
+    OIDC Discovery 1.0 §3 OPTIONAL ``op_policy_uri`` / ``op_tos_uri``.
+
+    Opt-in via two Django settings — surfaced in the discovery
+    document when set, omitted otherwise. Tested four ways:
+    both unset (default posture), both set, only one set,
+    explicit empty string (treated as unset).
+    """
+
+    def _discovery(self) -> dict[str, Any]:
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        return json.loads(resp.content.decode("utf-8"))
+
+    def test_neither_key_present_by_default(self) -> None:
+        doc = self._discovery()
+        self.assertNotIn("op_policy_uri", doc)
+        self.assertNotIn("op_tos_uri", doc)
+
+    @override_settings(
+        ALLIANCEAUTH_OIDC_POLICY_URI="https://auth.example.org/privacy/",
+        ALLIANCEAUTH_OIDC_TOS_URI="https://auth.example.org/tos/",
+    )
+    def test_both_keys_present_when_both_set(self) -> None:
+        doc = self._discovery()
+        self.assertEqual(
+            "https://auth.example.org/privacy/", doc.get("op_policy_uri")
+        )
+        self.assertEqual(
+            "https://auth.example.org/tos/", doc.get("op_tos_uri")
+        )
+
+    @override_settings(
+        ALLIANCEAUTH_OIDC_POLICY_URI="https://auth.example.org/privacy/",
+    )
+    def test_only_policy_uri_present_when_only_one_set(self) -> None:
+        """
+        Operators may surface only a privacy policy without a
+        terms-of-service page (or vice versa). The two settings are
+        independent — emitting one does not implicitly emit the other.
+        """
+        doc = self._discovery()
+        self.assertEqual(
+            "https://auth.example.org/privacy/", doc.get("op_policy_uri")
+        )
+        self.assertNotIn("op_tos_uri", doc)
+
+    @override_settings(
+        ALLIANCEAUTH_OIDC_POLICY_URI="",
+        ALLIANCEAUTH_OIDC_TOS_URI="",
+    )
+    def test_empty_string_treated_as_unset(self) -> None:
+        """
+        An explicit empty string is operator-equivalent to "not
+        configured" — emitting ``"op_policy_uri": ""`` into the
+        discovery document would mislead RPs into rendering a
+        broken link.
+        """
+        doc = self._discovery()
+        self.assertNotIn("op_policy_uri", doc)
+        self.assertNotIn("op_tos_uri", doc)
 
 
 class TestDiscoveryFieldTypes(OIDCTestCase):
