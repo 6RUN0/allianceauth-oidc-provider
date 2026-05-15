@@ -301,18 +301,16 @@ class TestResponseModeFormPost(OIDCTestCase):
             # never an attacker-controlled URI.
             self.assertTrue(location.startswith(REDIRECT_URI))
 
-    def test_response_modes_supported_absent_from_discovery(self) -> None:
+    def test_response_modes_supported_lists_form_post(self) -> None:
         """
-        documents-gap: discovery does not advertise response_modes.
-
-        When DOT adopts form_post, ``response_modes_supported``
-        will appear in discovery and ``form_post`` will be in the
-        list. Flip the assertion at that point and extend the
-        first test to assert the actual form_post behaviour.
+        ``AllianceAuthDiscoveryView`` advertises the three modes DOT
+        actually implements, including ``form_post``. Pinned by
+        :class:`TestDiscoveryPkceAcrSilentAuthMetadata` in
+        ``test_discovery.py``; this assertion mirrors it from the
+        response-mode test file so a future regression that drops
+        ``form_post`` from one side without the other is caught at
+        both call sites.
         """
-        self.assertNotIn(
-            "response_modes_supported",
-            self.discovery(),
-            "DOT shipped response_modes advert; extend "
-            "test_response_mode_form_post_is_downgraded_or_rejected.",
-        )
+        modes = self.discovery().get("response_modes_supported")
+        self.assertIsInstance(modes, list)
+        self.assertIn("form_post", modes)
