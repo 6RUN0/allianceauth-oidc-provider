@@ -1,6 +1,5 @@
 {
   "oidcc-prompt-none-logged-in": "TIMEOUT — provider implements OIDC Core 1.0 §3.1.2.1 prompt=none silently for skip_authorization=True clients (validate_silent_login/validate_silent_authorization in AllianceAuthOAuth2Validator); suite never reaches the second authorize because HtmlUnit 4.11.1 fails the implicit submit on the FIRST callback. Pinned by tests.test_authorize.TestAuthorizePromptNoneAuthenticated.",
-  "oidcc-server": "TIMEOUT — happy-path code-flow does not finish in 180s on a fresh JVM. Suspect HtmlUnit cold-start + first browser-driven module timing edge.",
   "oidcc-alternate-happy-flow": "TIMEOUT — alternate ordering of code-flow steps; HtmlUnit 4.11.1 upstream issue.",
   "oidcc-prompt-login": "TIMEOUT — prompt=login flow; suite browser thread stalls before token exchange.",
   "oidcc-max-age-1": "TIMEOUT — max_age=1 forces re-auth; suite stops at CheckTokenEndpointHttpStatus200 with status INTERRUPTED; HtmlUnit 4.11.1 upstream.",
@@ -13,7 +12,6 @@
   "oidcc-refresh-token": "TIMEOUT — refresh_token grant; suite never reaches token exchange after the browser flow.",
   "oidcc-scope-email": "TIMEOUT — email scope claims probe; HtmlUnit 4.11.1 upstream.",
   "oidcc-scope-profile": "TIMEOUT — profile scope claims probe; HtmlUnit 4.11.1 upstream.",
-  "oidcc-ensure-request-without-nonce-succeeds-for-code-flow": "TIMEOUT — nonce-less code-flow probe; suite stays in WAITING after the browser flow; HtmlUnit 4.11.1 upstream.",
 
   "oidcc-scope-address": "Suite SKIPPED — address scope not advertised in discovery; provider does not return address claims.",
   "oidcc-scope-phone": "Suite SKIPPED — phone scope not advertised in discovery; provider does not return phone claims.",
