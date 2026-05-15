@@ -599,6 +599,43 @@ class TestResponseTypeRestriction(OIDCTestCase):
         ):
             self.assertNotIn(forbidden, rts)
 
+    def test_missing_response_type_param(self) -> None:
+        """
+        ``response_type`` REQUIRED per RFC 6749 §4.1.1 / OIDC §3.1.2.1.
+
+        When the parameter is OMITTED entirely (not merely unknown,
+        which ``test_state_echoed_on_unsupported_response_type``
+        already pins), the AS MUST NOT 5xx; per RFC 6749 §4.1.2.1 it
+        redirects with ``error=invalid_request`` once redirect_uri
+        and client_id validate. Pinned because the conformance suite
+        module ``oidcc-response-type-missing`` probes this exact
+        path — a unit test makes the diagnostic distinction between
+        a server-side hang and a suite-side HtmlUnit upstream stall.
+        """
+        self.grant_oidc_access(self.user1)
+        self.client.force_login(self.user1)
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                # response_type intentionally OMITTED.
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "rt-missing",
+            },
+        )
+        self.assertLess(resp.status_code, 500)
+        self._assert_no_token_in_fragment(resp)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            _, _, qs = self.parse_redirect(resp, (302, 303))
+            self.assertIn(
+                qs.get("error", [None])[0],
+                self._OAUTH_REJECT_ERRORS,
+                "Missing response_type MUST yield an OAuth error "
+                "code (invalid_request preferred) per RFC 6749 "
+                "§4.1.2.1.",
+            )
+
 
 class TestHostHeaderPoisoning(OIDCTestCase):
     """
