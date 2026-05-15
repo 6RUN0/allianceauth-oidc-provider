@@ -17,6 +17,7 @@
   "oidcc-response-type-missing": "TIMEOUT — verified locally: provider redirects <0.1s with OAuth error (tests.test_authorize_security.TestResponseTypeRestriction.test_missing_response_type_param). Suite-side HtmlUnit stall, not a provider hang.",
   "oidcc-server-client-secret-post": "TIMEOUT — client_secret_post auth method with browser-driven code-flow; HtmlUnit 4.11.1 upstream.",
   "oidcc-userinfo-post-body": "TIMEOUT — userinfo POST with access_token in form body; browser-driven; HtmlUnit 4.11.1 upstream.",
+  "oidcc-userinfo-post-header": "FLAKY (TIMEOUT or FAILED) — verified via --export-dir: provider redirects to /test/a/conformance/callback with code+state; HtmlUnit 4.11.1 then chokes on the suite's own implicit-submit page (org.htmlunit.ScriptException on bootstrap@5.3.3 ES6+ syntax in Rhino), so form auto-submit never fires and the suite never reaches the userinfo POST step. HtmlUnit upstream.",
 
   "oidcc-scope-address": "Suite SKIPPED — address scope not advertised in discovery; provider does not return address claims.",
   "oidcc-scope-phone": "Suite SKIPPED — phone scope not advertised in discovery; provider does not return phone claims.",
