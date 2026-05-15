@@ -10,6 +10,13 @@
   "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported": "TIMEOUT — unsigned request object handling; HtmlUnit 4.11.1 upstream.",
   "oidcc-refresh-token": "TIMEOUT — refresh_token grant; suite never reaches token exchange after the browser flow.",
   "oidcc-scope-email": "TIMEOUT — email scope claims probe; HtmlUnit 4.11.1 upstream.",
+  "oidcc-codereuse": "TIMEOUT — code-reuse probe (RFC 6749 §10.5) needs auth + token + retry; triple browser interaction stalls in HtmlUnit 4.11.1 upstream.",
+  "oidcc-display-page": "TIMEOUT — display=page browser-flow probe; HtmlUnit 4.11.1 upstream.",
+  "oidcc-display-popup": "TIMEOUT — display=popup browser-flow probe; HtmlUnit 4.11.1 upstream.",
+  "oidcc-ensure-request-with-valid-pkce-succeeds": "TIMEOUT — PKCE happy-path code-flow; HtmlUnit 4.11.1 upstream (seed.py pins pkce_required=False; provider accepts S256 unconditionally when RP sends code_challenge).",
+  "oidcc-response-type-missing": "TIMEOUT — verified locally: provider redirects <0.1s with OAuth error (tests.test_authorize_security.TestResponseTypeRestriction.test_missing_response_type_param). Suite-side HtmlUnit stall, not a provider hang.",
+  "oidcc-server-client-secret-post": "TIMEOUT — client_secret_post auth method with browser-driven code-flow; HtmlUnit 4.11.1 upstream.",
+  "oidcc-userinfo-post-body": "TIMEOUT — userinfo POST with access_token in form body; browser-driven; HtmlUnit 4.11.1 upstream.",
 
   "oidcc-scope-address": "Suite SKIPPED — address scope not advertised in discovery; provider does not return address claims.",
   "oidcc-scope-phone": "Suite SKIPPED — phone scope not advertised in discovery; provider does not return phone claims.",
