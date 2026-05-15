@@ -419,72 +419,60 @@ class TestExtensionEndpointsAbsence(OIDCTestCase):
         self.assertEqual(200, resp.status_code)
         return json.loads(resp.content.decode("utf-8"))
 
-    def test_pushed_authorization_request_endpoint_absent(self) -> None:
+    def test_extension_keys_absent_from_discovery_sweep(self) -> None:
         """
-        RFC 9126 (PAR) — clients POST the authorize parameters to a
-        dedicated endpoint and receive a ``request_uri`` they then
-        hand to /o/authorize/. Mitigates URL-length limits and
-        authorize-param tampering. Not implemented upstream.
-        """
-        doc = self._doc()
-        self.assertNotIn(
-            "pushed_authorization_request_endpoint",
-            doc,
-            "DOT shipped PAR (RFC 9126); flip this assertion to "
-            "``assertIn`` and add a smoke test for the new endpoint.",
-        )
-        self.assertNotIn(
-            "require_pushed_authorization_requests",
-            doc,
-        )
+        Sweep of discovery keys we deliberately do not advertise.
 
-    def test_dpop_signing_alg_values_supported_absent(self) -> None:
-        """
-        RFC 9449 (DPoP) — sender-constrained tokens via a per-request
-        proof JWT signed with a key the client controls. Mitigates
-        bearer-token theft (XSS, log leakage). Not implemented
-        upstream.
-        """
-        doc = self._doc()
-        self.assertNotIn(
-            "dpop_signing_alg_values_supported",
-            doc,
-            "DOT shipped DPoP (RFC 9449); flip this assertion to "
-            "``assertIn`` and verify the supported algs include "
-            "ES256 / RS256 at minimum.",
-        )
+        Each row pins one extension that DOT upstream doesn't
+        ship today. When DOT eventually adds support for one of
+        them, flip the matching ``assertNotIn`` to ``assertIn``
+        and add a smoke test for the new behaviour at the
+        endpoint level.
 
-    def test_check_session_iframe_absent(self) -> None:
-        """
-        OIDC Session Management 1.0 §3 — ``check_session_iframe`` is
-        the URL of an iframe RPs embed to poll for end-user logout
-        at the OP. Superseded in modern stacks by back-channel
-        logout (OIDC BCL 1.0; already heavily tested in
-        ``test_back_channel_logout.py``). Not implemented upstream.
-        """
-        doc = self._doc()
-        self.assertNotIn(
-            "check_session_iframe",
-            doc,
-            "DOT shipped OIDC Session Management; consider whether "
-            "to deprecate it in favour of BCL or pin both.",
-        )
-
-    def test_introspection_endpoint_auth_methods_supported_absent(
-        self,
-    ) -> None:
-        """
-        RFC 7662 §3 RECOMMENDS advertising
-        ``introspection_endpoint_auth_methods_supported`` so RPs know
-        whether to authenticate the introspection call via Basic
-        auth, body credentials, or something exotic. DOT does not
-        advertise it today — RPs must fall back to ``token_endpoint_auth_methods_supported``
-        or hard-code the assumption.
+        * ``pushed_authorization_request_endpoint`` +
+          ``require_pushed_authorization_requests`` — RFC 9126
+          (PAR): clients POST authorize params to a dedicated
+          endpoint and receive a ``request_uri``. Mitigates
+          URL-length limits and authorize-param tampering.
+        * ``dpop_signing_alg_values_supported`` — RFC 9449
+          (DPoP): sender-constrained tokens via a per-request
+          proof JWT. Mitigates bearer-token theft.
+        * ``check_session_iframe`` — OIDC Session Management
+          1.0 §3 iframe URL. Superseded by Back-Channel Logout
+          (already covered in test_back_channel_logout.py).
+        * ``introspection_endpoint_auth_methods_supported`` —
+          RFC 7662 §3 RECOMMENDS advertising it; until DOT
+          does, RPs must fall back to
+          ``token_endpoint_auth_methods_supported``.
         """
         doc = self._doc()
-        self.assertNotIn(
-            "introspection_endpoint_auth_methods_supported",
-            doc,
-            "DOT now advertises introspection auth methods; verify "
-            "the list matches token-endpoint auth methods.",
+        cases: tuple[tuple[str, str], ...] = (
+            (
+                "pushed_authorization_request_endpoint",
+                "PAR (RFC 9126) endpoint",
+            ),
+            (
+                "require_pushed_authorization_requests",
+                "PAR (RFC 9126) per-client flag",
+            ),
+            (
+                "dpop_signing_alg_values_supported",
+                "DPoP (RFC 9449) advertised algs",
+            ),
+            (
+                "check_session_iframe",
+                "OIDC Session Management iframe",
+            ),
+            (
+                "introspection_endpoint_auth_methods_supported",
+                "RFC 7662 §3 RECOMMENDED introspection auth",
+            ),
         )
+        for key, why in cases:
+            with self.subTest(key=key):
+                self.assertNotIn(
+                    key,
+                    doc,
+                    f"DOT shipped {why}; flip this assertion "
+                    f"to ``assertIn`` and add a smoke test.",
+                )
