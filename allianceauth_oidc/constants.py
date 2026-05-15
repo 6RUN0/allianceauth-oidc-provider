@@ -25,6 +25,16 @@ PERM_ACCESS_OIDC: Final[str] = f"allianceauth_oidc.{PERM_ACCESS_OIDC_CODENAME}"
 AUDIT_DISPATCH_UID: Final[str] = "allianceauth_oidc.audit_oidc_token_issued"
 
 # dispatch_uid for the default audit receiver of
+# ``oidc_token_introspected``. RFC 7662 introspection is the
+# resource-server side of the trust boundary — every check is a
+# probe by an RS for a token's validity, valuable signal for SIEM
+# correlations ("RS X is enumerating tokens against AS"). Same
+# disconnect / re-connect contract as :data:`AUDIT_DISPATCH_UID`.
+INTROSPECT_AUDIT_DISPATCH_UID: Final[str] = (
+    "allianceauth_oidc.audit_oidc_token_introspected"
+)
+
+# dispatch_uid for the default audit receiver of
 # ``oidc_code_reuse_detected``. Symmetry with :data:`AUDIT_DISPATCH_UID`
 # — operator-facing receivers (SIEM forwarders, alerting hooks)
 # connect with their own UID; this constant is the in-tree default so

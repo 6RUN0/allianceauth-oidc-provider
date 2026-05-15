@@ -22,6 +22,7 @@ from .constants import (
     AUDIT_DISPATCH_UID,
     CODE_REUSE_AUDIT_DISPATCH_UID,
     DEFAULT_LOGOUT_DISPATCH_UID,
+    INTROSPECT_AUDIT_DISPATCH_UID,
 )
 
 if TYPE_CHECKING:
@@ -238,6 +239,112 @@ def connect_default_code_reuse_receiver() -> None:
     oidc_code_reuse_detected.connect(
         audit_oidc_code_reuse_detected,
         dispatch_uid=CODE_REUSE_AUDIT_DISPATCH_UID,
+    )
+
+
+class OIDCIntrospectionAuditBody(TypedDict):
+    """
+    Curated, secret-free payload of the ``oidc_token_introspected``
+    signal.
+
+    RFC 7662 introspection is a probe by a resource server for a
+    token's validity; the audit answers "which RS asked, about
+    whose token, was it active". Discipline mirrors
+    :class:`OIDCAuditBody`: no raw bearer values, ever. Identity
+    of the introspected token is carried as its sha256 hex
+    (``token_sha256``) so SIEM receivers can correlate against
+    ``IssuedCodeAudit`` rows and ``oidc_token_issued`` payloads
+    without a fresh leak surface.
+    """
+
+    # RFC 7662 §2.2 ``active`` field as the AS resolved it.
+    active: NotRequired[bool | None]
+    # ``client_id`` of the application that ORIGINALLY issued the
+    # introspected token (i.e. the audit subject). Absent when the
+    # token was invalid / unknown.
+    client_id: NotRequired[str | None]
+    # sha256(token) hex. Matches DOT's persisted ``token_checksum``
+    # column on ``AccessToken`` so correlations with
+    # ``IssuedCodeAudit`` and ``oidc_token_issued`` are first-class.
+    token_sha256: NotRequired[str | None]
+
+
+# RFC 7662 introspection audit signal. Fired by
+# ``AllianceAuthIntrospectTokenView.dispatch`` on every introspect
+# request (active or not), AFTER the JSON response is built but
+# BEFORE it leaves the view. Receivers MUST NOT depend on the
+# response body — they receive the same metadata via ``body``.
+#
+# Receiver contract:
+#
+#     def my_receiver(
+#         sender, request, introspector,
+#         body: OIDCIntrospectionAuditBody, **kwargs,
+#     ):
+#         ...
+#
+# - ``introspector`` is the Django ``User`` whose bearer token was
+#   used to authenticate to ``/o/introspect/`` (NOT the user
+#   whose token was introspected — that one is implied by the
+#   ``client_id`` field in ``body``). Use it to attribute the
+#   probe ("which RS account is enumerating tokens").
+# - ``body`` is the curated, secret-free :class:`OIDCIntrospectionAuditBody`.
+#   Safe to forward to SIEM unchanged. The raw introspected token
+#   value is NOT carried — only its sha256.
+oidc_token_introspected = Signal(use_caching=True)
+
+
+def audit_oidc_token_introspected(
+    sender: object,
+    request: HttpRequest | None,
+    introspector: Any,
+    body: OIDCIntrospectionAuditBody | None = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
+    """
+    Default audit receiver — log minimal, secret-free metadata.
+
+    Logs at INFO. Operators who want introspection logged at WARNING
+    (e.g. for "every probe matters" deployments) connect a
+    second receiver under a different ``dispatch_uid``; this default
+    keeps the noise floor low for the common case where introspect
+    fires on every request the RS handles.
+    """
+    try:
+        meta = None
+        if body:
+            meta = {
+                k: body.get(k) for k in ("active", "client_id", "token_sha256")
+            }
+            meta = {k: v for k, v in meta.items() if v is not None} or None
+        logger.info(
+            "OIDC token introspected introspector_id=%s "
+            "introspector_username=%s meta=%s",
+            getattr(introspector, "id", None),
+            getattr(introspector, "username", None),
+            meta,
+        )
+    except (AttributeError, TypeError, ValueError, KeyError):
+        # Same narrow-except discipline as
+        # :func:`audit_oidc_token_issued` — let real bugs surface
+        # rather than swallowing them under a bare ``Exception``.
+        logger.exception(
+            "Failed to audit OIDC token introspection (introspector_id=%s)",
+            getattr(introspector, "id", None),
+        )
+
+
+def connect_default_introspect_receiver() -> None:
+    """
+    Wire ``audit_oidc_token_introspected`` to ``oidc_token_introspected``.
+
+    Mirror of :func:`connect_default_receiver` — wired from
+    :meth:`AllianceAuthOIDC.ready`.
+    """
+    oidc_token_introspected.connect(
+        audit_oidc_token_introspected,
+        dispatch_uid=INTROSPECT_AUDIT_DISPATCH_UID,
     )
 
 

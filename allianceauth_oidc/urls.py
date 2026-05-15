@@ -5,6 +5,7 @@ from oauth2_provider import views
 
 from .views import (
     AllianceAuthDiscoveryView,
+    AllianceAuthIntrospectTokenView,
     AllianceAuthUserInfoView,
     AuthAuthorizationView,
     TokenView,
@@ -20,7 +21,9 @@ base_urlpatterns = [
         "revoke_token/", views.RevokeTokenView.as_view(), name="revoke-token"
     ),
     path(
-        "introspect/", views.IntrospectTokenView.as_view(), name="introspect"
+        "introspect/",
+        AllianceAuthIntrospectTokenView.as_view(),
+        name="introspect",
     ),
 ]
 
