@@ -8,6 +8,8 @@ break ``self.assertIn("PKCE required", body)`` since the verbose name
 would render translated.
 """
 
+from typing import Any
+
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
@@ -197,3 +199,104 @@ class TestApplicationAdminAccessTokenFormat(OIDCTestCase):
                 "opaque",
                 DEFAULT_POLICY.access_token_format(app),
             )
+
+
+@override_settings(LANGUAGE_CODE="en")
+class TestApplicationAdminSendTestBackchannelLogout(OIDCTestCase):
+    """
+    The bulk-action ``send_test_backchannel_logout`` lets an operator
+    fire a synthetic ``oidc_logout_required`` for an arbitrary set of
+    selected applications without contriving a real user logout.
+
+    Three contracts under test:
+
+    1. An app WITH ``backchannel_logout_uri`` triggers the signal.
+    2. An app WITHOUT one is skipped silently (warning surfaces; no
+       signal emitted for that row).
+    3. The action is wired into the admin changelist's ``action``
+       drop-down — the integration point operators actually click on.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            "admin-bcl",
+            password="x",  # nosec B106 - test fixture
+            is_superuser=True,
+            is_staff=True,
+        )
+        self.client.force_login(self.admin)
+        self.with_bcl = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+        )
+        self.without_bcl = make_app(owner=self.user1)
+
+    def _fire_action(self, *app_pks: int) -> Any:
+        url = reverse(
+            "admin:allianceauth_oidc_allianceauthapplication_changelist"
+        )
+        return self.client.post(
+            url,
+            data={
+                "action": "send_test_backchannel_logout",
+                "_selected_action": [str(pk) for pk in app_pks],
+            },
+            follow=True,
+        )
+
+    def test_action_emits_signal_for_bcl_configured_app(self) -> None:
+        from allianceauth_oidc.signals import oidc_logout_required
+
+        captured: list[tuple[int, str]] = []
+
+        def sink(sender, user, application, reason, **kw):
+            captured.append((application.pk, reason))
+
+        oidc_logout_required.connect(sink, dispatch_uid="test.admin.bcl.sink")
+        try:
+            resp = self._fire_action(self.with_bcl.app.pk)
+        finally:
+            oidc_logout_required.disconnect(dispatch_uid="test.admin.bcl.sink")
+        self.assertEqual(200, resp.status_code)
+        self.assertEqual(
+            [(self.with_bcl.app.pk, "admin_test")],
+            captured,
+        )
+
+    def test_action_skips_app_without_bcl_uri(self) -> None:
+        from allianceauth_oidc.signals import oidc_logout_required
+
+        captured: list[int] = []
+
+        def sink(sender, user, application, reason, **kw):
+            captured.append(application.pk)
+
+        oidc_logout_required.connect(sink, dispatch_uid="test.admin.skip.sink")
+        try:
+            resp = self._fire_action(
+                self.with_bcl.app.pk, self.without_bcl.app.pk
+            )
+        finally:
+            oidc_logout_required.disconnect(
+                dispatch_uid="test.admin.skip.sink"
+            )
+        self.assertEqual(200, resp.status_code)
+        # Only the BCL-configured app fires; the unconfigured one is
+        # silently skipped (operator sees a warning, not a hard fail).
+        self.assertEqual([self.with_bcl.app.pk], captured)
+
+    def test_changelist_renders_action_in_dropdown(self) -> None:
+        """
+        Pin the changelist's ``action`` ``<select>`` actually carries
+        the option. Catches a regression where the method is defined
+        but the ``actions = (...)`` tuple loses the entry.
+        """
+        url = reverse(
+            "admin:allianceauth_oidc_allianceauthapplication_changelist"
+        )
+        response = self.client.get(url)
+        self.assertEqual(200, response.status_code)
+        body = response.content.decode("utf-8")
+        self.assertIn("send_test_backchannel_logout", body)

@@ -1,9 +1,15 @@
 """Django admin registration for ``AllianceAuthApplication``."""
 
-from django.contrib import admin
+from typing import Any
+
+from django.contrib import admin, messages
+from django.db.models import QuerySet
+from django.http import HttpRequest
+from django.utils.translation import gettext_lazy as _
 from typing_extensions import override
 
 from .models import BackChannelLogoutAttempt
+from .signals import oidc_logout_required
 
 
 class ApplicationAdmin(admin.ModelAdmin):
@@ -19,6 +25,11 @@ class ApplicationAdmin(admin.ModelAdmin):
         "access_token_format",
         "backchannel_logout_uri",
     )
+
+    # Bulk-selectable admin actions exposed in the changelist. The
+    # default action set (``delete_selected``) stays — the list is
+    # additive, not a replacement.
+    actions = ("send_test_backchannel_logout",)
     # `user` is rendered in `list_display` for every row in the
     # changelist; without `list_select_related`, Django issues one
     # extra query per row to fetch the FK. Trivial today (most
@@ -38,6 +49,65 @@ class ApplicationAdmin(admin.ModelAdmin):
         "authorization_grant_type": admin.VERTICAL,
     }
     raw_id_fields = ("user",)
+
+    @admin.action(description=_("Send test back-channel logout"))
+    def send_test_backchannel_logout(
+        self,
+        request: HttpRequest,
+        queryset: QuerySet[Any],
+    ) -> None:
+        """
+        Dispatch a synthetic ``oidc_logout_required`` for each
+        selected application, addressed to the operator running the
+        admin.
+
+        Operators wire back-channel logout by setting
+        ``backchannel_logout_uri`` on an application and pointing it
+        at their RP's logout endpoint. The first end-to-end test
+        usually means logging a real user out — slow, disruptive,
+        and pollutes the audit trail with synthetic activity. This
+        action does the equivalent without the user-facing side
+        effects: it fires the same signal the production triggers
+        emit (``reason="admin_test"``), the Celery dispatcher builds
+        a real ``logout_token``, the RP receives a fully-signed
+        token, and the dead-letter table records the outcome.
+
+        Apps without ``backchannel_logout_uri`` are skipped with a
+        warning rather than failing the whole action — selecting
+        the full changelist and only firing on the BCL-configured
+        subset is the common operator workflow.
+        """
+        sent = 0
+        skipped = 0
+        for app in queryset:
+            if not getattr(app, "backchannel_logout_uri", ""):
+                skipped += 1
+                continue
+            oidc_logout_required.send(
+                sender=type(self),
+                user=request.user,
+                application=app,
+                reason="admin_test",
+            )
+            sent += 1
+        if sent:
+            messages.success(
+                request,
+                _(
+                    "Test back-channel logout dispatched for "
+                    "%(count)d application(s) (reason='admin_test')."
+                )
+                % {"count": sent},
+            )
+        if skipped:
+            messages.warning(
+                request,
+                _(
+                    "Skipped %(count)d application(s) without "
+                    "backchannel_logout_uri."
+                )
+                % {"count": skipped},
+            )
 
     @override
     def get_search_fields(self, request):
