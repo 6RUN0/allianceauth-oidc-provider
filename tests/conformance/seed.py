@@ -5,13 +5,10 @@ Idempotent: re-running on an existing DB updates the rows in place
 without changing client_id / client_secret. This matters because the
 conformance suite is configured against a fixed credential pair.
 
-Reads:
-
-- ``CONFORMANCE_CLIENT_ID``      (default: ``conformance-client``)
-- ``CONFORMANCE_CLIENT_SECRET``  (default: ``conformance-secret``)
-- ``CONFORMANCE_USERNAME``       (default: ``conformance``)
-- ``CONFORMANCE_PASSWORD``       (default: ``conformance-pass``)
-- ``CONFORMANCE_REDIRECT_URI``   (default: suite's well-known callback)
+Client + user credentials are sourced from
+``tests.conformance.runner.config`` (single source of truth across
+seeding and the host-side runner). The two ``CONFORMANCE_REDIRECT_URI*``
+env overrides are seeding-specific and stay local.
 
 Run via Django's ``manage.py shell -c`` from the entrypoint script.
 """
@@ -42,27 +39,18 @@ from oauth2_provider.models import (  # noqa: E402
 from allianceauth_oidc.constants import (  # noqa: E402
     PERM_ACCESS_OIDC_CODENAME,
 )
+from tests.conformance.runner.config import (  # noqa: E402
+    CLIENT2_ID,
+    CLIENT2_SECRET,
+    CLIENT_ID,
+    CLIENT_SECRET,
+    PASSWORD,
+    USERNAME,
+)
 
-CLIENT_ID = os.environ.get("CONFORMANCE_CLIENT_ID", "conformance-client")
-CLIENT_SECRET = os.environ.get(
-    "CONFORMANCE_CLIENT_SECRET",
-    "conformance-secret",  # nosec B105
-)
-# OIDCC basic-certification plans drive a *second* client through some
-# modules (multi-client tests). We pre-register a separate one to
-# satisfy the suite's static-registration variant.
-CLIENT2_ID = os.environ.get("CONFORMANCE_CLIENT2_ID", "conformance-client2")
-CLIENT2_SECRET = os.environ.get(
-    "CONFORMANCE_CLIENT2_SECRET",
-    "conformance-secret-2",  # nosec B105
-)
-USERNAME = os.environ.get("CONFORMANCE_USERNAME", "conformance")
-PASSWORD = os.environ.get(
-    "CONFORMANCE_PASSWORD",
-    "conformance-pass",  # nosec B105
-)
 # Each client gets its own callback path on the suite — the suite
-# routes by ``alias`` segment.
+# routes by ``alias`` segment. Seeding-specific (the runner does not
+# need them), so they stay here rather than in ``runner.config``.
 REDIRECT_URI = os.environ.get(
     "CONFORMANCE_REDIRECT_URI",
     "https://localhost.emobix.co.uk:8443/test/a/conformance/callback",

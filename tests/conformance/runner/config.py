@@ -21,9 +21,19 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-SUITE_URL = os.environ.get(
-    "CONFORMANCE_SUITE_URL", "https://localhost.emobix.co.uk:8443"
-)
+
+def _env(suffix: str, default: str) -> str:
+    """
+    Read a ``CONFORMANCE_<suffix>`` environment override.
+
+    All conformance-runner overrides share the ``CONFORMANCE_``
+    prefix; centralising the lookup keeps the prefix in a single
+    place so a typo cannot drift one constant out of the namespace.
+    """
+    return os.environ.get(f"CONFORMANCE_{suffix}", default)
+
+
+SUITE_URL = _env("SUITE_URL", "https://localhost.emobix.co.uk:8443")
 # Provider URL the suite uses for discoveryUrl + iss. Must align with
 # ``OIDC_ISS_ENDPOINT`` in conformance_settings.py — same value lives
 # on both sides (run_plan.py runs on host, settings on container) so
@@ -31,25 +41,13 @@ SUITE_URL = os.environ.get(
 # suite enforces TLS for OIDC discovery; the provider serves a
 # self-signed cert backed by ``tls/ca.crt`` which the suite container
 # imports at startup via ``USE_SYSTEM_CA_CERTS=1``.
-PUBLIC_URL = os.environ.get(
-    "CONFORMANCE_PUBLIC_URL",
-    "https://provider:8443/o",
-)
-CLIENT_ID = os.environ.get("CONFORMANCE_CLIENT_ID", "conformance-client")
-CLIENT_SECRET = os.environ.get(
-    "CONFORMANCE_CLIENT_SECRET",
-    "conformance-secret",  # nosec B105
-)
-CLIENT2_ID = os.environ.get("CONFORMANCE_CLIENT2_ID", "conformance-client2")
-CLIENT2_SECRET = os.environ.get(
-    "CONFORMANCE_CLIENT2_SECRET",
-    "conformance-secret-2",  # nosec B105
-)
-USERNAME = os.environ.get("CONFORMANCE_USERNAME", "conformance")
-PASSWORD = os.environ.get(
-    "CONFORMANCE_PASSWORD",
-    "conformance-pass",  # nosec B105
-)
+PUBLIC_URL = _env("PUBLIC_URL", "https://provider:8443/o")
+CLIENT_ID = _env("CLIENT_ID", "conformance-client")
+CLIENT_SECRET = _env("CLIENT_SECRET", "conformance-secret")  # nosec B105
+CLIENT2_ID = _env("CLIENT2_ID", "conformance-client2")
+CLIENT2_SECRET = _env("CLIENT2_SECRET", "conformance-secret-2")  # nosec B105
+USERNAME = _env("USERNAME", "conformance")
+PASSWORD = _env("PASSWORD", "conformance-pass")  # nosec B105
 
 # Default variant passed at MODULE creation (the suite requires the
 # full set per module). Plan creation, in contrast, must NOT include
