@@ -154,6 +154,39 @@ class TestOIDCRevokeUserTokensCommand(OIDCTestCase):
         self.assertEqual(2, row["revoked_access"])
         self.assertEqual(1, row["revoked_refresh"])
 
+    def test_reason_flag_propagates_to_logout_signal(self) -> None:
+        """
+        ``--reason=...`` forwards the operator-supplied free-form audit
+        string to every emitted ``oidc_logout_required`` signal. The
+        default (``"user_revoked"``) is also exercised by other tests
+        in this module; this one pins the override path so a SIEM
+        downstream can correlate "command-initiated revoke for incident
+        INC-1234" with a known reason label.
+        """
+        from allianceauth_oidc.signals import oidc_logout_required
+
+        self._seed_tokens()
+        captured: list[str] = []
+
+        def sink(sender, user, application, reason, **kw):
+            captured.append(reason)
+
+        oidc_logout_required.connect(sink, dispatch_uid="test.reason.sink")
+        try:
+            call_command(
+                "oidc_revoke_user_tokens",
+                f"--username={self.user1.username}",
+                "--reason=incident-INC-1234",
+                "--format=json",
+                stdout=StringIO(),
+            )
+        finally:
+            oidc_logout_required.disconnect(dispatch_uid="test.reason.sink")
+
+        # One app in the fixture → one signal with the override reason.
+        # The dedup test below verifies multi-app behaviour separately.
+        self.assertEqual(["incident-INC-1234"], captured)
+
     def test_revoke_dedups_logout_signal_when_multiple_apps_one_repeated(
         self,
     ) -> None:

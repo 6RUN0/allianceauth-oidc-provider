@@ -45,6 +45,16 @@ class Command(BaseCommand):
             help=_("Count tokens that would be revoked without revoking."),
         )
         parser.add_argument(
+            "--reason",
+            default="user_revoked",
+            help=_(
+                "Audit reason forwarded to the oidc_logout_required "
+                "signal and the operator log line. Free-form string; "
+                "downstream BCL receivers may filter on it. Default: "
+                "%(default)s."
+            ),
+        )
+        parser.add_argument(
             "--format",
             default="table",
             choices=FORMAT_CHOICES,
@@ -128,13 +138,14 @@ class Command(BaseCommand):
                 sender=Command,
                 user=user,
                 application=app,
-                reason="user_revoked",
+                reason=options["reason"],
             )
 
         logger.warning(
-            "OIDC revoke_user_tokens: user_id=%s username=%s access=%d refresh=%d",  # noqa: E501
+            "OIDC revoke_user_tokens: user_id=%s username=%s reason=%s access=%d refresh=%d",  # noqa: E501
             user.pk,
             username,
+            options["reason"],
             revoked_access,
             revoked_refresh,
         )
