@@ -55,55 +55,85 @@ class TestDispatcherFormatResolution(TestCase):
     policy is pure logic.
     """
 
-    def test_per_app_jwt_overrides_global_opaque(self) -> None:
-        with override_settings(
-            OAUTH2_PROVIDER={
-                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "opaque",
-            }
-        ):
-            app = SimpleNamespace(access_token_format="jwt")
-            self.assertEqual("jwt", DEFAULT_POLICY.access_token_format(app))
+    def test_access_token_format_resolution_matrix(self) -> None:
+        """
+        Sweep per-app x global x app-shape format resolution.
 
-    def test_per_app_none_falls_back_to_global_jwt(self) -> None:
-        with override_settings(
-            OAUTH2_PROVIDER={
-                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "jwt",
-            }
-        ):
-            app = SimpleNamespace(access_token_format=None)
-            self.assertEqual("jwt", DEFAULT_POLICY.access_token_format(app))
+        ``AccessPolicy.access_token_format`` is a pure
+        precedence function: per-app value wins if recognised,
+        else global, else opaque. Each row pins one branch:
 
-    def test_per_app_none_global_absent_falls_back_to_opaque(self) -> None:
-        with override_settings(OAUTH2_PROVIDER={}):
-            app = SimpleNamespace(access_token_format=None)
-            self.assertEqual("opaque", DEFAULT_POLICY.access_token_format(app))
+        * ``per_app_jwt_overrides_global_opaque`` — per-app
+          recognised value beats global.
+        * ``per_app_none_falls_back_to_global_jwt`` — per-app
+          ``None`` defers to a recognised global.
+        * ``per_app_none_global_absent_returns_opaque`` —
+          everything missing falls back to opaque.
+        * ``app_none_uses_global_jwt`` — ``app=None`` skips the
+          per-app check and uses the global.
+        * ``invalid_per_app_falls_through_to_global`` —
+          unrecognised per-app value defers to global.
+        * ``invalid_global_falls_back_to_opaque`` — unrecognised
+          global falls back to opaque.
 
-    def test_app_is_none_uses_global(self) -> None:
-        with override_settings(
-            OAUTH2_PROVIDER={
-                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "jwt",
-            }
-        ):
-            self.assertEqual("jwt", DEFAULT_POLICY.access_token_format(None))
-
-    def test_invalid_per_app_value_falls_through_to_global(self) -> None:
-        with override_settings(
-            OAUTH2_PROVIDER={
-                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "opaque",
-            }
-        ):
-            app = SimpleNamespace(access_token_format="garbage")
-            self.assertEqual("opaque", DEFAULT_POLICY.access_token_format(app))
-
-    def test_invalid_global_value_falls_back_to_opaque(self) -> None:
-        with override_settings(
-            OAUTH2_PROVIDER={
-                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT": "garbage",
-            }
-        ):
-            self.assertEqual(
-                "opaque", DEFAULT_POLICY.access_token_format(None)
-            )
+        ``_NO_APP`` sentinel means "pass app=None to the
+        method" (vs. an app with ``access_token_format=None``).
+        ``global=None`` means the OAUTH2_PROVIDER dict omits the
+        key entirely.
+        """
+        _NO_APP = object()
+        cases: tuple[tuple[str, object, str | None, str], ...] = (
+            (
+                "per_app_jwt_overrides_global_opaque",
+                "jwt",
+                "opaque",
+                "jwt",
+            ),
+            (
+                "per_app_none_falls_back_to_global_jwt",
+                None,
+                "jwt",
+                "jwt",
+            ),
+            (
+                "per_app_none_global_absent_returns_opaque",
+                None,
+                None,
+                "opaque",
+            ),
+            ("app_none_uses_global_jwt", _NO_APP, "jwt", "jwt"),
+            (
+                "invalid_per_app_falls_through_to_global",
+                "garbage",
+                "opaque",
+                "opaque",
+            ),
+            (
+                "invalid_global_falls_back_to_opaque",
+                _NO_APP,
+                "garbage",
+                "opaque",
+            ),
+        )
+        for label, per_app, global_val, expected in cases:
+            with self.subTest(case=label):
+                provider_cfg: dict[str, str] = (
+                    {}
+                    if global_val is None
+                    else {
+                        "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_"
+                        "TOKEN_FORMAT": global_val
+                    }
+                )
+                with override_settings(OAUTH2_PROVIDER=provider_cfg):
+                    if per_app is _NO_APP:
+                        app = None
+                    else:
+                        app = SimpleNamespace(access_token_format=per_app)
+                    self.assertEqual(
+                        expected,
+                        DEFAULT_POLICY.access_token_format(app),
+                    )
 
 
 # ---------------------------------------------------------------------------
