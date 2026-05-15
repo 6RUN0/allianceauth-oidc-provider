@@ -182,6 +182,90 @@ class TestValidatorClassCheck(TestCase):
         self.assertIn("allianceauth_oidc.E003", str(ctx.exception))
 
 
+class TestOpenidScopeConfiguredCheck(TestCase):
+    """
+    E004 fires when ``OAUTH2_PROVIDER['SCOPES']`` lacks ``openid``.
+
+    DOT's default ``SCOPES`` is ``{"read": ..., "write": ...}``;
+    leaving it that way deploys an OAuth2 server, not an OIDC one.
+    Three coverage points:
+
+    1. Negative — missing ``openid`` triggers the Error.
+    2. Positive — dict form with ``openid`` is clean.
+    3. Positive (alt shape) — list form with ``openid`` is clean.
+    4. CLI integration via ``manage.py check`` so a future
+       ``@register`` regression surfaces.
+    """
+
+    def _reload_dot(self) -> None:
+        oauth2_settings.reload()
+        self.addCleanup(oauth2_settings.reload)
+
+    def test_e004_error_when_scopes_lack_openid(self) -> None:
+        from allianceauth_oidc.checks import (
+            E004_ID,
+            check_openid_scope_configured,
+        )
+
+        cfg = _override_oauth2_provider(
+            SCOPES={"read": "Reading scope", "write": "Writing scope"},
+        )
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            self._reload_dot()
+            msgs = check_openid_scope_configured(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, E004_ID)
+        # Severity Error — id_token issuance breaks without openid,
+        # so the deployment is structurally non-OIDC. Warning would
+        # let CI / startup succeed and crash every RP at first login.
+        self.assertEqual(msg.level, checks.ERROR)
+
+    def test_e004_clean_when_dict_scopes_include_openid(self) -> None:
+        """Default test settings already pin openid in SCOPES."""
+        from allianceauth_oidc.checks import check_openid_scope_configured
+
+        msgs = check_openid_scope_configured(None)
+        self.assertEqual(msgs, [])
+
+    def test_e004_clean_when_list_scopes_include_openid(self) -> None:
+        """
+        Operators occasionally configure ``SCOPES`` as a list rather
+        than a dict (DOT tolerates both shapes). ``'openid' in scopes``
+        matches a dict key OR a list element identically, so the
+        check must accept either.
+        """
+        from allianceauth_oidc.checks import check_openid_scope_configured
+
+        cfg = _override_oauth2_provider(
+            SCOPES=["openid", "email", "profile"],
+        )
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            self._reload_dot()
+            msgs = check_openid_scope_configured(None)
+        self.assertEqual(msgs, [])
+
+    def test_manage_check_raises_with_e004(self) -> None:
+        """
+        CLI integration: ``manage.py check`` exits non-zero when E004
+        fires. Mirrors the E002 / E003 integration tests — guards
+        against a dropped ``@register`` decorator that would leave
+        the check function importable but unreachable.
+        """
+        out = StringIO()
+        cfg = _override_oauth2_provider(
+            SCOPES={"read": "Reading scope", "write": "Writing scope"},
+        )
+        with (
+            override_settings(OAUTH2_PROVIDER=cfg),
+            self.assertRaises(SystemCheckError) as ctx,
+        ):
+            oauth2_settings.reload()
+            self.addCleanup(oauth2_settings.reload)
+            call_command("check", stdout=out, stderr=out)
+        self.assertIn("allianceauth_oidc.E004", str(ctx.exception))
+
+
 class TestChecksBootstrapPaths(TestCase):
     """
     Pin the ``except _BOOTSTRAP_EXCEPTIONS as exc:`` branches in

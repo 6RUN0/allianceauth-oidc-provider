@@ -23,6 +23,15 @@ the README references the migration path.
   ``save_bearer_token``) — code-flow exchanges and refresh grants
   stop re-checking state/group membership.
 
+* **E004** — ``OAUTH2_PROVIDER['SCOPES']`` must contain the
+  ``openid`` scope. DOT's default ``SCOPES`` map is
+  ``{"read": ..., "write": ...}`` — no ``openid``, which silently
+  disables id_token issuance. Discovery still resolves, access
+  tokens still mint, but every OIDC RP (i.e. every RP that needs
+  an id_token) fails at the token endpoint with
+  ``invalid_scope`` or receives a token response without an
+  ``id_token`` member.
+
 Severity is intentionally ``Error`` for all three (per plan v5
 m-V3-1): demoting any of them to ``Warning`` would let CI and
 startup succeed and crash much later in production.
@@ -68,6 +77,7 @@ logger = logging.getLogger(f"extensions.{__name__}")
 E001_ID = "allianceauth_oidc.E001"
 E002_ID = "allianceauth_oidc.E002"
 E003_ID = "allianceauth_oidc.E003"
+E004_ID = "allianceauth_oidc.E004"
 W001_ID = "allianceauth_oidc.W001"
 W002_ID = "allianceauth_oidc.W002"
 
@@ -284,6 +294,68 @@ def _e003(expected: str, configured: Any) -> checks.Error:
         hint=(
             "Set OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS'] = "
             f"{expected!r} in your Django settings."
+        ),
+    )
+
+
+@checks.register(checks.Tags.compatibility)
+def check_openid_scope_configured(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.E004`` (Error) when
+    ``OAUTH2_PROVIDER['SCOPES']`` does not advertise the ``openid``
+    scope.
+
+    Without ``openid`` in DOT's ``SCOPES`` map, the token endpoint
+    will not put an ``id_token`` member in the response and OIDC
+    RPs that consume id_tokens silently degrade. DOT's documented
+    default is ``{"read": ..., "write": ...}`` — the exact
+    silent-bypass scenario this check catches.
+
+    Reading via ``oauth2_settings.SCOPES`` (not raw
+    ``settings.OAUTH2_PROVIDER['SCOPES']``) is the canonical
+    resolver and survives operators who configured the legacy
+    flat ``OAUTH2_PROVIDER_SCOPES`` setting.
+
+    Both ``dict`` and ``list`` shapes are accepted: ``'openid' in
+    scopes`` matches a dict key or a list element identically.
+    """
+    try:
+        from oauth2_provider.settings import oauth2_settings
+
+        scopes = oauth2_settings.SCOPES
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.E004 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    # ``oauth2_settings.SCOPES`` is typed as a wide union in DOT's
+    # stubs (dict/list/str/int/bool/callable) because the same
+    # settings resolver fronts many DOT knobs. Narrow to the
+    # container shapes that ``in`` is meaningful on; anything else
+    # is treated as misconfigured and falls through to E004.
+    if isinstance(scopes, (dict, list, tuple, set)) and "openid" in scopes:
+        return []
+    return [_e004(scopes)]
+
+
+def _e004(configured: Any) -> checks.Error:
+    return checks.Error(
+        (
+            "OAUTH2_PROVIDER['SCOPES'] must contain the 'openid' "
+            f"scope, got {configured!r}. Without 'openid', DOT will "
+            "not mint an id_token member on token responses — every "
+            "OIDC RP that depends on the id_token silently breaks."
+        ),
+        id=E004_ID,
+        hint=(
+            "Set OAUTH2_PROVIDER['SCOPES'] = {'openid': 'openid', "
+            "'email': 'email', 'profile': 'profile', ...} in your "
+            "Django settings (or extend the existing map)."
         ),
     )
 
