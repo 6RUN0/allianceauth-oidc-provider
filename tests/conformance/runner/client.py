@@ -37,6 +37,23 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
+def make_suite_session() -> requests.Session:
+    """
+    Return a ``requests.Session`` pre-configured for the suite's TLS.
+
+    The suite serves a self-signed cert for ``localhost.emobix.co.uk``;
+    ``Session.verify = False`` propagates to every subsequent
+    ``session.get`` / ``session.post`` so individual call sites do not
+    repeat the ``verify=False`` argument (which used to live on five
+    separate calls in this module). A future switch to a CA-bundle —
+    pinning the suite's cert chain through ``REQUESTS_CA_BUNDLE`` or
+    a ``--ca-bundle`` flag — touches this single factory.
+    """
+    session = requests.Session()
+    session.verify = False
+    return session
+
+
 def wait_for_suite_ready(
     session: requests.Session,
     *,
@@ -201,7 +218,6 @@ def run_module(
                 "plan": plan_id,
                 "variant": json.dumps(module_variant),
             },
-            verify=False,
             timeout=30,
         )
         create_resp.raise_for_status()

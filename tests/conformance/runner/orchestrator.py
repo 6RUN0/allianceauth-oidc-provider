@@ -18,6 +18,7 @@ import requests
 from .client import (
     create_plan,
     export_plan_html,
+    make_suite_session,
     run_module,
     wait_for_suite_ready,
 )
@@ -95,7 +96,7 @@ def run_plan(
     are reported in the summary but do NOT influence the exit code —
     they were never executed.
     """
-    session = requests.Session()
+    session = make_suite_session()
     # Wait for Spring Boot to finish warming up — docker-compose's
     # --wait can return before /api/runner/available answers 200.
     # Without this, the initial POST /api/plan races startup and

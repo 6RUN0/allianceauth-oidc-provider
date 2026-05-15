@@ -14,12 +14,33 @@ import logging
 import pathlib
 import sys
 
-import requests
-
-from .client import create_plan, wait_for_suite_ready
+from .client import create_plan, make_suite_session, wait_for_suite_ready
 from .config import DEFAULT_VARIANT, PLAN_VARIANT_DEFAULTS, module_name
 from .filtering import load_expected_failures
 from .orchestrator import run_plan
+
+
+def _decode_json_arg(
+    parser: argparse.ArgumentParser,
+    flag: str,
+    raw: str,
+    default: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """
+    Parse a CLI flag carrying a JSON object, or return ``default``.
+
+    Bad JSON is reported through ``parser.error`` so the operator
+    sees ``error: --variant is not valid JSON: ...`` with a clean
+    exit code 2, rather than an unguarded ``JSONDecodeError``
+    traceback. Empty / unset ``raw`` falls through to ``default``,
+    preserving the previous "no flag = baked-in default" contract.
+    """
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        parser.error(f"{flag} is not valid JSON: {exc}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,13 +201,15 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    module_variant = (
-        json.loads(args.variant) if args.variant else DEFAULT_VARIANT
+    module_variant = _decode_json_arg(
+        parser, "--variant", args.variant, DEFAULT_VARIANT
     )
-    if args.plan_variant:
-        plan_variant = json.loads(args.plan_variant)
-    else:
-        plan_variant = PLAN_VARIANT_DEFAULTS.get(args.plan)
+    plan_variant = _decode_json_arg(
+        parser,
+        "--plan-variant",
+        args.plan_variant,
+        PLAN_VARIANT_DEFAULTS.get(args.plan),
+    )
     include = set(args.include) if args.include else None
     exclude = set(args.exclude) if args.exclude else None
     expected_failures = (
@@ -199,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         # exit. No modules are kicked off, so the suite stack can be
         # torn down right after. Wait for Spring Boot first — same
         # reason as in run_plan().
-        session = requests.Session()
+        session = make_suite_session()
         wait_for_suite_ready(session)
         catalogue = create_plan(
             session, plan_name=args.plan, plan_variant=plan_variant

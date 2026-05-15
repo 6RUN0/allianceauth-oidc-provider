@@ -18,7 +18,7 @@ Other modules import from here rather than restating the constants.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -100,7 +100,6 @@ class ModuleResult:
     name: str
     test_id: str
     result: str  # PASSED / FAILED / WARNING / REVIEW / SKIPPED
-    log_excerpt: list[dict[str, Any]] = field(default_factory=list)
 
 
 def module_name(entry: dict[str, Any]) -> str:
