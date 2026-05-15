@@ -22,30 +22,15 @@ Usage::
     python tests/conformance/run_plan.py
     python tests/conformance/run_plan.py --plan oidcc-test-plan
     python tests/conformance/run_plan.py --strict-warnings
+
+This module deliberately does NOT re-export submodule symbols at
+package level. The conformance provider's slim Docker image ships
+only ``runner/config.py`` (the credential constants ``seed.py``
+needs) and leaves the other host-side submodules out; eager
+re-exports here would force every consumer of ``runner.config`` to
+also import ``cli`` / ``orchestrator`` / ``summary``, which crashes
+inside the slim image. Callers import directly from submodules
+(``from tests.conformance.runner.cli import main``).
 """
 
 from __future__ import annotations
-
-from .cli import main
-from .config import (
-    DEFAULT_VARIANT,
-    FAIL_RESULTS,
-    PASS_RESULTS,
-    PLAN_VARIANT_DEFAULTS,
-    WARN_RESULTS,
-    ModuleResult,
-)
-from .orchestrator import run_plan
-from .summary import emit_summary
-
-__all__ = [
-    "DEFAULT_VARIANT",
-    "FAIL_RESULTS",
-    "PASS_RESULTS",
-    "PLAN_VARIANT_DEFAULTS",
-    "WARN_RESULTS",
-    "ModuleResult",
-    "emit_summary",
-    "main",
-    "run_plan",
-]

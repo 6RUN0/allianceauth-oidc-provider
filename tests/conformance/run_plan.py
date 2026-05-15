@@ -12,7 +12,9 @@ does not break. New code should import from
 
 from __future__ import annotations
 
-from tests.conformance.runner import ModuleResult, main, run_plan
+from tests.conformance.runner.cli import main
+from tests.conformance.runner.config import ModuleResult
+from tests.conformance.runner.orchestrator import run_plan
 from tests.conformance.runner.summary import emit_summary as _emit_summary
 
 __all__ = ["ModuleResult", "_emit_summary", "main", "run_plan"]
