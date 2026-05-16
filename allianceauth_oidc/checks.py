@@ -57,6 +57,21 @@ that are not fatal but routinely cause incident-class confusion:
   operators should see this on ``manage.py check`` but not be
   blocked from deploying while they finish the second half of the
   opt-in.
+
+* **W003** — Single-Logout chain broken at first hop:
+  ``OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']`` was
+  explicitly set to ``False`` by the operator (the AllianceAuth
+  AppConfig defaults it to ``True`` via
+  :func:`apps._apply_default_oauth2_provider_settings` when the key
+  is absent — only an explicit ``False`` reaches this check), AND
+  at least one ``AllianceAuthApplication`` has a non-empty
+  ``backchannel_logout_uri``. With RP-initiated logout off there is
+  no end-user flow that triggers the back-channel logout-token
+  push, so the configured back-channel URIs receive nothing.
+  Warning (not Error) because back-channel logout can still fire
+  from out-of-band events (e.g. admin-triggered session
+  invalidation, future feature additions); the check surfaces the
+  apparent mismatch but does not block deployment.
 """
 
 from __future__ import annotations
@@ -80,6 +95,7 @@ E003_ID = "allianceauth_oidc.E003"
 E004_ID = "allianceauth_oidc.E004"
 W001_ID = "allianceauth_oidc.W001"
 W002_ID = "allianceauth_oidc.W002"
+W003_ID = "allianceauth_oidc.W003"
 
 # Dotted-path the W002 check compares ``ACCESS_TOKEN_GENERATOR``
 # against. Kept as a module-level constant so the same string is
@@ -507,3 +523,98 @@ def check_jwt_mode_wiring(
             )
         ]
     return []
+
+
+@checks.register(checks.Tags.compatibility)
+def check_logout_wiring(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W003`` (Warning) when the Single-Logout
+    chain is broken at its first hop.
+
+    Fires only when **both** of the following hold:
+
+    1. The operator EXPLICITLY set
+       ``OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED'] = False``.
+       Mere absence of the key is the AllianceAuth default-on path
+       (:func:`apps._apply_default_oauth2_provider_settings` writes
+       ``True`` via ``setdefault`` during ``ready()``). The check
+       distinguishes "explicit False" from "key absent" via
+       ``cfg.get(key, None) is not False`` — ``is not False`` rejects
+       both ``None`` (absence) and ``True``, and avoids the ``0 == False``
+       footgun an ``==`` comparison would introduce.
+
+    2. At least one ``AllianceAuthApplication`` has a non-empty
+       ``backchannel_logout_uri``. Without RP-initiated logout the
+       end-user flow that would normally produce a logout-token push
+       to those URIs is unreachable, so the configured back-channel
+       targets receive nothing for normal user sign-out events.
+
+    Severity is **Warning** (not Error) because back-channel logout
+    can still legitimately fire from out-of-band events — an admin
+    invalidating sessions through the Django shell, a future
+    feature that triggers logout chains from elsewhere, or an
+    operator deliberately running the AS in a "no user-facing
+    logout, only server-side" posture. The check surfaces the
+    apparent mismatch on every ``manage.py check`` run; it does
+    not block deployment.
+
+    Reads the explicit-False signal from raw ``settings.OAUTH2_PROVIDER``
+    rather than ``oauth2_settings.OIDC_RP_INITIATED_LOGOUT_ENABLED``
+    because the latter reflects DOT's resolved value AFTER
+    AppConfig defaults are applied — in a stock deployment that
+    value is always ``True`` once ``ready()`` has run, so a check
+    keyed off it could never observe the "operator opted out"
+    state we want to surface. The runtime semantics live in DOT;
+    the audit lives here.
+    """
+    cfg = getattr(settings, "OAUTH2_PROVIDER", None)
+    if not isinstance(cfg, dict):
+        return []
+    if cfg.get("OIDC_RP_INITIATED_LOGOUT_ENABLED", None) is not False:
+        return []
+    try:
+        Application = apps.get_model(
+            "allianceauth_oidc", "AllianceAuthApplication"
+        )
+        bcl_apps = list(
+            Application.objects.exclude(backchannel_logout_uri="").values_list(
+                "name", flat=True
+            )
+        )
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.W003 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    if not bcl_apps:
+        return []
+    # ``sorted`` keeps the message deterministic across hash-order
+    # changes in the queryset — important for assertIn-on-message
+    # tests and for operators diffing CI log output.
+    names = ", ".join(sorted(repr(n) for n in bcl_apps))
+    return [
+        checks.Warning(
+            (
+                "OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED'] is "
+                "explicitly False, but back-channel logout is configured "
+                f"on application(s) {names}. With RP-initiated logout "
+                "disabled, no end-user sign-out flow can trigger the "
+                "back-channel logout-token push to those URIs — the "
+                "Single-Logout chain is broken at the first hop."
+            ),
+            id=W003_ID,
+            hint=(
+                "Remove the explicit "
+                "OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED'] = False"
+                " from your settings (AllianceAuthOIDC.ready will then "
+                "default it to True), or clear backchannel_logout_uri "
+                "on the listed application(s) if back-channel logout is "
+                "no longer wanted there."
+            ),
+        )
+    ]

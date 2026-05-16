@@ -120,6 +120,40 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
 
         self.assertEqual(["normal"], doc.get("claim_types_supported"))
 
+    def test_discovery_advertises_end_session_endpoint(self):
+        """
+        OIDC RP-Initiated Logout 1.0 §2.1: discovery MUST publish
+        ``end_session_endpoint`` whenever the AS supports RP-initiated
+        logout. DOT gates this advertisement behind
+        ``OIDC_RP_INITIATED_LOGOUT_ENABLED`` (default ``False``
+        upstream); the AllianceAuth AppConfig flips that default to
+        ``True`` in :func:`_apply_default_oauth2_provider_settings`
+        so a stock deployment ships a working logout path without
+        explicit opt-in. This test pins that wired-together posture:
+        if the AppConfig default is reverted or the helper stops
+        running on app load, the key disappears and this assertion
+        fires loudly — instead of the silent half-paved street the
+        upstream default produces (``/o/logout/`` 404, discovery
+        missing the endpoint, RP-side logout libraries
+        feature-detecting off ``end_session_endpoint`` and giving
+        up).
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content.decode("utf-8"))
+        end_session = doc.get("end_session_endpoint")
+        self.assertIsInstance(end_session, str)
+        self.assertTrue(
+            end_session.startswith("http"),
+            f"end_session_endpoint={end_session!r} is not absolute",
+        )
+        # Sanity that DOT mounted the route we expect. Loose match
+        # (``in``) rather than an exact URL so the test survives DOT
+        # changing the mount prefix; a future rename to ``/o/end_session``
+        # would fail this assertion with a clear diff and prompt a
+        # deliberate review rather than a silent contract drift.
+        self.assertIn("/logout", end_session, end_session)
+
     def test_jwks_advertises_an_rsa_key_with_kid_and_alg(self):
         """
         JWKS must contain at least one RSA key with the fields downstream

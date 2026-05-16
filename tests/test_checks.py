@@ -508,3 +508,116 @@ class TestJwtModeWiringCheck(TestCase):
         msg = msgs[0]
         self.assertEqual(msg.id, W002_ID)
         self.assertEqual(msg.level, checks.WARNING)
+
+
+class TestLogoutWiringCheck(TestCase):
+    """
+    W003 — Single-Logout chain broken at first hop.
+
+    Four branches matter: key absent (default-on path), key True,
+    key False but no apps configured for back-channel logout, key
+    False with at least one app. Only the last fires a warning.
+    OIDCTestCase isn't reused here because the W003 helper reads
+    raw ``settings.OAUTH2_PROVIDER`` (not ``oauth2_settings``), so
+    DOT reload isn't required and a plain ``TestCase`` keeps the
+    test cheap.
+    """
+
+    def setUp(self) -> None:
+        """One BCL-configured user + app — reused across positive cases."""
+        from tests._factories import make_app, make_user
+
+        # Use ``make_user`` so the AA profile/state side-effects fire
+        # the same way they would in production; bare
+        # ``User.objects.create`` would leave a half-initialised user
+        # that the BCL save-path doesn't model.
+        self.user = make_user(username="w003-fixture")
+        self.creds = make_app(
+            owner=self.user,
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+        )
+
+    def test_w003_clean_when_flag_absent(self) -> None:
+        """
+        Key not in OAUTH2_PROVIDER → AppConfig default-on path.
+
+        The check distinguishes "absent" from "explicit False"
+        precisely so the default-on path never trips it. A spurious
+        firing here would surface on every fresh deployment whose
+        operator never had reason to set the flag at all.
+        """
+        from allianceauth_oidc.checks import check_logout_wiring
+
+        cfg = _override_oauth2_provider()
+        cfg.pop("OIDC_RP_INITIATED_LOGOUT_ENABLED", None)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_logout_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_w003_clean_when_flag_explicit_true(self) -> None:
+        """Operator-set True (the desired posture) → no warning."""
+        from allianceauth_oidc.checks import check_logout_wiring
+
+        cfg = _override_oauth2_provider(OIDC_RP_INITIATED_LOGOUT_ENABLED=True)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_logout_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_w003_clean_when_disabled_but_no_bcl_apps(self) -> None:
+        """
+        Flag explicitly False AND zero apps with backchannel_logout_uri.
+
+        The opt-out is "intentional" only when no Single-Logout
+        chain depends on it. Clearing the fixture's BCL URI
+        emulates "operator disabled RP-initiated logout AND never
+        configured back-channel" — a legitimate non-logout posture.
+        """
+        from allianceauth_oidc.checks import check_logout_wiring
+
+        self.creds.app.backchannel_logout_uri = ""
+        self.creds.app.save(update_fields=["backchannel_logout_uri"])
+
+        cfg = _override_oauth2_provider(OIDC_RP_INITIATED_LOGOUT_ENABLED=False)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_logout_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_w003_warning_when_disabled_and_bcl_app_present(self) -> None:
+        """
+        Explicit False + at least one BCL app → W003 Warning.
+
+        Message must include the offending app name so operators
+        can act on the diagnostic without grepping the DB. Pinning
+        the name in the message also catches the "queryset returned
+        but message omitted it" regression — a single missing
+        ``f"{names}"`` interpolation would silently break the
+        operator-facing experience without flipping the check
+        count.
+        """
+        from allianceauth_oidc.checks import (
+            W003_ID,
+            check_logout_wiring,
+        )
+
+        cfg = _override_oauth2_provider(OIDC_RP_INITIATED_LOGOUT_ENABLED=False)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_logout_wiring(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W003_ID)
+        self.assertEqual(msg.level, checks.WARNING)
+        self.assertIn(self.creds.app.name, msg.msg)
+
+    def test_w003_clean_when_oauth2_provider_is_not_dict(self) -> None:
+        """
+        Degraded shape (``OAUTH2_PROVIDER=None``) returns silently —
+        the check never fires on a malformed top-level setting. DOT
+        itself wouldn't function in this state; W003 must not
+        amplify the bigger failure by adding noisy false-positive
+        warnings on top of it.
+        """
+        from allianceauth_oidc.checks import check_logout_wiring
+
+        with override_settings(OAUTH2_PROVIDER=None):
+            msgs = check_logout_wiring(None)
+        self.assertEqual(msgs, [])
