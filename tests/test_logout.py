@@ -307,3 +307,61 @@ class TestLogoutCSRF(OIDCTestCase):
             client.force_login(self.user1)
             resp = client.get("/o/logout/")
             self.assertNotEqual(403, resp.status_code)
+
+
+class TestLogoutEndpointDefaultOn(OIDCTestCase):
+    """
+    AppConfig-integration smoke for /o/logout/.
+
+    Every other test in this module flips
+    ``OIDC_RP_INITIATED_LOGOUT_ENABLED=True`` explicitly via
+    ``override_settings(OAUTH2_PROVIDER=_enable_rp_logout())`` because
+    those cases were written before
+    :func:`allianceauth_oidc.apps._apply_default_oauth2_provider_settings`
+    made the flag default-on. The override path masks an entire
+    class of regression: if the AppConfig helper stops firing on
+    app load, DOT's stock ``False`` default would gate ``/o/logout/``
+    behind a 404, but every override-using test would still pass
+    because they overwrite the flag inside the test body.
+
+    This class deliberately uses NO override. A non-404 response
+    means both that the URL pattern is mounted in
+    ``allianceauth_oidc/urls.py`` AND that DOT's
+    ``RPInitiatedLogoutView`` sees ``OIDC_RP_INITIATED_LOGOUT_ENABLED``
+    as truthy — i.e. the AppConfig path is intact end-to-end.
+    """
+
+    def test_logout_endpoint_enabled_by_appconfig_default(self) -> None:
+        """
+        Anonymous GET against ``/o/logout/`` returns a non-404 status.
+
+        Status-code semantics in DOT 3.x:
+
+        * ``302`` to ``LOGIN_URL`` — anonymous user, the
+          ``login_required`` decorator on
+          ``RPInitiatedLogoutView.dispatch`` redirects. This is the
+          expected default branch.
+        * ``200`` — would indicate DOT changed the auth-required
+          posture; still a "route works" signal, so accepted here.
+        * ``404`` — route either unmounted or gated off by an
+          ``OIDC_RP_INITIATED_LOGOUT_ENABLED=False`` reading. This is
+          the regression mode this test exists to catch.
+
+        ``assertNotEqual(404, ...)`` rather than
+        ``assertIn({200, 302, 303}, ...)`` because DOT's exact
+        anonymous response shape is operator-affecting but not
+        contract-affecting: a future DOT release could legitimately
+        return 401 (RFC 6750) without breaking the AppConfig
+        contract. The 404 boundary is the one that matters.
+        """
+        resp = self.client.get("/o/logout/")
+        self.assertNotEqual(
+            404,
+            resp.status_code,
+            "/o/logout/ returned 404 without any explicit "
+            "OIDC_RP_INITIATED_LOGOUT_ENABLED override. The AppConfig "
+            "default-on helper (allianceauth_oidc.apps._apply_default_"
+            "oauth2_provider_settings) likely stopped running on app "
+            "load — either AllianceAuthOIDC.ready was modified or DOT "
+            "changed how OAuth2ProviderSettings caches the value.",
+        )

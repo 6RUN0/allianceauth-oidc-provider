@@ -364,6 +364,52 @@ class TestChecksBootstrapPaths(TestCase):
         # And the check returns [] (deferred), not a hard error.
         self.assertEqual(msgs, [])
 
+    def test_w003_bootstrap_lookup_error_yields_deferred_no_error(
+        self,
+    ) -> None:
+        """
+        W003's ``apps.get_model("allianceauth_oidc", "AllianceAuthApplication")``
+        can raise ``LookupError`` during ``manage.py migrate`` (the
+        check fires before the app registry is fully populated). The
+        catch must absorb that path and emit a WARNING with
+        ``exc_info=True`` — narrowing the catch would block migration
+        on its own check call; dropping ``exc_info`` would hide the
+        triggering exception from operator logs.
+
+        The check only reaches the ``get_model`` call when the
+        operator EXPLICITLY set the logout flag to False; otherwise
+        the early-return on the absent-key default-on path skips the
+        DB query entirely. Set the flag explicitly here so the
+        bootstrap branch is reachable.
+        """
+        from unittest import mock
+
+        from allianceauth_oidc.checks import check_logout_wiring
+
+        cfg = _override_oauth2_provider(OIDC_RP_INITIATED_LOGOUT_ENABLED=False)
+        with (
+            mock.patch(
+                "allianceauth_oidc.checks.apps.get_model",
+                side_effect=LookupError("App registry not ready"),
+            ),
+            override_settings(OAUTH2_PROVIDER=cfg),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.checks", level="WARNING"
+            ) as cap,
+        ):
+            msgs = check_logout_wiring(None)
+        self.assertEqual(msgs, [])
+        self.assertTrue(
+            any("W003" in r.message for r in cap.records),
+            f"WARNING log missing for W003 bootstrap: {cap.output}",
+        )
+        self.assertIsInstance(
+            cap.records[0].exc_info,
+            tuple,
+            "W003 deferred log lacks exc_info tuple — "
+            "ReplaceFalseWithTrue mutation?",
+        )
+
 
 class TestMaskedSecretLoggingInProductionCheck(TestCase):
     """W001 fires when masked-secret logging is on in production."""
