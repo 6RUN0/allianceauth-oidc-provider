@@ -54,6 +54,68 @@ def _resolve_host_bounded(
         return fut.result(timeout=deadline_seconds)
 
 
+def _is_unsafe_address(addr_str: str) -> bool:
+    """
+    Return True when ``addr_str`` resolves to an IP unsafe for outbound
+    HTTP from the worker.
+
+    Unsafe = the original five rejected predicates
+    (``is_private | is_loopback | is_link_local | is_multicast |
+    is_reserved``) plus ``is_unspecified`` (catches ``0.0.0.0`` and
+    ``::`` — both treated by the kernel as "this host"; ``0.0.0.0``
+    fell through every one of the five original predicates).
+
+    IPv4-encoded-in-IPv6 wrappers are unmapped before predicate
+    evaluation:
+
+    * ``::ffff:X.Y.Z.W`` — IPv4-mapped IPv6 (RFC 4291 §2.5.5.2). Some
+      kernels return this form when an IPv4 host is reachable through
+      a dual-stack resolver; without unmap, ``IPv4Address``-only
+      predicates (``is_private`` on RFC 1918) miss the address.
+    * ``2002:XXYY:ZZWW::`` — 6to4 (RFC 3056). Wraps an IPv4 address
+      in the upper 32 bits of a /16 prefix. ``2002:7f00:0001::``
+      wraps ``127.0.0.1`` — the IPv6 form is not loopback on its
+      own but the embedded IPv4 is.
+
+    Unparseable addresses return False (the caller treats this as
+    "continue to the next address" — a hostile resolver that returns
+    garbage cannot bypass the gate by relying on the garbage being
+    treated as "safe").
+    """
+    try:
+        addr: ipaddress.IPv4Address | ipaddress.IPv6Address = (
+            ipaddress.ip_address(addr_str)
+        )
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address):
+        if addr.ipv4_mapped is not None:
+            addr = addr.ipv4_mapped
+        elif addr.sixtofour is not None:
+            addr = addr.sixtofour
+    return (
+        addr.is_unspecified
+        or addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+    )
+
+
+def _resolved_addresses_have_unsafe(infos: list[tuple]) -> bool:
+    """
+    Return True if any address in a ``getaddrinfo`` result tuple list
+    is unsafe per :func:`_is_unsafe_address`.
+
+    Shared by :meth:`AllianceAuthApplication._validate_backchannel_logout_uri`
+    (admin-form gate) and ``tasks.send_logout_token`` (request-time
+    re-validation defending against DNS rebinding TOCTOU between
+    admin save and worker dispatch).
+    """
+    return any(_is_unsafe_address(info[4][0]) for info in infos)
+
+
 # Module-level so admin/forms/tests can re-import the same source of
 # truth, mirroring DOT's ``CLIENT_TYPES`` / ``GRANT_TYPES`` pattern on
 # ``AbstractApplication``. Translations live on the values; the keys
@@ -273,7 +335,24 @@ class AllianceAuthApplication(AbstractApplication):
         Per AC-3b, transient resolver failures are non-blocking: the
         admin save is allowed and a WARNING is logged for monitoring.
         Operators decide whether to alert on the warning frequency.
+
+        Internally split into a scheme half (TLS / DEBUG policy) and
+        a target half (DNS-resolved IP). The split exists so the
+        ``pre_save`` SSRF gate in
+        :func:`allianceauth_oidc.apps._connect_bcl_pre_save_gate`
+        can re-run the target half against non-admin write paths
+        (``Application.objects.create``, data migrations) without
+        also re-running scheme rejection — admin-form-only concerns
+        like ``http`` under ``DEBUG=False`` belong on the form, not
+        on the model's save path (where they would fail loudly on
+        legacy rows already persisted with ``http`` before the
+        validator existed).
         """
+        self._validate_uri_scheme_safety()
+        self._validate_uri_target_safety()
+
+    def _validate_uri_scheme_safety(self) -> None:
+        """Admin-form half: reject ``http://`` unless DEBUG is on."""
         parsed = urlsplit(self.backchannel_logout_uri)
         if parsed.scheme == "http" and not settings.DEBUG:
             raise ValidationError(
@@ -283,6 +362,26 @@ class AllianceAuthApplication(AbstractApplication):
                     ),
                 }
             )
+
+    def _validate_uri_target_safety(self) -> None:
+        """
+        SSRF half: reject hostnames resolving to private / loopback /
+        link-local / multicast / reserved / unspecified IPs.
+
+        Transient DNS failures are non-blocking (admin save allowed,
+        WARNING logged); the operator-facing
+        ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE`` flag bypasses
+        the check for dev / in-cluster RPs.
+
+        Shared by the admin-form ``clean()`` path and the
+        ``pre_save`` signal in ``apps._connect_bcl_pre_save_gate``;
+        the ``send_logout_token`` Celery task ALSO re-runs the
+        underlying ``_resolve_host_bounded`` +
+        ``_resolved_addresses_have_unsafe`` check at request time as
+        the final TOCTOU defence against DNS rebinding between save
+        and dispatch.
+        """
+        parsed = urlsplit(self.backchannel_logout_uri)
         host = parsed.hostname or ""
         if not host:
             return
@@ -307,26 +406,14 @@ class AllianceAuthApplication(AbstractApplication):
         )
         if allow_private:
             return
-        for info in infos:
-            addr_str = info[4][0]
-            try:
-                addr = ipaddress.ip_address(addr_str)
-            except ValueError:
-                continue
-            if (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_multicast
-                or addr.is_reserved
-            ):
-                raise ValidationError(
-                    {
-                        "backchannel_logout_uri": _(
-                            "backchannel_logout_uri must resolve to a public IP; private/loopback/link-local addresses are blocked. Set ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True for dev environments."  # noqa: E501
-                        ),
-                    }
-                )
+        if _resolved_addresses_have_unsafe(infos):
+            raise ValidationError(
+                {
+                    "backchannel_logout_uri": _(
+                        "backchannel_logout_uri must resolve to a public IP; private/loopback/link-local/unspecified addresses are blocked. Set ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True for dev environments."  # noqa: E501
+                    ),
+                }
+            )
 
     class Meta:
         # `ordering` makes the admin changelist's pagination stable.

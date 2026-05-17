@@ -7,6 +7,7 @@ from typing import Any, Final
 
 from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
+from typing_extensions import assert_never
 
 from ._metrics import policy_rejections
 from .app_settings import OIDCSettings
@@ -190,6 +191,18 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                     getattr(resolved_client, "client_id", None),
                 )
                 return False
+            case _:
+                # ``AccessDecision`` is a closed discriminated union;
+                # ``assert_never`` makes the exhaustiveness a static
+                # invariant. Without this arm a future fourth variant
+                # would silently let the function fall off the end and
+                # return ``None``, which oauthlib treats as falsy at
+                # the ``validate_code`` / ``validate_refresh_token``
+                # callsites — surfacing as ``invalid_grant`` rather
+                # than the loud TypeError that ``assert_never``
+                # produces. Mirrors the same pattern in
+                # ``views_authorize.AuthAuthorizationView.dispatch``.
+                assert_never(decision)
 
     def validate_silent_login(self, request):
         """

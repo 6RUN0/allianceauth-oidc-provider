@@ -241,7 +241,27 @@ class TestBclMetrics(OIDCTestCase):
         }
         before = _sample_value("aa_oidc_bcl_delivery_seconds_count", **labels)
 
-        with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
+        import socket
+
+        # Stub request-time SSRF gate so the metric assertion is not
+        # blocked by DNS resolution against rp.example.com (which is
+        # NXDOMAIN on CI and the fail-closed branch returns before
+        # the histogram is observed).
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        0,
+                        "",
+                        ("1.1.1.1", 0),
+                    )
+                ],
+            ),
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
             post.return_value = mock.MagicMock(status_code=204)
             send_logout_token(
                 user_pk=self.user1.pk,

@@ -18,8 +18,11 @@ clashing.
 
 from __future__ import annotations
 
+import contextlib
 import itertools
+import socket
 from typing import NamedTuple
+from unittest import mock
 
 from allianceauth.authentication.models import (
     CharacterOwnership,
@@ -35,6 +38,20 @@ from oauth2_provider.generators import (
     generate_client_secret,
 )
 from oauth2_provider.models import AbstractApplication, get_application_model
+
+# Pre-built ``getaddrinfo`` reply pointing at Cloudflare DNS (a
+# documented public address). Used by ``make_app`` to bypass the
+# BCL pre_save SSRF gate so tests that pass
+# ``backchannel_logout_uri=`` to the factory get a predictable
+# public-IP path without depending on real DNS resolution for
+# ``rp.example.com`` (which may be NXDOMAIN, may be resolved by a
+# catch-all, or — worst case — may be resolved to a private IP by
+# a developer's local DNS, all of which would make the test flaky).
+# Tests that explicitly exercise the SSRF gate bypass make_app and
+# instantiate the model directly.
+_FACTORY_PUBLIC_RESOLVER_REPLY = [
+    (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("1.1.1.1", 0))
+]
 
 
 class AppCredentials(NamedTuple):
@@ -236,22 +253,30 @@ def make_app(
     """
     client_id = generate_client_id()
     raw_secret = generate_client_secret()
-    app = get_application_model().objects.create(
-        user=owner,
-        client_id=client_id,
-        redirect_uris=redirect_uri,
-        client_type=client_type,
-        authorization_grant_type=authorization_grant_type,
-        client_secret=raw_secret,
-        name=f"TEST APP - {client_id}",
-        skip_authorization=skip_authorization,
-        algorithm=algorithm,
-        active=active,
-        debug_mode=debug_mode,
-        pkce_required=pkce_required,
-        access_token_format=access_token_format,
-        backchannel_logout_uri=backchannel_logout_uri,
-    )
+    with contextlib.ExitStack() as stack:
+        if backchannel_logout_uri:
+            stack.enter_context(
+                mock.patch(
+                    "allianceauth_oidc.models._resolve_host_bounded",
+                    return_value=_FACTORY_PUBLIC_RESOLVER_REPLY,
+                )
+            )
+        app = get_application_model().objects.create(
+            user=owner,
+            client_id=client_id,
+            redirect_uris=redirect_uri,
+            client_type=client_type,
+            authorization_grant_type=authorization_grant_type,
+            client_secret=raw_secret,
+            name=f"TEST APP - {client_id}",
+            skip_authorization=skip_authorization,
+            algorithm=algorithm,
+            active=active,
+            debug_mode=debug_mode,
+            pkce_required=pkce_required,
+            access_token_format=access_token_format,
+            backchannel_logout_uri=backchannel_logout_uri,
+        )
     for state_name in states or []:
         app.states.add(State.objects.get(name=state_name))
     for grp_name in groups or []:

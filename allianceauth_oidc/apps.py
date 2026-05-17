@@ -71,6 +71,49 @@ def _apply_default_oauth2_provider_settings() -> None:
     setattr(oauth2_settings, attr_name, provider[attr_name])
 
 
+def _connect_bcl_pre_save_gate() -> None:
+    """
+    Register a ``pre_save`` gate on :class:`AllianceAuthApplication`
+    so non-admin write paths cannot bypass the BCL SSRF validator.
+
+    Django's ``full_clean()`` (and therefore ``clean()``) is invoked
+    automatically by ``ModelForm`` saves, but NOT by
+    ``Application.objects.create(...)`` / ``Application(...).save()``
+    / ``fixtures`` / ``data migrations``. Without this signal, an
+    operator who registers a BCL URI through a non-admin code path
+    bypasses the public-IP requirement and the
+    ``_validate_no_nul_in_uri_fields`` gate.
+
+    The signal-side gate runs ONLY when
+    ``backchannel_logout_uri`` is non-empty so the typical
+    ``Application.save()`` under the OAuth code-exchange path (which
+    never touches BCL fields) pays no DNS cost. The validator itself
+    is non-blocking on transient DNS failures (per AC-3b) — so a
+    flaky resolver does not break unrelated app saves.
+
+    ``weak=False`` keeps the receiver alive past local scope (the
+    closure would otherwise be garbage-collected after ``ready()``
+    returns). ``dispatch_uid`` makes the wire-up idempotent across
+    test reloads.
+    """
+    from django.db.models.signals import pre_save
+    from django.dispatch import receiver
+
+    @receiver(
+        pre_save,
+        sender="allianceauth_oidc.AllianceAuthApplication",
+        dispatch_uid="allianceauth_oidc.bcl_uri_save_gate",
+        weak=False,
+    )
+    def _enforce(  # pyright: ignore[reportUnusedFunction]
+        sender,  # noqa: ARG001
+        instance,
+        **kwargs,  # noqa: ARG001
+    ) -> None:
+        if getattr(instance, "backchannel_logout_uri", ""):
+            instance._validate_uri_target_safety()  # noqa: SLF001
+
+
 def _check_jwt_wiring() -> None:
     """
     Log a warning when JWT mode is on but the dispatcher is missing.
@@ -204,3 +247,4 @@ class AllianceAuthOIDC(AppConfig):
         # both helpers observe the same final oauth2_settings state.
         _apply_default_oauth2_provider_settings()
         _check_jwt_wiring()
+        _connect_bcl_pre_save_gate()

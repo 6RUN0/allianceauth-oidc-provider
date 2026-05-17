@@ -176,6 +176,25 @@ class TestBackChannelLogoutModel(OIDCTestCase):
             ("ipv6_ula_private", "fc00::1"),
             ("ipv4_mapped_ipv6_loopback", "::ffff:127.0.0.1"),
             ("cloud_metadata", "169.254.169.254"),
+            # ``0.0.0.0`` / ``::`` are "this host" on Linux and bypass
+            # the five legacy predicates (``is_private``,
+            # ``is_loopback``, ``is_link_local``, ``is_multicast``,
+            # ``is_reserved``) — caught only by ``is_unspecified``,
+            # which the validator was extended to honour (B2).
+            ("ipv4_unspecified", "0.0.0.0"),
+            ("ipv6_unspecified", "::"),
+            # ``::ffff:0.0.0.0`` — IPv4-mapped form of the unspecified
+            # address. Both the v4 unmap path AND the
+            # ``is_unspecified`` predicate on the unmapped result
+            # must cooperate; without the unmap the IPv6 predicate
+            # would not fire.
+            ("ipv4_mapped_unspecified", "::ffff:0.0.0.0"),
+            # ``2002:7f00:0001::`` is 6to4 (RFC 3056) wrapping
+            # ``127.0.0.1``. The IPv6 form itself is not loopback;
+            # only the ``sixtofour`` unmap exposes the embedded
+            # private IPv4. Without unmap the address bypasses every
+            # legacy predicate — the canonical 6to4 SSRF bypass.
+            ("sixtofour_loopback", "2002:7f00:0001::"),
         )
         for label, ip in cases:
             with self.subTest(address=label):
@@ -1030,6 +1049,42 @@ class TestAppsWithActiveTokensFilter(OIDCTestCase):
         result = apps_with_active_tokens(user)
         self.assertEqual([a.pk for a in result], [live.app.pk])
 
+    def test_deactivated_app_with_active_tokens_is_excluded(self) -> None:
+        """
+        B3 — ``Application.active=False`` is the operator's kill-
+        switch (see ``AllianceAuthApplication.active`` help_text).
+        Without this filter, a deactivated RP keeps receiving signed
+        ``logout_token`` POSTs on every lifecycle event after the
+        kill — which contradicts the help_text contract and leaks
+        ``sub`` / ``iss`` / ``aud`` / ``jti`` claims to a client the
+        operator believed to be silenced.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        from allianceauth_oidc.logout import apps_with_active_tokens
+
+        from ._factories import make_app
+
+        user = self.users[0]
+        # Note: ``active=False`` at creation time so DOT's stock
+        # ``Application.save()`` does not re-flip the flag. The
+        # token row is created independently — the contract under
+        # test is that the FILTER excludes the app even when the
+        # tokens are otherwise eligible (unexpired / un-revoked).
+        creds = make_app(owner=user, active=False)
+        AT = get_access_token_model()
+        AT.objects.create(
+            user=user,
+            application=creds.app,
+            token=f"deact-{user.pk}",
+            expires=timezone.now() + timedelta(hours=1),
+            scope="openid",
+        )
+        self.assertEqual(apps_with_active_tokens(user), [])
+
 
 class TestBackChannelLogoutTriggers(OIDCTestCase):
     """
@@ -1264,6 +1319,36 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
             )
         apply_async.assert_not_called()
 
+    def test_dispatcher_drops_deactivated_app(self) -> None:
+        """
+        B3 — defence-in-depth against custom receivers that bypass
+        ``apps_with_active_tokens``. Even when a deactivated RP has
+        a registered ``backchannel_logout_uri``, the dispatcher MUST
+        short-circuit via ``is_usable(None) == False`` — the kill-
+        switch contract is "no further OIDC traffic", and BCL fan-out
+        IS OIDC traffic carrying ``sub``/``iss``/``aud``/``jti``.
+        """
+        from allianceauth_oidc.logout import dispatch_backchannel_logout
+
+        dead_app = make_app(
+            owner=self.user2,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+            active=False,
+        ).app
+        with (
+            mock.patch(
+                "allianceauth_oidc.tasks.send_logout_token.apply_async"
+            ) as apply_async,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_backchannel_logout(
+                sender=type(self.user1),
+                user=self.user1,
+                application=dead_app,
+                reason="user_revoked",
+            )
+        apply_async.assert_not_called()
+
     # ---------- AC-32 — state scoping: only affected RPs ----------
 
     def test_ac32_group_removal_scopes_to_gated_apps_only(self) -> None:
@@ -1347,7 +1432,17 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
 
         oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink")
         try:
-            with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
+            # Stub the request-time SSRF re-resolution so the test
+            # exercises the HTTP-routing logic without touching DNS.
+            # The validator itself is exercised separately by
+            # ``TestSendLogoutTokenSSRFGate``.
+            with (
+                mock.patch(
+                    "allianceauth_oidc.models._resolve_host_bounded",
+                    return_value=_stub_resolver(_PUBLIC_IP),
+                ),
+                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+            ):
                 if raises is not None:
                     post.side_effect = raises
                 else:
@@ -1518,6 +1613,10 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                     "request",
                     new_callable=mock.PropertyMock,
                     return_value=fake_request,
+                ),
+                mock.patch(
+                    "allianceauth_oidc.models._resolve_host_bounded",
+                    return_value=_stub_resolver(_PUBLIC_IP),
                 ),
                 mock.patch("allianceauth_oidc.tasks.requests.post") as post,
             ):
@@ -1691,6 +1790,10 @@ class TestSendLogoutTokenBoundaries(OIDCTestCase):
                     "request",
                     new_callable=mock.PropertyMock,
                     return_value=fake_request,
+                ),
+                mock.patch(
+                    "allianceauth_oidc.models._resolve_host_bounded",
+                    return_value=_stub_resolver(_PUBLIC_IP),
                 ),
                 mock.patch("allianceauth_oidc.tasks.requests.post") as post,
             ):
@@ -1935,6 +2038,10 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
             self.assertLogs(
                 "extensions.allianceauth_oidc.tasks", level=logging.WARNING
             ) as captured,
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
             mock.patch("allianceauth_oidc.tasks.requests.post") as post,
         ):
             post.return_value = mock.MagicMock(status_code=status_code)
@@ -2008,7 +2115,13 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
 
         oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ac38")
         try:
-            with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
+            with (
+                mock.patch(
+                    "allianceauth_oidc.models._resolve_host_bounded",
+                    return_value=_stub_resolver(_PUBLIC_IP),
+                ),
+                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+            ):
                 post.return_value = mock.MagicMock(status_code=200)
                 send_logout_token(
                     user_pk=self.user1.pk,
@@ -3107,3 +3220,258 @@ class TestModelsKillMutants(OIDCTestCase):
         with self.assertRaises(ValidationError) as ctx:
             app.clean()
         self.assertIn("access_token_format", ctx.exception.message_dict)
+
+
+class TestSendLogoutTokenSSRFGate(OIDCTestCase):
+    """
+    B1 — request-time SSRF re-validation in ``send_logout_token``.
+
+    The admin-form gate in ``AllianceAuthApplication.clean()`` cannot
+    prevent DNS rebinding: between admin save and worker dispatch the
+    operator-registered hostname may have re-resolved to a private /
+    loopback / unspecified IP. The worker's ``requests.post`` resolves
+    the host independently — so the gate MUST re-validate before
+    issuing the POST. These tests pin that contract.
+
+    Fixture pattern: ``make_app`` stubs DNS at create-time (returns
+    ``1.1.1.1``) so the app row exists, then each test overrides
+    ``_resolve_host_bounded`` separately to drive the request-time
+    path. Tests assert two things in tandem: (1) ``requests.post``
+    is NOT called, and (2) the ``oidc_logout_dispatched`` audit
+    signal fires with the expected reason. Failing either assertion
+    indicates a real SSRF regression.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        creds = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.com/bcl",
+        )
+        self.app = creds.app
+
+    def _active_signing_kid(self) -> str:
+        from jwcrypto import jwk
+
+        pem = oauth2_settings.OIDC_RSA_PRIVATE_KEY.encode()
+        return str(jwk.JWK.from_pem(pem).thumbprint())
+
+    def _run(
+        self,
+        *,
+        resolver_ips: tuple[str, ...] | None = None,
+        resolver_raises: Exception | None = None,
+    ) -> tuple[list, mock.MagicMock]:
+        """Run send_logout_token with the given resolver behaviour."""
+        from allianceauth_oidc.signals import oidc_logout_dispatched
+        from allianceauth_oidc.tasks import send_logout_token
+
+        dispatches: list[dict] = []
+
+        def sink(sender, application, jti, success, attempt_count, **kw):
+            dispatches.append(
+                {
+                    "success": success,
+                    "reason": kw.get("reason"),
+                }
+            )
+
+        if resolver_raises is not None:
+            resolver_mock = mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                side_effect=resolver_raises,
+            )
+        else:
+            resolver_mock = mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver(*(resolver_ips or ())),
+            )
+        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ssrf")
+        try:
+            with (
+                resolver_mock,
+                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+            ):
+                post.return_value = mock.MagicMock(status_code=200)
+                send_logout_token(
+                    user_pk=self.user1.pk,
+                    application_pk=self.app.pk,
+                    jti="deadbeef" * 4,
+                    signing_kid=self._active_signing_kid(),
+                    iat=1_700_000_000,
+                )
+                return dispatches, post
+        finally:
+            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.ssrf")
+
+    def test_request_time_rebinding_to_private_blocked(self) -> None:
+        """DNS rebinding to RFC 1918 caught — no POST, audit fires."""
+        dispatches, post = self._run(resolver_ips=("10.0.0.1",))
+        post.assert_not_called()
+        self.assertEqual(
+            dispatches,
+            [{"success": False, "reason": "unsafe_target_ip"}],
+        )
+
+    def test_request_time_rebinding_to_unspecified_blocked(self) -> None:
+        """``0.0.0.0`` (B2 bypass) caught at request time."""
+        dispatches, post = self._run(resolver_ips=("0.0.0.0",))
+        post.assert_not_called()
+        self.assertEqual(
+            dispatches,
+            [{"success": False, "reason": "unsafe_target_ip"}],
+        )
+
+    def test_request_time_rebinding_to_ipv4_mapped_loopback_blocked(
+        self,
+    ) -> None:
+        """``::ffff:127.0.0.1`` (B2 IPv4-in-IPv6) caught at request time."""
+        dispatches, post = self._run(resolver_ips=("::ffff:127.0.0.1",))
+        post.assert_not_called()
+        self.assertEqual(
+            dispatches,
+            [{"success": False, "reason": "unsafe_target_ip"}],
+        )
+
+    def test_request_time_rebinding_to_sixtofour_loopback_blocked(
+        self,
+    ) -> None:
+        """``2002:7f00:0001::`` (6to4-wrapped 127.0.0.1) caught."""
+        dispatches, post = self._run(resolver_ips=("2002:7f00:0001::",))
+        post.assert_not_called()
+        self.assertEqual(
+            dispatches,
+            [{"success": False, "reason": "unsafe_target_ip"}],
+        )
+
+    def test_request_time_dns_failure_blocks_dispatch(self) -> None:
+        """
+        Resolver failure → fail-closed. A transient gaierror at
+        request time means we cannot confirm the target is safe —
+        a missed logout is preferable to a single POST to
+        ``169.254.169.254`` / ``127.0.0.1`` if the rebinding is
+        live. Audit emits ``reason="dns_resolve_failed"`` so
+        operators can investigate.
+        """
+        dispatches, post = self._run(
+            resolver_raises=socket.gaierror("nodename nor servname")
+        )
+        post.assert_not_called()
+        self.assertEqual(
+            dispatches,
+            [{"success": False, "reason": "dns_resolve_failed"}],
+        )
+
+    def test_request_time_safe_target_passes_dispatch(self) -> None:
+        """Public IP at request time → POST proceeds normally."""
+        dispatches, post = self._run(resolver_ips=(_PUBLIC_IP,))
+        post.assert_called_once()
+        self.assertEqual(dispatches, [{"success": True, "reason": None}])
+
+    def test_request_time_mixed_public_and_private_rejected(self) -> None:
+        """
+        Mixed-record DNS reply (one public, one private) MUST reject.
+        Mirrors the admin-time
+        ``test_ac3a_mixed_public_and_private_in_dns_rejected`` contract:
+        an attacker who controls a record can serve a mixed set hoping
+        the validator inspects only the first answer. The gate iterates
+        all addresses and rejects on any unsafe hit.
+        """
+        dispatches, post = self._run(resolver_ips=(_PUBLIC_IP, "10.0.0.1"))
+        post.assert_not_called()
+        self.assertEqual(
+            dispatches,
+            [{"success": False, "reason": "unsafe_target_ip"}],
+        )
+
+    @override_settings(ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True)
+    def test_allow_private_flag_bypasses_request_time_gate(self) -> None:
+        """
+        Dev escape hatch ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE``
+        bypasses the request-time gate the same way it bypasses the
+        admin-time gate. Operators running in-cluster RPs (k8s
+        ClusterIP) need this to dispatch at all; production deployments
+        leave it unset.
+        """
+        dispatches, post = self._run(resolver_ips=("10.0.0.1",))
+        post.assert_called_once()
+        self.assertEqual(dispatches, [{"success": True, "reason": None}])
+
+
+class TestBclUriPreSaveGate(OIDCTestCase):
+    """
+    B1 — ``pre_save`` SSRF gate on ``AllianceAuthApplication``.
+
+    Django's ``full_clean()`` (and therefore ``clean()``) is invoked
+    by ``ModelForm`` automatically but NOT by
+    ``Application.objects.create(...)`` / ``.save()``. Without a
+    pre_save signal, a non-admin code path (fixtures, data
+    migrations, a custom management command) can register a private
+    BCL URI and bypass the admin-time SSRF gate entirely. These
+    tests pin the signal-side defence.
+
+    Tests bypass ``make_app`` (which stubs DNS) and instantiate the
+    model directly so the real pre_save signal fires against the
+    resolver mock the test installs.
+    """
+
+    def _new_unsaved_app(self, *, uri: str) -> AllianceAuthApplication:
+        # Construct without calling save() — caller drives the save
+        # to assert against the pre_save signal.
+        return AllianceAuthApplication(
+            user=self.user1,
+            client_id=f"presave-{uri or 'blank'}",
+            redirect_uris="https://rp.example.org/cb",
+            client_type="confidential",
+            authorization_grant_type="authorization-code",
+            client_secret="x" * 32,  # nosec B105 - fixture, not a real secret
+            name=f"PRESAVE - {uri or 'blank'}",
+            algorithm="RS256",
+            backchannel_logout_uri=uri,
+        )
+
+    @override_settings(DEBUG=False)
+    def test_objects_create_with_private_uri_raises(self) -> None:
+        """
+        ``Application(...).save()`` with a URI that resolves private
+        MUST raise ``ValidationError`` from the pre_save signal —
+        proves the gate runs on the non-admin write path.
+        """
+        app = self._new_unsaved_app(uri="https://rp.example.com/bcl")
+        with (
+            mock.patch(
+                "allianceauth_oidc.models._resolve_host_bounded",
+                return_value=_stub_resolver("10.0.0.1"),
+            ),
+            self.assertRaises(ValidationError) as ctx,
+        ):
+            app.save()
+        self.assertIn("backchannel_logout_uri", ctx.exception.error_dict)
+
+    @override_settings(DEBUG=False)
+    def test_objects_create_with_safe_uri_succeeds(self) -> None:
+        """Public-IP resolution → save proceeds normally."""
+        app = self._new_unsaved_app(uri="https://rp.example.com/bcl")
+        with mock.patch(
+            "allianceauth_oidc.models._resolve_host_bounded",
+            return_value=_stub_resolver(_PUBLIC_IP),
+        ):
+            app.save()
+        app.refresh_from_db()
+        self.assertEqual(
+            app.backchannel_logout_uri, "https://rp.example.com/bcl"
+        )
+
+    def test_save_with_blank_uri_skips_dns_lookup(self) -> None:
+        """
+        Blank URI MUST NOT trigger a DNS lookup. The typical OAuth
+        ``Application.save()`` (which never touches BCL fields) pays
+        no cost — that's the whole point of the ``if uri:`` gate
+        inside the signal handler.
+        """
+        app = self._new_unsaved_app(uri="")
+        with mock.patch(
+            "allianceauth_oidc.models._resolve_host_bounded"
+        ) as resolver:
+            app.save()
+        resolver.assert_not_called()

@@ -187,7 +187,17 @@ def apps_with_active_tokens(user: Any) -> list[Any]:
     from oauth2_provider.models import get_application_model
 
     Application = get_application_model()
-    return list(Application.objects.filter(pk__in=app_ids))
+    # ``active=False`` is the operator's kill-switch for a compromised
+    # or retired client (see ``AllianceAuthApplication.active``
+    # help_text). Filtering the fan-out here means a deactivated RP
+    # stops receiving signed ``logout_token`` POSTs on subsequent
+    # user-lifecycle events — without this filter, the kill-switch
+    # contradicts itself (the deactivated client keeps getting
+    # ``sub``/``iss``/``aud``/``jti`` deliveries). The
+    # ``dispatch_backchannel_logout`` callsite ALSO short-circuits on
+    # ``application.is_usable(None)`` as belt-and-suspenders against
+    # custom receivers that bypass this helper.
+    return list(Application.objects.filter(pk__in=app_ids, active=True))
 
 
 def dispatch_backchannel_logout(
@@ -226,6 +236,16 @@ def dispatch_backchannel_logout(
     logger = logging.getLogger(f"extensions.{__name__}")
 
     if not getattr(application, "backchannel_logout_uri", ""):
+        return
+    # Defence-in-depth against the kill-switch contract being silently
+    # bypassed by a custom receiver wired upstream of
+    # ``apps_with_active_tokens`` (which already filters
+    # ``active=True``). ``is_usable(None)`` returns ``self.active`` on
+    # ``AllianceAuthApplication``; the upstream DOT contract calls it
+    # the "client usability" check, so a deactivated app correctly
+    # short-circuits here without surfacing in the BCL fan-out audit.
+    is_usable = getattr(application, "is_usable", None)
+    if callable(is_usable) and not is_usable(None):
         return
     # Custom receivers that need to bypass this gate MUST emit
     # ``reason="user_revoked"``; any other reason (including

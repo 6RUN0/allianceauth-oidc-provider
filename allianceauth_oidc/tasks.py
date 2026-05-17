@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import socket
 import time
 from datetime import timedelta
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import requests
 from celery import shared_task
+from django.conf import settings
 from django.utils import timezone
 from oauth2_provider.models import (
     clear_expired,
@@ -108,6 +112,101 @@ def clear_expired_tokens() -> None:
 _HTTP_TIMEOUT: tuple[int, int] = (5, 10)
 
 
+def _request_time_ssrf_gate_passes(
+    *,
+    application: Any,
+    user_pk: int,
+    jti: str,
+    attempt_count: int,
+) -> bool:
+    """
+    Re-validate the dispatch target between admin save and POST.
+
+    Returns ``True`` when the host either does not need a check
+    (blank host, ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True``)
+    or resolves to addresses that are all safe; returns ``False``
+    when the gate blocks dispatch, having already emitted the
+    corresponding ``oidc_logout_dispatched(success=False, reason=...)``
+    audit signal for downstream receivers
+    (:func:`record_backchannel_logout_attempt`, the metrics receiver).
+
+    Defends against DNS-rebinding TOCTOU between admin save and worker
+    dispatch — the admin-time gate in
+    :meth:`AllianceAuthApplication._validate_uri_target_safety` runs on
+    a different ``getaddrinfo`` call than ``requests.post`` will make,
+    so the live answer may have rotated to a private / loopback /
+    unspecified IP. Fail-closed on resolver failures: a missed logout
+    is preferable to a single SSRF POST landing on
+    ``169.254.169.254`` / ``127.0.0.1`` / ``0.0.0.0`` if the rebinding
+    is live.
+    """
+    # The helpers are module-private to ``.models`` by naming
+    # convention but explicitly shared with this request-time gate.
+    from .models import (
+        _resolve_host_bounded,  # pyright: ignore[reportPrivateUsage]
+        _resolved_addresses_have_unsafe,  # pyright: ignore[reportPrivateUsage]
+    )
+    from .signals import BackChannelLogoutSender, oidc_logout_dispatched
+    from .utils import build_logout_debug_meta
+
+    parsed = urlsplit(application.backchannel_logout_uri)
+    host = parsed.hostname or ""
+    allow_private = getattr(
+        settings, "ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE", False
+    )
+    if not host or allow_private:
+        return True
+    try:
+        infos = _resolve_host_bounded(host)
+    except (
+        TimeoutError,
+        socket.gaierror,
+        OSError,
+        concurrent.futures.TimeoutError,
+    ) as err:
+        logger.warning(
+            "OIDC BCL: cannot re-resolve host for request-time SSRF gate; skipping dispatch (host=%r, err=%r) meta=%s",  # noqa: E501
+            host,
+            err,
+            build_logout_debug_meta(
+                application=application,
+                jti=jti,
+                reason="dns_resolve_failed",
+            ),
+        )
+        oidc_logout_dispatched.send(
+            sender=BackChannelLogoutSender,
+            application=application,
+            user_pk=user_pk,
+            jti=jti,
+            success=False,
+            attempt_count=attempt_count,
+            reason="dns_resolve_failed",
+        )
+        return False
+    if _resolved_addresses_have_unsafe(infos):
+        logger.warning(
+            "OIDC BCL: request-time DNS returned unsafe IP; skipping dispatch (host=%r) meta=%s",  # noqa: E501
+            host,
+            build_logout_debug_meta(
+                application=application,
+                jti=jti,
+                reason="unsafe_target_ip",
+            ),
+        )
+        oidc_logout_dispatched.send(
+            sender=BackChannelLogoutSender,
+            application=application,
+            user_pk=user_pk,
+            jti=jti,
+            success=False,
+            attempt_count=attempt_count,
+            reason="unsafe_target_ip",
+        )
+        return False
+    return True
+
+
 @shared_task(
     bind=True,
     name=TASK_SEND_LOGOUT_TOKEN,
@@ -128,7 +227,7 @@ _HTTP_TIMEOUT: tuple[int, int] = (5, 10)
     # them across the backoff window.
     retry_jitter=True,
 )
-def send_logout_token(
+def send_logout_token(  # noqa: PLR0911
     self: Any,
     user_pk: int,
     application_pk: int,
@@ -198,6 +297,13 @@ def send_logout_token(
             attempt_count=attempt_count,
             reason="signing_kid_retired",
         )
+        return
+    if not _request_time_ssrf_gate_passes(
+        application=application,
+        user_pk=user_pk,
+        jti=jti,
+        attempt_count=attempt_count,
+    ):
         return
     # Histogram-friendly span: ``time.monotonic`` is immune to
     # wall-clock drift so the observation reflects true HTTP latency
