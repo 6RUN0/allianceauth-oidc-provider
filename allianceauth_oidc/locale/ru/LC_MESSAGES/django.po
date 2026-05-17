@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: allianceauth-oidc-provider 0.0.1b9\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-10 17:43+0000\n"
+"POT-Creation-Date: 2026-05-17 19:27+0000\n"
 "PO-Revision-Date: 2026-05-06 11:25+0500\n"
 "Last-Translator: Boris Talovikov <boris@talovikov.ru>\n"
 "Language-Team: Russian <ru@li.org>\n"
@@ -19,6 +19,19 @@ msgstr ""
 "Plural-Forms: nplurals=4; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "n%10<=4 && (n%100<12 || n%100>14) ? 1 : n%10==0 || (n%10>=5 && n%10<=9) || "
 "(n%100>=11 && n%100<=14)? 2 : 3);\n"
+
+msgid "Send test back-channel logout"
+msgstr ""
+
+#, python-format
+msgid ""
+"Test back-channel logout dispatched for %(count)d application(s) "
+"(reason='admin_test')."
+msgstr ""
+
+#, python-format
+msgid "Skipped %(count)d application(s) without backchannel_logout_uri."
+msgstr ""
 
 #, python-brace-format
 msgid "Alliance Auth OIDC v{version}"
@@ -35,6 +48,13 @@ msgstr "Фильтр по client_id приложения."
 
 msgid "Include tokens past their expiry timestamp."
 msgstr "Включать токены с истекшим сроком действия."
+
+msgid ""
+"Restrict output to tokens that do not match the operator's current "
+"configuration: TTL farther in the future than a freshly-minted token would "
+"be, or issued by an application currently marked active=False. Adds a "
+"``reasons`` column listing which checks fired."
+msgstr ""
 
 msgid "Create a new AllianceAuthApplication and print its credentials."
 msgstr "Создать новое OIDC-приложение и вывести его credentials."
@@ -56,6 +76,31 @@ msgid ""
 "Default: True. Pass --no-pkce-required for known-incompatible legacy clients."
 msgstr ""
 
+msgid ""
+"Mint a fresh RSA private key for JWKS rotation; print PEM and RFC 7638 "
+"thumbprint."
+msgstr ""
+
+msgid ""
+"Write the bare PEM to this path (mode 0600) instead of printing it to "
+"stdout. The kid and rotation recipe still go to stdout."
+msgstr ""
+
+msgid ""
+"RSA key size in bits. Default and floor 2048 (FIPS 186-4); compliance "
+"regimes targeting 128-bit security strength typically request 3072+."
+msgstr ""
+
+msgid ""
+"Rotation recipe (overlap window prevents in-flight JWT invalidation):\n"
+"  1. Move current OIDC_RSA_PRIVATE_KEY into\n"
+"     OIDC_RSA_PRIVATE_KEYS_INACTIVE.\n"
+"  2. Set OIDC_RSA_PRIVATE_KEY to the PEM above.\n"
+"  3. Restart Auth. JWKS now publishes both kids; existing JWTs validate.\n"
+"  4. After your access-token TTL x 2, drop the old PEM from\n"
+"     OIDC_RSA_PRIVATE_KEYS_INACTIVE."
+msgstr ""
+
 msgid "Revoke all OAuth2 tokens for a given user."
 msgstr "Отозвать все OAuth2-токены указанного пользователя."
 
@@ -65,11 +110,33 @@ msgstr "username для отзыва (точное совпадение)"
 msgid "Count tokens that would be revoked without revoking."
 msgstr "Подсчитать сколько токенов будет отозвано, без фактического отзыва."
 
+#, python-format
+msgid ""
+"Audit reason forwarded to the oidc_logout_required signal and the operator "
+"log line. Free-form string; downstream BCL receivers may filter on it. "
+"Default: %(default)s."
+msgstr ""
+
 msgid "Regenerate the client_secret of an OIDC application."
 msgstr "Перегенерировать client_secret OIDC-приложения."
 
 msgid "Show what would change without writing."
 msgstr "Показать что изменится, без записи."
+
+msgid ""
+"Show the AccessPolicy decision for a user against an OIDC application. "
+"Operator debugging tool."
+msgstr ""
+
+#, fuzzy
+#| msgid "Alliance Auth OIDC application"
+msgid "client_id of the OIDC application to evaluate"
+msgstr "OIDC-приложение Alliance Auth"
+
+#, fuzzy
+#| msgid "username to revoke (exact match)"
+msgid "username (exact match) to evaluate"
+msgstr "username для отзыва (точное совпадение)"
 
 msgid "Opaque (random string)"
 msgstr ""
@@ -83,6 +150,27 @@ msgid ""
 msgstr ""
 "URL иконки приложения (128×128). Может быть URL локального static-файла или "
 "абсолютным http(s)-адресом."
+
+msgid ""
+"Whitelist of Alliance Auth states allowed to authenticate this application. "
+"Leave empty (with Groups also empty) to open the app to every user holding "
+"the global OIDC permission."
+msgstr ""
+
+msgid ""
+"Whitelist of Django groups allowed to authenticate this application. A user "
+"is granted access if their state OR any of their groups appears in either "
+"whitelist; leave both empty to open the app."
+msgstr ""
+
+msgid "Active"
+msgstr ""
+
+msgid ""
+"Deactivated applications (``Active`` unchecked) cannot issue authorization "
+"codes or tokens. Toggling this off is the operator-facing kill switch for a "
+"compromised or retired client."
+msgstr ""
 
 msgid ""
 "Enables additional OIDC debug logging (INFO). Secrets/tokens are always "
@@ -113,10 +201,45 @@ msgid ""
 "'opaque' if unset)."
 msgstr ""
 
+msgid "Back-channel logout URI"
+msgstr ""
+
+msgid ""
+"RP endpoint that accepts back-channel logout_token POSTs (OIDC Back-Channel "
+"Logout 1.0). Leave blank to disable. https:// required unless DEBUG is on; "
+"host must resolve to a public IP."
+msgstr ""
+
+msgid "Back-Channel Logout: explicit revoke only"
+msgstr ""
+
+msgid ""
+"When checked, this RP receives a back-channel logout_token ONLY when an "
+"operator runs oidc_revoke_user_tokens. Lifecycle events (deactivation, group/"
+"state changes, account deletion) will NOT fan out to this RP. Default is "
+"unchecked (all five triggers fire)."
+msgstr ""
+
 msgid ""
 "JWT access tokens require the application's id_token signing algorithm to be "
 "RS256, not HS256. Either set Algorithm to RS256 or pick an opaque (or blank) "
 "access-token format."
+msgstr ""
+
+msgid ""
+"NUL byte (\\x00) is not permitted in URI fields; legacy parsers truncate at "
+"NUL and would mean two different things to two different consumers."
+msgstr ""
+
+msgid ""
+"backchannel_logout_uri must use https:// unless DEBUG is enabled "
+"(development only)."
+msgstr ""
+
+msgid ""
+"backchannel_logout_uri must resolve to a public IP; private/loopback/link-"
+"local/unspecified addresses are blocked. Set "
+"ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True for dev environments."
 msgstr ""
 
 msgid "Alliance Auth OIDC application"
@@ -127,6 +250,93 @@ msgstr "OIDC-приложения Alliance Auth"
 
 msgid "Can Authenticate External Apps with OIDC"
 msgstr "Может авторизовать внешние приложения через OIDC"
+
+msgid "Application"
+msgstr ""
+
+msgid "User PK"
+msgstr ""
+
+msgid ""
+"Integer primary key of the user whose session was being terminated. Not a "
+"ForeignKey because the ``user_deleted`` trigger fires after the row is "
+"removed."
+msgstr ""
+
+msgid "JTI"
+msgstr ""
+
+msgid "Success"
+msgstr ""
+
+msgid "Attempt count"
+msgstr ""
+
+msgid ""
+"1-based attempt number from the Celery task (1 = first try). Dispatcher-side "
+"failures (broker_unavailable, signing_kid_resolve_failed) record 0 because "
+"no HTTP attempt was made."
+msgstr ""
+
+msgid "Reason"
+msgstr ""
+
+msgid ""
+"Stable string identifying the dispatch outcome: trigger reason "
+"(user_revoked/...) on success, or failure mode (redirect_blocked, "
+"rp_client_error, retries_exhausted, signing_kid_retired, broker_unavailable, "
+"signing_kid_resolve_failed) on failure."
+msgstr ""
+
+msgid "Created at"
+msgstr ""
+
+msgid "Back-Channel Logout attempt"
+msgstr ""
+
+msgid "Back-Channel Logout attempts"
+msgstr ""
+
+msgid "Code hash"
+msgstr ""
+
+msgid ""
+"sha256 hex digest of the authorization code. One-way by construction — the "
+"plaintext code is never stored."
+msgstr ""
+
+msgid "Access token PK"
+msgstr ""
+
+msgid ""
+"Integer primary key of the AccessToken row issued by this code exchange. "
+"Resolved at reuse-detection time."
+msgstr ""
+
+msgid "Refresh token PK"
+msgstr ""
+
+msgid ""
+"Integer primary key of the RefreshToken row issued by this code exchange. "
+"Resolved at reuse-detection time."
+msgstr ""
+
+msgid "Reuse count"
+msgstr ""
+
+msgid ""
+"Number of times this code was presented at /o/token/ after the original "
+"exchange. >= 1 indicates a security-relevant replay attempt."
+msgstr ""
+
+msgid "Last reuse at"
+msgstr ""
+
+msgid "Issued authorization code audit"
+msgstr ""
+
+msgid "Issued authorization code audits"
+msgstr ""
 
 msgid "is requesting access to your Alliance Auth User data"
 msgstr "запрашивает доступ к данным вашей учётной записи Alliance Auth"

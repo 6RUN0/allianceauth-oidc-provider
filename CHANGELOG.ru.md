@@ -14,6 +14,56 @@
 
 ## [Unreleased]
 
+> ⚠️ **Изменение поведения, видимое оператору**: OIDC RP-Initiated
+> Logout теперь включён по умолчанию.
+> `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` принимает
+> значение `True` через AppConfig; маршрут `/o/logout/` и поле
+> `end_session_endpoint` в discovery становятся активны без явного
+> opt-in. Чтобы вернуть прежнее (upstream DOT) поведение, задайте
+> ключу `False` в настройках — `setdefault` сохраняет любое явное
+> значение. См. новый warning `manage.py check`
+> `allianceauth_oidc.W003`, если вы выключаете RP-init logout при
+> наличии зарегистрированных back-channel logout RP.
+
+### Безопасность
+
+- Усиление защиты от SSRF в BCL. Три независимых гейта защищают
+  исходящий `requests.post` worker'а от TOCTOU при DNS rebinding и
+  bypass'ов на небезопасные адреса:
+  (1) admin-form валидатор в `clean()`,
+  (2) новый `pre_save` сигнал, закрывающий обход через
+  `Application.objects.create(...)` / fixtures / data-миграции,
+  которые пропускают `full_clean()`,
+  (3) новый helper `_request_time_ssrf_gate_passes`, который
+  переразрешает host прямо перед `requests.post` и fail-close'ит на
+  транзиентных ошибках резолвера (audit
+  `reason="dns_resolve_failed"` / `"unsafe_target_ip"`).
+  Общий предикат `_is_unsafe_address` теперь распаковывает
+  IPv4-in-IPv6 (`::ffff:...`) и 6to4 (`2002:...`) до проверок и
+  добавляет `is_unspecified` к набору отказа — закрыты обходы
+  `0.0.0.0`, `::` и 6to4-обёрнутые приватные IPv4, которые
+  пропускала исходная цепочка из пяти предикатов.
+
+- BCL fan-out пропускает деактивированные приложения.
+  `Application.active=False` задокументирован как kill-switch для
+  скомпрометированных/выведенных из эксплуатации клиентов; раньше
+  фильтрация шла по токенам, но не по Application, и
+  деактивированный RP продолжал получать подписанные `logout_token`
+  POST'ы (с `sub`/`iss`/`aud`/`jti`) на каждое lifecycle-событие.
+  `logout.apps_with_active_tokens` теперь добавляет `active=True`,
+  и `dispatch_backchannel_logout` short-circuit'ит через
+  `application.is_usable(None)` рядом с существующим blank-URI
+  гейтом.
+
+- В `auth_provider._enforce_policy` добавлена пропущенная ветка
+  `case _: assert_never(decision)` в match'е по `AccessDecision`.
+  Без неё четвёртый вариант union'а в будущем привёл бы к падению
+  функции в конец без `return`, возврату `None`, который oauthlib
+  трактует как falsy в callsite'ах `validate_code` /
+  `validate_refresh_token` — c исходящим `invalid_grant` вместо
+  громкого `TypeError` от `assert_never`. Симметрично существующему
+  паттерну в `views_authorize.AuthAuthorizationView.dispatch`.
+
 ### Добавлено
 
 - OIDC Back-Channel Logout 1.0 (sub-only v1). Установите
@@ -25,18 +75,18 @@
   allow-list для scheme, проверка host-DNS через per-call
   `concurrent.futures.ThreadPoolExecutor` (3 s wall-clock, защищает
   от no-op-ловушки `setdefaulttimeout`), отказ для
-  private/loopback/link-local/multicast/reserved IP с dev escape
-  hatch `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE`. Дисциплина
+  private/loopback/link-local/multicast/reserved/unspecified IP с
+  распаковкой IPv4-в-IPv6 и 6to4 и dev escape hatch
+  `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE`. Дисциплина
   исходящих HTTP: `allow_redirects=False`, тело не читается,
   ограниченный `timeout=(5, 10)`. Retry — байт-в-байт (worker
   пересобирает JWT против закреплённых `(jti, iat, signing_kid)`).
   Discovery эмитит `backchannel_logout_supported: true`;
   `backchannel_logout_session_supported` намеренно отсутствует
-  (sub-only v1). Django system check `allianceauth_oidc.E001`
-  (severity `Error`) падает на `manage.py check`, если RP
-  регистрирует `backchannel_logout_uri` без
-  `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` — у Celery-worker нет HTTP
-  request context, чтобы вывести `iss`. Руководство оператора:
+  (sub-only v1). Per-app флаг
+  `AllianceAuthApplication.backchannel_logout_on_revoke_only`
+  ограничивает RP получением logout-токенов только при явном вызове
+  `oidc_revoke_user_tokens`. Руководство оператора:
   [docs/BACK_CHANNEL_LOGOUT.md](docs/BACK_CHANNEL_LOGOUT.md)
   ([RU](docs/BACK_CHANNEL_LOGOUT.ru.md)).
 
@@ -60,6 +110,91 @@
   [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md) — включение,
   RP cookbook (oauth2-proxy / mod_auth_openidc / WikiJS), ротация
   ключей, data minimization, откат.
+
+- OIDC RP-Initiated Logout 1.0 (`/o/logout/`) включён по умолчанию
+  через AppConfig-хук `AllianceAuthOIDC.ready`. Discovery публикует
+  `end_session_endpoint`; маршрут — `RPInitiatedLogoutView` из
+  `oauth2_provider`, поведение гейтится DOT внутри. Оператор
+  сохраняет полный контроль через
+  `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` —
+  `setdefault` уважает любое явное значение (в том числе `False` для
+  opt-out).
+
+- Четыре новых Django system check на `manage.py check`:
+  - `allianceauth_oidc.E001` (Error) — `backchannel_logout_uri`
+    зарегистрирован без `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']`
+    (у Celery-worker'а нет HTTP-запроса, чтобы вывести `iss`).
+  - `allianceauth_oidc.E004` (Error) —
+    `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']` указывает на
+    не-callable / не-разрешимый dotted-путь.
+  - `allianceauth_oidc.W001` (Warning) — словарь `OAUTH2_PROVIDER`
+    отсутствует, при том что `allianceauth_oidc` установлен.
+  - `allianceauth_oidc.W002` (Warning) —
+    `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но
+    `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching
+    generator. JWT-режим молча деградирует до opaque.
+  - `allianceauth_oidc.W003` (Warning) —
+    `OIDC_RP_INITIATED_LOGOUT_ENABLED=False` при наличии
+    приложений с `backchannel_logout_uri`. Single-Logout chain
+    рвётся на первом hop'е, потому что RP-init logout endpoint —
+    точка входа, которая триггерит BCL fan-out.
+
+- Сигнал аудита `oidc_token_introspected` для RFC 7662 introspect
+  endpoint. Срабатывает на каждый вызов `/o/introspect/` с
+  TypedDict-телом `OIDCIntrospectionAuditBody`
+  (`introspector`, `token_sha256`, `active`, `client_id`).
+  SIEM/audit-форвардеры подключают свой receiver — receiver по
+  умолчанию логирует на INFO с redact'ом секретов.
+
+- Сигнал аудита `oidc_code_reuse_detected` + модель
+  `IssuedCodeAudit`, реализующая reuse-detection из RFC 6749 §10.5.
+  DOT 3.2 удаляет `Grant` row при первом обмене; новая боковая
+  таблица сохраняет связь code-hash → токены за пределами времени
+  жизни `Grant`, поэтому reuse триггерит ревокацию связанных access
+  и refresh токенов, а не только `invalid_grant`. Хранится как
+  `sha256(code)`; raw code никогда не персистится.
+
+- `manage.py oidc_show_effective_policy` — операторская инспекция
+  per-app whitelist'а state/group'ов в том виде, в котором он
+  оценивается против пользователя, с учётом глобального гейта.
+  Полезно, когда пользователь сообщает о неожиданном
+  `invalid_grant`, и нужно узнать, какой layer отказал.
+
+- `manage.py oidc_revoke_user_tokens --reason TEXT` —
+  опциональная произвольная audit-строка, попадающая в body
+  ревокации `oidc_token_issued` и в trigger BCL fan-out.
+
+- Admin: bulk-action "Send test back-channel logout" в changelist'е
+  `AllianceAuthApplication`. Эмитит `oidc_logout_required` с
+  `reason="admin_test"` на no-op пользователя — прогоняет полный
+  путь dispatcher → Celery → RP HTTP для операторской валидации без
+  влияния на реальные сессии.
+
+- Защита от clickjacking на `/o/authorize/`. Ответ теперь несёт
+  `X-Frame-Options: DENY` плюс
+  `Content-Security-Policy: frame-ancestors 'none'`, чтобы блокировать
+  атаку из RFC 9700 §2.5: злоумышленник iframe'ит authorize-страницу
+  для перехвата ввода пользователя. DOT не выставляет эти заголовки
+  по умолчанию.
+
+- Prometheus-счётчик `aa_oidc_policy_rejections_total`, размеченный
+  по `stage` (`authorize` / `validate_code` / `validate_refresh` /
+  `save_bearer`) и `reason` (`global` / `app_state` / `app_group`
+  / `inactive_app`). Перекрывает все три layer'а policy
+  enforcement, поэтому одним счётчиком dashboard отвечает на вопрос
+  "какой гейт срабатывает чаще всего и на каком stage".
+
+- Discovery (`/o/.well-known/openid-configuration/`) публикует
+  девять дополнительных полей из OIDC Discovery 1.0 §3 / RFC 8414
+  §2: `response_types_supported` сужен до `["code"]` (раньше шёл
+  полный implicit/hybrid-набор DOT); `response_modes_supported`,
+  `code_challenge_methods_supported` (S256), `acr_values_supported`
+  (`["0"]` по RFC 6711), `prompt_values_supported`,
+  `claims_parameter_supported` (True), `request_parameter_supported`
+  / `request_uri_parameter_supported` (оба False — JAR/PAR не
+  реализованы), `op_policy_uri` / `op_tos_uri` (задаются
+  оператором через `ALLIANCEAUTH_OIDC_POLICY_URI` /
+  `ALLIANCEAUTH_OIDC_TOS_URI`).
 
 ### Изменено
 

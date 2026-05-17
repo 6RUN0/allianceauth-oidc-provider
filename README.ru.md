@@ -494,6 +494,25 @@ data-minimization, troubleshooting** — см.
 где колонка `format` позволяет проверить wire-формат каждого токена со
 стороны оператора.
 
+### System checks (`manage.py check`)
+
+Провайдер регистрирует две ошибки и три предупреждения во фреймворке
+системных проверок Django. CI должен падать на ошибках и обращать
+внимание на предупреждения как на configuration smells.
+
+| ID | Severity | Триггер | Действие оператора |
+|---|---|---|---|
+| `allianceauth_oidc.E001` | Error | У приложения задан `backchannel_logout_uri`, но `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` не выставлен. | Задайте `OIDC_ISS_ENDPOINT` абсолютный URL issuer'а. Celery worker, который POST'ит `logout_token`'ы, не имеет HTTP request context, поэтому не может вывести `iss` в runtime — без этой настройки первый же logout-диспатч упадёт. |
+| `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']` задан, но не разрешается в callable. | Проверьте dotted-путь на корректность и доступность для импорта. Поддерживаемое значение для JWT-режима: `"allianceauth_oidc.tokens.dispatching_access_token_generator"`. |
+| `allianceauth_oidc.W001` | Warning | Словарь `OAUTH2_PROVIDER` отсутствует в settings, хотя `allianceauth_oidc` установлен. | Добавьте словарь, пусть даже пустой. Провайдер опирается на него для opt-in настроек (`OIDC_ISS_ENDPOINT`, `ACCESS_TOKEN_GENERATOR`, `OIDC_RP_INITIATED_LOGOUT_ENABLED`); отсутствие означает, что любой operator knob невидим. |
+| `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching generator. JWT-режим молча деградирует до выпуска opaque-токенов. | Включите `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Обе настройки должны быть согласованы, иначе JWT не активен. |
+| `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` явно `False`, при том что у одного или нескольких приложений выставлен `backchannel_logout_uri`. Single-Logout chain рвётся на первом hop'е, потому что RP-initiated logout — точка входа, которая триггерит back-channel fan-out. | Либо снимите `backchannel_logout_uri` с затронутых приложений (перечислены в тексте warning'а), либо включите RP-initiated logout обратно (по умолчанию он on — задайте `True` или уберите явный `False`). |
+
+ID проверок стабильны между релизами; mute через
+`SILENCED_SYSTEM_CHECKS` поддерживается, но не рекомендуется — лучше
+поправить конфигурацию, чтобы следующий оператор не наступил на тот
+же drift.
+
 ### Debug-логи
 
 Per-application `Debug Mode` (включается в админке) поднимает уровень token-flow логов с `DEBUG`

@@ -510,6 +510,25 @@ request context. A Django system check
 (`allianceauth_oidc.E001`, severity `Error`) fails `manage.py check`
 at deploy time if the setting is missing.
 
+### System checks (`manage.py check`)
+
+The provider registers two errors and three warnings against Django's
+system-check framework. CI should fail on errors and surface warnings
+as configuration smells worth investigating.
+
+| ID | Severity | Trigger | Operator action |
+|---|---|---|---|
+| `allianceauth_oidc.E001` | Error | Application has `backchannel_logout_uri` set but `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` is unset. | Set `OIDC_ISS_ENDPOINT` to the absolute issuer URL. The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime; without this setting the very first logout dispatch crashes. |
+| `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']` is set but does not resolve to a callable. | Confirm the dotted-path is correct and importable. The supported value for JWT mode is `"allianceauth_oidc.tokens.dispatching_access_token_generator"`. |
+| `allianceauth_oidc.W001` | Warning | `OAUTH2_PROVIDER` dict missing from settings while `allianceauth_oidc` is installed. | Add the dict, even if empty. The provider relies on it for opt-in knobs (`OIDC_ISS_ENDPOINT`, `ACCESS_TOKEN_GENERATOR`, `OIDC_RP_INITIATED_LOGOUT_ENABLED`); absence means every operator knob is invisible. |
+| `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'` but `ACCESS_TOKEN_GENERATOR` is not the dispatching generator. JWT mode silently degrades to opaque token issuance. | Wire `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Both keys must agree for JWT to be active. |
+| `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` is explicitly `False` while one or more applications carry a `backchannel_logout_uri`. The Single-Logout chain breaks at the first hop because RP-initiated logout is the entry-point that triggers back-channel fan-out. | Either remove `backchannel_logout_uri` from the affected applications (listed in the warning text), or re-enable RP-initiated logout (it is on by default — set the key to `True` or remove the explicit `False`). |
+
+The check ids are stable across releases; muting via Django's
+`SILENCED_SYSTEM_CHECKS` is supported but discouraged — fix the
+underlying configuration so the next operator does not stumble on
+the same drift.
+
 ### Debug logging
 
 Per-application `Debug Mode` (toggled in the admin) escalates token-flow logs from `DEBUG` to
