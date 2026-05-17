@@ -370,6 +370,21 @@ class AuthAuthorizationView(AuthorizationView):
         return self._apply_clickjacking_headers(response)
 
     @staticmethod
+    def _record_denial(*, reason: str) -> None:
+        """
+        Emit the dual counter pair for a denied authorize request.
+
+        ``authorize_denied`` is the legacy authorize-only counter;
+        ``policy_rejections`` is the cross-stage view that survives
+        the dashboards migration. The two counters intentionally
+        double-emit at this stage so operators can switch over
+        without a flag-day cutover — see ``_metrics`` for the
+        deprecation envelope.
+        """
+        authorize_denied.labels(reason=reason).inc()
+        policy_rejections.labels(stage="authorize", reason=reason).inc()
+
+    @staticmethod
     def _apply_clickjacking_headers(
         response: HttpResponseBase,
     ) -> HttpResponseBase:
@@ -469,15 +484,7 @@ class AuthAuthorizationView(AuthorizationView):
                 return super().dispatch(request, *args, **kwargs)
 
             case GlobalDeny():
-                authorize_denied.labels(reason="global").inc()
-                # Cross-stage view alongside the legacy authorize-only
-                # counter. See ``_metrics.policy_rejections`` for the
-                # contract; the two counters intentionally double-emit
-                # on this stage so dashboards can migrate without a
-                # flag-day cutover.
-                policy_rejections.labels(
-                    stage="authorize", reason="global"
-                ).inc()
+                self._record_denial(reason="global")
                 logger.warning(
                     "OIDC DENIED: global access user=%s path=%s method=%s",
                     user,
@@ -491,8 +498,7 @@ class AuthAuthorizationView(AuthorizationView):
                 )
 
             case AppDeny():
-                authorize_denied.labels(reason="app").inc()
-                policy_rejections.labels(stage="authorize", reason="app").inc()
+                self._record_denial(reason="app")
                 denied_app = decision.app  # AppLike (non-None)
                 logger.warning(
                     "OIDC DENIED: app restrictions user=%s app=%s client_id=%s path=%s method=%s",  # noqa: E501

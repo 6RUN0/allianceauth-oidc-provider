@@ -249,7 +249,7 @@ class TestBclMetrics(OIDCTestCase):
         # the histogram is observed).
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=[
                     (
                         socket.AF_INET,
@@ -386,6 +386,12 @@ class TestBclMetrics(OIDCTestCase):
             "signing_kid_retired",
             "signing_kid_resolve_failed",
             "broker_unavailable",
+            # Emitted by ``tasks._request_time_ssrf_gate_passes`` —
+            # the DNS rebinding TOCTOU defence that re-resolves the
+            # backchannel_logout_uri host between admin save and
+            # worker dispatch.
+            "dns_resolve_failed",
+            "unsafe_target_ip",
         }
         missing = emitted_reasons - BCL_DISPATCH_OUTCOMES
         self.assertEqual(

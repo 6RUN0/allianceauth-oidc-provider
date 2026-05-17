@@ -13,7 +13,7 @@ alongside the audit receiver wiring.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from django.dispatch import Signal
 from typing_extensions import NotRequired
@@ -33,6 +33,32 @@ if TYPE_CHECKING:
     from .security import TokenLike
 
 logger = logging.getLogger(f"extensions.{__name__}")
+
+
+def _safe_audit_meta(
+    body: object | None, keys: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """
+    Build a curated, ``None``-pruned audit meta dict from a TypedDict.
+
+    Returns ``None`` when ``body`` is falsy OR when every requested
+    key carries a ``None`` value. The latter collapse is intentional:
+    a meta dict made entirely of ``None`` would still render in log
+    output as ``meta={'key': None, ...}``, which adds noise without
+    correlation value. The receivers using this helper grep for
+    ``meta=...`` patterns where any field is non-None.
+
+    Shared by :func:`audit_oidc_token_issued` and
+    :func:`audit_oidc_token_introspected` so the "build a meta dict
+    for the audit log line" pattern lives in one place; future audit
+    receivers should reach for this helper rather than reinvent the
+    filter idiom.
+    """
+    if not body:
+        return None
+    body_dict = cast("dict[str, Any]", body)
+    meta = {k: body_dict.get(k) for k in keys}
+    return {k: v for k, v in meta.items() if v is not None} or None
 
 
 class OIDCAuditBody(TypedDict):
@@ -116,10 +142,7 @@ def audit_oidc_token_issued(
     try:
         app = getattr(token, "application", None)
         user = getattr(token, "user", None)
-        meta = None
-        if body:
-            meta = {k: body.get(k) for k in ("grant_type", "scope")}
-            meta = {k: v for k, v in meta.items() if v is not None} or None
+        meta = _safe_audit_meta(body, ("grant_type", "scope"))
         logger.info(
             "OIDC token issued client_id=%s app_id=%s user_id=%s username=%s scope=%s meta=%s",  # noqa: E501
             getattr(app, "client_id", None),
@@ -312,12 +335,7 @@ def audit_oidc_token_introspected(
     fires on every request the RS handles.
     """
     try:
-        meta = None
-        if body:
-            meta = {
-                k: body.get(k) for k in ("active", "client_id", "token_sha256")
-            }
-            meta = {k: v for k, v in meta.items() if v is not None} or None
+        meta = _safe_audit_meta(body, ("active", "client_id", "token_sha256"))
         logger.info(
             "OIDC token introspected introspector_id=%s "
             "introspector_username=%s meta=%s",
@@ -437,6 +455,67 @@ class BackChannelLogoutSender:
     the specific failure mode (``"broker_unavailable"`` /
     ``"signing_kid_retired"`` / ``"retries_exhausted"`` / ...).
     """
+
+
+def emit_bcl_failure(
+    *,
+    application: Any,
+    user_pk: int | None,
+    jti: str,
+    attempt_count: int,
+    reason: str,
+) -> None:
+    """
+    Fire ``oidc_logout_dispatched`` for a terminal-failure outcome.
+
+    Single-line replacement for the 9-line emit block that lived in
+    eight places across ``tasks.send_logout_token`` and
+    ``logout.dispatch_backchannel_logout``. Each caller still owns
+    its own ``logger.warning(... meta=...)`` line — log templates
+    vary per failure mode and unifying them would break the byte-
+    stable log format the dashboards / SIEM pipelines grep for.
+
+    ``sender=BackChannelLogoutSender`` and ``success=False`` are
+    pinned here; receivers filtering on either keyword fan out
+    correctly. The ``reason`` argument should be a member-value of
+    :class:`constants.BCLDispatchOutcome`; passing a stray string
+    works at runtime (Prometheus accepts any label value) but
+    misses the type-checker safety net and drifts the dashboards.
+    """
+    oidc_logout_dispatched.send(
+        sender=BackChannelLogoutSender,
+        application=application,
+        user_pk=user_pk,
+        jti=jti,
+        success=False,
+        attempt_count=attempt_count,
+        reason=reason,
+    )
+
+
+def emit_bcl_success(
+    *,
+    application: Any,
+    user_pk: int | None,
+    jti: str,
+    attempt_count: int,
+) -> None:
+    """
+    Fire ``oidc_logout_dispatched`` for the 2xx success outcome.
+
+    Mirror of :func:`emit_bcl_failure`. ``reason`` is intentionally
+    absent from the success path — the histogram outcome carries
+    ``"success"`` and the counter dispatches on
+    ``BCLDispatchOutcome.SUCCESS`` without disambiguation.
+    """
+    oidc_logout_dispatched.send(
+        sender=BackChannelLogoutSender,
+        application=application,
+        user_pk=user_pk,
+        jti=jti,
+        success=True,
+        attempt_count=attempt_count,
+    )
 
 
 def connect_default_logout_receiver(receiver: Callable[..., Any]) -> None:

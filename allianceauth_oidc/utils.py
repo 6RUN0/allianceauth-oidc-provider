@@ -289,21 +289,14 @@ def build_logout_debug_meta(
     None); ``backchannel_logout_uri`` is non-secret per AC-35, so it's
     safe to include in audit logs.
     """
+    # ``getattr(None, "pk", None)`` returns ``None`` without raising,
+    # so the per-field ``if application is not None`` wrappers were
+    # belt-and-braces — the inner default already covers the None case.
     return {
-        "application_pk": (
-            getattr(application, "pk", None)
-            if application is not None
-            else None
-        ),
-        "application_name": (
-            getattr(application, "name", None)
-            if application is not None
-            else None
-        ),
-        "backchannel_logout_uri": (
-            getattr(application, "backchannel_logout_uri", None)
-            if application is not None
-            else None
+        "application_pk": getattr(application, "pk", None),
+        "application_name": getattr(application, "name", None),
+        "backchannel_logout_uri": getattr(
+            application, "backchannel_logout_uri", None
         ),
         "jti": jti,
         "status_code": status_code,

@@ -230,7 +230,7 @@ def dispatch_backchannel_logout(
 
     from django.db import transaction
 
-    from .signals import BackChannelLogoutSender, oidc_logout_dispatched
+    from .signals import emit_bcl_failure
     from .utils import app_log, build_logout_debug_meta
 
     logger = logging.getLogger(f"extensions.{__name__}")
@@ -275,12 +275,10 @@ def dispatch_backchannel_logout(
                 application=application, reason="signing_kid_resolve_failed"
             ),
         )
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=getattr(user, "pk", None),
             jti="",
-            success=False,
             attempt_count=0,
             reason="signing_kid_resolve_failed",
         )
@@ -316,12 +314,10 @@ def dispatch_backchannel_logout(
                     reason="broker_unavailable",
                 ),
             )
-            oidc_logout_dispatched.send(
-                sender=BackChannelLogoutSender,
+            emit_bcl_failure(
                 application=application,
                 user_pk=getattr(user, "pk", None),
                 jti=jti_value,
-                success=False,
                 attempt_count=0,
                 reason="broker_unavailable",
             )

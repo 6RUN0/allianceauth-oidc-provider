@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from django.conf import settings
 
@@ -63,6 +63,19 @@ _KEY_REGISTRATION_VERIFY_EMAIL: Final[str] = "REGISTRATION_VERIFY_EMAIL"
 _KEY_FORCE_EMAIL_VERIFIED: Final[str] = (
     "ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED"
 )
+# Nested under ``OAUTH2_PROVIDER`` (not at the Django settings root) —
+# both keys arrive through DOT's settings dict because the operator-
+# facing wire-up flows alongside ``ACCESS_TOKEN_GENERATOR`` and
+# ``PKCE_REQUIRED``. ``_cached_snapshot`` pulls them via
+# ``getattr(settings, "OAUTH2_PROVIDER", {}).get(...)`` and the
+# ``setting_changed`` invalidator also fires on the parent
+# ``OAUTH2_PROVIDER`` key so ``override_settings`` round-trips
+# correctly.
+_KEY_DEFAULT_ACCESS_TOKEN_FORMAT: Final[str] = (
+    "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT"
+)
+_KEY_JWT_SIZE_WARN_BYTES: Final[str] = "ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES"
+_KEY_OAUTH2_PROVIDER: Final[str] = "OAUTH2_PROVIDER"
 
 
 # Defaults — Django setting absent → these values land in the snapshot.
@@ -93,6 +106,15 @@ _DEFAULT_REGISTRATION_VERIFY_EMAIL: Final[bool] = True
 # ``None`` keeps the auto decision tree authoritative; operators opt
 # into forcing by setting True or False explicitly.
 _DEFAULT_FORCE_EMAIL_VERIFIED: Final[bool | None] = None
+# Opaque-by-default keeps the AS feature-flagged off: operators
+# explicitly opt into JWT access tokens via the OAUTH2_PROVIDER dict.
+_DEFAULT_ACCESS_TOKEN_FORMAT: Final[Literal["opaque", "jwt"]] = "opaque"
+# Conservative size threshold for the JWT-access-token size warning.
+# Apache LimitRequestFieldSize defaults to 8190; nginx
+# large_client_header_buffers to 8 KB; HAProxy tune.bufsize to 16 KB.
+# 4096 leaves headroom for cookies + other Authorization overhead;
+# operators override via OAUTH2_PROVIDER dict.
+_DEFAULT_JWT_SIZE_WARN_BYTES: Final[int] = 4096
 
 
 # EVE Online's image server only serves portraits at fixed sizes;
@@ -144,6 +166,22 @@ class OIDCSettings:
     # imported from an external IdP that already verified addresses,
     # or sites that knowingly accept the trade-off.
     force_email_verified: bool | None
+    # Global default access-token wire format (``"opaque"`` or
+    # ``"jwt"``), pulled from ``OAUTH2_PROVIDER`` because the
+    # opt-in lives alongside ``ACCESS_TOKEN_GENERATOR`` in the
+    # operator's DOT settings dict. ``AccessPolicy.access_token_format``
+    # reads this when the per-app override is absent. Wire format is
+    # ``Literal[...]``-typed so a typo at the settings layer is
+    # coerced to ``"opaque"`` by ``_normalise_at_format`` before
+    # construction — the dataclass field type stays as the post-
+    # normalisation contract.
+    default_access_token_format: Literal["opaque", "jwt"]
+    # Operator-facing size guard threshold for issued JWT access
+    # tokens. ``dispatching_access_token_generator`` logs WARNING
+    # when ``len(jwt) > jwt_size_warn_bytes``. Stored as the
+    # already-normalised positive integer so the field reflects what
+    # the code actually uses, not the raw operator value.
+    jwt_size_warn_bytes: int
 
     def __post_init__(self) -> None:
         """
@@ -173,6 +211,19 @@ class OIDCSettings:
             msg = (
                 f"ALLIANCEAUTH_OIDC_PORTRAIT_SIZE must be one of {valid}, "
                 f"got {self.portrait_size}"
+            )
+            raise ValueError(msg)
+        if self.default_access_token_format not in {"opaque", "jwt"}:
+            msg = (
+                "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT must be "
+                "one of {'opaque', 'jwt'}, got "
+                f"{self.default_access_token_format!r}"
+            )
+            raise ValueError(msg)
+        if self.jwt_size_warn_bytes <= 0:
+            msg = (
+                "ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES must be >0, "
+                f"got {self.jwt_size_warn_bytes}"
             )
             raise ValueError(msg)
 
@@ -236,7 +287,56 @@ def _cached_snapshot() -> OIDCSettings:
             )
         ),
         force_email_verified=_resolve_force_email_verified(),
+        default_access_token_format=_normalise_at_format(),
+        jwt_size_warn_bytes=_normalise_jwt_size_warn_bytes(),
     )
+
+
+def _provider_dict() -> dict[str, Any]:
+    """Return the ``OAUTH2_PROVIDER`` settings dict, or empty if unset."""
+    value = getattr(settings, _KEY_OAUTH2_PROVIDER, None)
+    return value if isinstance(value, dict) else {}
+
+
+def _normalise_at_format() -> Literal["opaque", "jwt"]:
+    """
+    Coerce ``OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT']``
+    to the strict ``{"opaque", "jwt"}`` set.
+
+    A typo or unexpected value (``"JWT"``, ``"oauth"``, ``42``) falls
+    back to ``"opaque"`` — the safe-by-default of the two formats.
+    Mirrors the pre-refactor ``security.AccessPolicy.access_token_format``
+    truth table so behaviour is byte-identical.
+    """
+    raw = _provider_dict().get(
+        _KEY_DEFAULT_ACCESS_TOKEN_FORMAT, _DEFAULT_ACCESS_TOKEN_FORMAT
+    )
+    if raw == "jwt":
+        return "jwt"
+    return "opaque"
+
+
+def _normalise_jwt_size_warn_bytes() -> int:
+    """
+    Coerce ``OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES']``
+    to a positive ``int``.
+
+    Non-numeric / zero / negative values fall back to
+    :data:`_DEFAULT_JWT_SIZE_WARN_BYTES` — mirrors the pre-refactor
+    ``tokens._size_warn_threshold`` semantics so an operator
+    misconfiguring the threshold gets a usable default instead of a
+    ``ValueError`` at boot.
+    """
+    raw = _provider_dict().get(
+        _KEY_JWT_SIZE_WARN_BYTES, _DEFAULT_JWT_SIZE_WARN_BYTES
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_JWT_SIZE_WARN_BYTES
+    if value <= 0:
+        return _DEFAULT_JWT_SIZE_WARN_BYTES
+    return value
 
 
 def _resolve_force_email_verified() -> bool | None:
@@ -269,11 +369,21 @@ _INVALIDATOR_DISPATCH_UID: Final[str] = (
 def _invalidate_cached_snapshot(
     sender: object, setting: str, **kwargs: Any
 ) -> None:
-    """Drop the cached snapshot on any AA-OIDC setting flip."""
-    if (
-        setting.startswith("ALLIANCEAUTH_OIDC_")
-        or setting == _KEY_REGISTRATION_VERIFY_EMAIL
-    ):
+    """
+    Drop the cached snapshot on any AA-OIDC setting flip.
+
+    ``OAUTH2_PROVIDER`` is included because two nested keys
+    (:data:`_KEY_DEFAULT_ACCESS_TOKEN_FORMAT` and
+    :data:`_KEY_JWT_SIZE_WARN_BYTES`) live under that dict — Django's
+    ``setting_changed`` signal fires on the parent key when the dict
+    is replaced via ``@override_settings(OAUTH2_PROVIDER={...})``,
+    not on the nested entries, so the invalidator needs the parent
+    name to round-trip correctly in tests.
+    """
+    if setting.startswith("ALLIANCEAUTH_OIDC_") or setting in {
+        _KEY_REGISTRATION_VERIFY_EMAIL,
+        _KEY_OAUTH2_PROVIDER,
+    }:
         _cached_snapshot.cache_clear()
 
 

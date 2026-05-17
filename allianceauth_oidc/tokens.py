@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Any, Final, Literal
+from typing import Any, Literal
 
 from oauth2_provider.settings import oauth2_settings
 from oauth2_provider.utils import jwk_from_pem
@@ -34,16 +34,10 @@ from oauthlib.oauth2.rfc6749.tokens import (
     random_token_generator as _opaque_generator,
 )
 
-from .security import DEFAULT_POLICY
+from .app_settings import OIDCSettings
+from .security import DEFAULT_POLICY, resolve_per_app_setting
 
 logger = logging.getLogger(f"extensions.{__name__}")
-
-# Conservative default. Apache LimitRequestFieldSize defaults to 8190;
-# nginx ``large_client_header_buffers`` to 8 KB; HAProxy ``tune.bufsize``
-# to 16 KB. 4096 leaves headroom for cookies and other Authorization
-# overhead, and is operator-overridable via
-# ``OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES']``.
-_DEFAULT_SIZE_WARN_BYTES: Final[int] = 4096
 
 
 def dispatching_access_token_generator(request: Any) -> str:
@@ -69,7 +63,7 @@ def dispatching_access_token_generator(request: Any) -> str:
     fmt = _resolve_access_token_format(client_id)
     if fmt == "jwt":
         token = _build_jwt(request)
-        threshold = _size_warn_threshold()
+        threshold = OIDCSettings.from_django().jwt_size_warn_bytes
         if len(token) > threshold:
             logger.warning(
                 "OIDC JWT access token size %d bytes exceeds %d (client_id=%a); review group membership and upstream proxy Authorization header limits",  # noqa: E501
@@ -95,50 +89,25 @@ def _resolve_access_token_format(
     column-bounded via ``.only(...)``. Unknown clients fall back to
     ``"opaque"`` (the safe-by-default of the two formats).
 
-    The unknown-client log uses ``%a`` (ASCII repr) rather than
-    ``%r`` because ``client_id`` arrives unsanitised from an HTTP
-    parameter; ``%r`` would let stray newline / ANSI escapes flow
-    into log storage.
+    The empty-client_id fast path keeps its dedicated WARNING line
+    (instead of falling through to the generic ``DoesNotExist`` log)
+    because the operator-facing diagnostic differs: "client_id was
+    blank on the inbound request" points at the DOT wiring, while
+    "client_id was non-blank but no row" points at a stale DB.
+    Sharing the ``DoesNotExist`` fail-safe with
+    :func:`security.resolve_per_app_setting` eliminates the rest of
+    the duplication.
     """
-    from .models import AllianceAuthApplication
-
     if not client_id:
         logger.warning("OIDC AT format: empty client_id -> fail-safe opaque")
         return "opaque"
-    try:
-        app = AllianceAuthApplication.objects.only("access_token_format").get(
-            client_id=client_id
-        )
-    except AllianceAuthApplication.DoesNotExist:
-        logger.warning(
-            "OIDC AT format: unknown client_id=%a -> fail-safe opaque",
-            client_id,
-        )
-        return "opaque"
-    return DEFAULT_POLICY.access_token_format(app)
-
-
-def _size_warn_threshold() -> int:
-    """
-    Read the configurable size-guard threshold from settings.
-
-    Goes through ``oauth2_settings.user_settings`` (DOT's public proxy
-    over ``OAUTH2_PROVIDER``) instead of a direct
-    ``getattr(settings, "OAUTH2_PROVIDER", ...)`` so that DOT's
-    ``setting_changed`` reload contract — the same one that refreshes
-    ``OIDC_RSA_PRIVATE_KEY`` and ``ACCESS_TOKEN_EXPIRE_SECONDS`` above
-    — also governs this nested key. Tests rely on this when they
-    flip ``ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES`` mid-process via
-    ``override_settings``.
-    """
-    raw = oauth2_settings.user_settings.get(
-        "ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES",
-        _DEFAULT_SIZE_WARN_BYTES,
+    return resolve_per_app_setting(
+        client_id,
+        field="access_token_format",
+        policy_method=DEFAULT_POLICY.access_token_format,
+        fail_safe_default="opaque",
+        log_prefix="OIDC AT format",
     )
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return _DEFAULT_SIZE_WARN_BYTES
 
 
 def _build_jwt(request: Any) -> str:

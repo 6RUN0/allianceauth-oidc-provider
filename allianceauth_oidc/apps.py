@@ -114,6 +114,26 @@ def _connect_bcl_pre_save_gate() -> None:
             instance._validate_uri_target_safety()  # noqa: SLF001
 
 
+def _format_callable_name(obj: object) -> str:
+    """
+    Render a ``module.qualname`` label for a callable diagnostic log.
+
+    Used by :func:`_check_jwt_wiring` so the JWT-mode advisory tells
+    operators exactly which dotted-path DOT loaded into
+    ``ACCESS_TOKEN_GENERATOR``. ``None`` and non-callables are
+    rendered legibly so the format-string never raises in the
+    diagnostic path.
+    """
+    if obj is None:
+        return "<None>"
+    if callable(obj):
+        return (
+            f"{getattr(obj, '__module__', '')}."
+            f"{getattr(obj, '__qualname__', '')}"
+        )
+    return str(obj)
+
+
 def _check_jwt_wiring() -> None:
     """
     Log a warning when JWT mode is on but the dispatcher is missing.
@@ -158,15 +178,7 @@ def _check_jwt_wiring() -> None:
         actual = oauth2_settings.ACCESS_TOKEN_GENERATOR
         if actual is dispatching_access_token_generator:
             return
-        if actual is None:
-            actual_name = "<None>"
-        elif callable(actual):
-            actual_name = (
-                f"{getattr(actual, '__module__', '')}."
-                f"{getattr(actual, '__qualname__', '')}"
-            )
-        else:
-            actual_name = str(actual)
+        actual_name = _format_callable_name(actual)
         logger.warning(
             "OIDC: ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt' but OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] is %a (expected %a). JWT mode will NOT be active. See README opt-in section.",  # noqa: E501
             actual_name,

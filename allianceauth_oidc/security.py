@@ -5,12 +5,24 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Final, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Literal,
+    Protocol,
+    TypeVar,
+    runtime_checkable,
+)
 
-from django.conf import settings
 from django.core.exceptions import PermissionDenied
 
 from .constants import PERM_ACCESS_OIDC
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+T = TypeVar("T")
 
 # This module intentionally uses getattr/callable checks:
 # - these functions are called from multiple places (views/validators) and must
@@ -308,13 +320,16 @@ class AccessPolicy:
                 return "jwt"
             if per_app == "opaque":
                 return "opaque"
-        provider = getattr(settings, "OAUTH2_PROVIDER", {}) or {}
-        global_default = provider.get(
-            "ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT", "opaque"
-        )
-        if global_default == "jwt":
-            return "jwt"
-        return "opaque"
+        # ``OIDCSettings.from_django()`` reads the OAUTH2_PROVIDER
+        # nested key with the same normalisation rules that used to
+        # live inline here — the snapshot is cached and invalidated
+        # on ``setting_changed`` so the per-request lookup stays
+        # essentially free. Late import keeps the policy module
+        # import-safe from settings.py (``pkce.per_app_pkce_required``
+        # path).
+        from .app_settings import OIDCSettings
+
+        return OIDCSettings.from_django().default_access_token_format
 
     # ---- internal building blocks (raise-form) --------------------
 
@@ -423,3 +438,52 @@ class AccessPolicy:
 # different logger / receiver pattern construct
 # ``AccessPolicy(log=...)`` directly.
 DEFAULT_POLICY: Final[AccessPolicy] = AccessPolicy()
+
+
+def resolve_per_app_setting(
+    client_id: str | None,
+    *,
+    field: str,
+    policy_method: Callable[[AppLike | None], T],
+    fail_safe_default: T,
+    log_prefix: str,
+) -> T:
+    """
+    DOT-adapter pattern: ORM-lookup ``client_id`` → delegate to policy.
+
+    Generic shape behind :func:`allianceauth_oidc.pkce.per_app_pkce_required`
+    and :func:`allianceauth_oidc.tokens._resolve_access_token_format` —
+    both adapters reach for an ``AllianceAuthApplication`` row scoped
+    to a single column (``.only(field)``) and delegate the resolved
+    value to a policy method, with one fail-safe ``WARNING`` log on
+    DB-miss. Centralising the recipe stops the two callsites from
+    drifting on the log prefix, the column-narrowing, or the
+    "DoesNotExist → fail-safe" contract.
+
+    Parameters keyword-only so a future third adapter (per-app rate
+    limit, token TTL, …) cannot accidentally swap ``field`` with
+    ``log_prefix`` at the call site. ``%s`` format on the fail-safe
+    keeps the message byte-stable across bool / str return types —
+    neither caller wraps their primitive in quotes.
+
+    The ``AllianceAuthApplication`` import is deferred to the call
+    body because operators wire :func:`per_app_pkce_required` into
+    ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` from inside their Django
+    settings module — settings load BEFORE ``apps.populate()``, so a
+    module-level model import would trip ``AppRegistryNotReady``.
+    """
+    from .models import AllianceAuthApplication
+
+    try:
+        app = AllianceAuthApplication.objects.only(field).get(
+            client_id=client_id
+        )
+    except AllianceAuthApplication.DoesNotExist:
+        logger.warning(
+            "%s: unknown client_id=%a -> fail-safe %s",
+            log_prefix,
+            client_id,
+            fail_safe_default,
+        )
+        return fail_safe_default
+    return policy_method(app)

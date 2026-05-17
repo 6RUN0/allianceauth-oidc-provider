@@ -140,13 +140,8 @@ def _request_time_ssrf_gate_passes(
     ``169.254.169.254`` / ``127.0.0.1`` / ``0.0.0.0`` if the rebinding
     is live.
     """
-    # The helpers are module-private to ``.models`` by naming
-    # convention but explicitly shared with this request-time gate.
-    from .models import (
-        _resolve_host_bounded,  # pyright: ignore[reportPrivateUsage]
-        _resolved_addresses_have_unsafe,  # pyright: ignore[reportPrivateUsage]
-    )
-    from .signals import BackChannelLogoutSender, oidc_logout_dispatched
+    from ._dns_safety import addresses_have_unsafe, resolve_host_bounded
+    from .signals import emit_bcl_failure
     from .utils import build_logout_debug_meta
 
     parsed = urlsplit(application.backchannel_logout_uri)
@@ -157,7 +152,7 @@ def _request_time_ssrf_gate_passes(
     if not host or allow_private:
         return True
     try:
-        infos = _resolve_host_bounded(host)
+        infos = resolve_host_bounded(host)
     except (
         TimeoutError,
         socket.gaierror,
@@ -174,17 +169,15 @@ def _request_time_ssrf_gate_passes(
                 reason="dns_resolve_failed",
             ),
         )
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=user_pk,
             jti=jti,
-            success=False,
             attempt_count=attempt_count,
             reason="dns_resolve_failed",
         )
         return False
-    if _resolved_addresses_have_unsafe(infos):
+    if addresses_have_unsafe(infos):
         logger.warning(
             "OIDC BCL: request-time DNS returned unsafe IP; skipping dispatch (host=%r) meta=%s",  # noqa: E501
             host,
@@ -194,12 +187,10 @@ def _request_time_ssrf_gate_passes(
                 reason="unsafe_target_ip",
             ),
         )
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=user_pk,
             jti=jti,
-            success=False,
             attempt_count=attempt_count,
             reason="unsafe_target_ip",
         )
@@ -259,7 +250,7 @@ def send_logout_token(  # noqa: PLR0911
     from django.contrib.auth import get_user_model
 
     from .logout import SigningKeyRetiredError, build_logout_token
-    from .signals import BackChannelLogoutSender, oidc_logout_dispatched
+    from .signals import emit_bcl_failure, emit_bcl_success
     from .utils import build_logout_debug_meta
 
     User = get_user_model()
@@ -288,12 +279,10 @@ def send_logout_token(  # noqa: PLR0911
                 reason="signing_kid_retired",
             ),
         )
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=user_pk,
             jti=jti,
-            success=False,
             attempt_count=attempt_count,
             reason="signing_kid_retired",
         )
@@ -334,7 +323,22 @@ def send_logout_token(  # noqa: PLR0911
         client_id=application.client_id,
         outcome=_bcl_outcome_for_status(status),
     ).observe(time.monotonic() - _bcl_started)
-    if 300 <= status < 400:
+    # Discriminate on the histogram outcome (single source of truth
+    # in ``_bcl_outcome_for_status``) so the threshold ladder cannot
+    # drift from the histogram label. The 5xx branch is deliberately
+    # NOT folded into the match — it ``raise``s ``HTTPError`` for
+    # Celery autoretry instead of returning, and unifying the two
+    # contracts would break the retry envelope test pins.
+    outcome = _bcl_outcome_for_status(status)
+    if outcome == "success":
+        emit_bcl_success(
+            application=application,
+            user_pk=user_pk,
+            jti=jti,
+            attempt_count=attempt_count,
+        )
+        return
+    if outcome == "redirect_blocked":
         logger.warning(
             "OIDC BCL: RP returned redirect, blocked per spec meta=%s",
             build_logout_debug_meta(
@@ -344,27 +348,15 @@ def send_logout_token(  # noqa: PLR0911
                 reason="redirect_blocked",
             ),
         )
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=user_pk,
             jti=jti,
-            success=False,
             attempt_count=attempt_count,
             reason="redirect_blocked",
         )
         return
-    if 200 <= status < 300:
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
-            application=application,
-            user_pk=user_pk,
-            jti=jti,
-            success=True,
-            attempt_count=attempt_count,
-        )
-        return
-    if 400 <= status < 500:
+    if outcome == "rp_client_error":
         logger.warning(
             "OIDC BCL: RP returned %d (4xx, no retry) meta=%s",
             status,
@@ -375,12 +367,10 @@ def send_logout_token(  # noqa: PLR0911
                 reason="rp_client_error",
             ),
         )
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=user_pk,
             jti=jti,
-            success=False,
             attempt_count=attempt_count,
             reason="rp_client_error",
         )
@@ -400,12 +390,10 @@ def send_logout_token(  # noqa: PLR0911
         ),
     )
     if self.request.retries >= self.max_retries:
-        oidc_logout_dispatched.send(
-            sender=BackChannelLogoutSender,
+        emit_bcl_failure(
             application=application,
             user_pk=user_pk,
             jti=jti,
-            success=False,
             attempt_count=attempt_count,
             reason="retries_exhausted",
         )

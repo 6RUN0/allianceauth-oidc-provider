@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import ipaddress
 import logging
 import socket
 from typing import Any
@@ -19,101 +18,10 @@ from django.utils.translation import gettext_lazy as _
 from oauth2_provider.models import AbstractApplication
 from typing_extensions import override
 
+from ._dns_safety import addresses_have_unsafe, resolve_host_bounded
 from .constants import PERM_ACCESS_OIDC_CODENAME
 
 logger = logging.getLogger(f"extensions.{__name__}")
-
-# Per plan v5 §4.5: ``socket.setdefaulttimeout`` does NOT bound
-# ``getaddrinfo`` (a libc resolver call, not a Python socket
-# operation). A per-call ``ThreadPoolExecutor`` is the only correct
-# way to enforce a wall-clock timeout on the resolver.
-_DNS_BOUND_SECONDS = 3
-
-
-def _resolve_host_bounded(
-    host: str, deadline_seconds: int = _DNS_BOUND_SECONDS
-) -> list[tuple]:
-    """
-    Resolve ``host`` with a real wall-clock bound.
-
-    Returns the raw ``socket.getaddrinfo`` result list. Callers must
-    extract address strings via ``addr[4][0]``.
-
-    ``max_workers=1`` because exactly one resolver thread is needed
-    per call; the executor is GC'd at context-manager exit. Trades
-    one thread-creation per admin form save for module-level pool
-    lifecycle management — negligible vs the DNS round-trip itself.
-    """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(
-            socket.getaddrinfo,
-            host,
-            None,
-            type=socket.SOCK_STREAM,
-        )
-        return fut.result(timeout=deadline_seconds)
-
-
-def _is_unsafe_address(addr_str: str) -> bool:
-    """
-    Return True when ``addr_str`` resolves to an IP unsafe for outbound
-    HTTP from the worker.
-
-    Unsafe = the original five rejected predicates
-    (``is_private | is_loopback | is_link_local | is_multicast |
-    is_reserved``) plus ``is_unspecified`` (catches ``0.0.0.0`` and
-    ``::`` — both treated by the kernel as "this host"; ``0.0.0.0``
-    fell through every one of the five original predicates).
-
-    IPv4-encoded-in-IPv6 wrappers are unmapped before predicate
-    evaluation:
-
-    * ``::ffff:X.Y.Z.W`` — IPv4-mapped IPv6 (RFC 4291 §2.5.5.2). Some
-      kernels return this form when an IPv4 host is reachable through
-      a dual-stack resolver; without unmap, ``IPv4Address``-only
-      predicates (``is_private`` on RFC 1918) miss the address.
-    * ``2002:XXYY:ZZWW::`` — 6to4 (RFC 3056). Wraps an IPv4 address
-      in the upper 32 bits of a /16 prefix. ``2002:7f00:0001::``
-      wraps ``127.0.0.1`` — the IPv6 form is not loopback on its
-      own but the embedded IPv4 is.
-
-    Unparseable addresses return False (the caller treats this as
-    "continue to the next address" — a hostile resolver that returns
-    garbage cannot bypass the gate by relying on the garbage being
-    treated as "safe").
-    """
-    try:
-        addr: ipaddress.IPv4Address | ipaddress.IPv6Address = (
-            ipaddress.ip_address(addr_str)
-        )
-    except ValueError:
-        return False
-    if isinstance(addr, ipaddress.IPv6Address):
-        if addr.ipv4_mapped is not None:
-            addr = addr.ipv4_mapped
-        elif addr.sixtofour is not None:
-            addr = addr.sixtofour
-    return (
-        addr.is_unspecified
-        or addr.is_private
-        or addr.is_loopback
-        or addr.is_link_local
-        or addr.is_multicast
-        or addr.is_reserved
-    )
-
-
-def _resolved_addresses_have_unsafe(infos: list[tuple]) -> bool:
-    """
-    Return True if any address in a ``getaddrinfo`` result tuple list
-    is unsafe per :func:`_is_unsafe_address`.
-
-    Shared by :meth:`AllianceAuthApplication._validate_backchannel_logout_uri`
-    (admin-form gate) and ``tasks.send_logout_token`` (request-time
-    re-validation defending against DNS rebinding TOCTOU between
-    admin save and worker dispatch).
-    """
-    return any(_is_unsafe_address(info[4][0]) for info in infos)
 
 
 # Module-level so admin/forms/tests can re-import the same source of
@@ -376,9 +284,9 @@ class AllianceAuthApplication(AbstractApplication):
         Shared by the admin-form ``clean()`` path and the
         ``pre_save`` signal in ``apps._connect_bcl_pre_save_gate``;
         the ``send_logout_token`` Celery task ALSO re-runs the
-        underlying ``_resolve_host_bounded`` +
-        ``_resolved_addresses_have_unsafe`` check at request time as
-        the final TOCTOU defence against DNS rebinding between save
+        underlying ``resolve_host_bounded`` +
+        ``addresses_have_unsafe`` check at request time as the
+        final TOCTOU defence against DNS rebinding between save
         and dispatch.
         """
         parsed = urlsplit(self.backchannel_logout_uri)
@@ -386,7 +294,7 @@ class AllianceAuthApplication(AbstractApplication):
         if not host:
             return
         try:
-            infos = _resolve_host_bounded(host)
+            infos = resolve_host_bounded(host)
         except (
             TimeoutError,
             socket.gaierror,
@@ -406,7 +314,7 @@ class AllianceAuthApplication(AbstractApplication):
         )
         if allow_private:
             return
-        if _resolved_addresses_have_unsafe(infos):
+        if addresses_have_unsafe(infos):
             raise ValidationError(
                 {
                     "backchannel_logout_uri": _(

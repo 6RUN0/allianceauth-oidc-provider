@@ -15,11 +15,7 @@ ORM; the model import below is deferred to call time, after
 
 from __future__ import annotations
 
-import logging
-
-from .security import DEFAULT_POLICY
-
-logger = logging.getLogger(f"extensions.{__name__}")
+from .security import DEFAULT_POLICY, resolve_per_app_setting
 
 
 def per_app_pkce_required(client_id: str | None) -> bool:
@@ -34,28 +30,21 @@ def per_app_pkce_required(client_id: str | None) -> bool:
     strict path) with a log line at ``WARNING`` so anomalous traffic
     is visible in the audit trail.
 
-    The query is bounded to ``pkce_required`` via ``.only(...)`` because
-    this hook runs on every authorize / token request.
-
-    The unknown-client log uses ``%a`` (ASCII repr) rather than ``%r``:
-    ``client_id`` arrives unsanitised from an HTTP parameter and
-    ``%r`` would let stray newline / ANSI escapes flow into log
-    storage.
+    The recipe (column-narrowed query → DoesNotExist fail-safe with
+    one WARNING log → delegate to policy) lives in
+    :func:`security.resolve_per_app_setting` so this adapter and the
+    sibling JWT-format adapter (:func:`tokens._resolve_access_token_format`)
+    cannot drift on the contract.
 
     ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` must be assigned the function
     object, not a dotted-path string. DOT does **not** auto-import this
     setting — see ``oauth2_provider/settings.py`` (``IMPORT_STRINGS``)
     and ``oauth2_validators.py`` (``is_pkce_required``).
     """
-    from .models import AllianceAuthApplication
-
-    try:
-        app = AllianceAuthApplication.objects.only("pkce_required").get(
-            client_id=client_id
-        )
-    except AllianceAuthApplication.DoesNotExist:
-        logger.warning(
-            "OIDC PKCE: unknown client_id=%a -> fail-safe True", client_id
-        )
-        return True
-    return DEFAULT_POLICY.requires_pkce(app)
+    return resolve_per_app_setting(
+        client_id,
+        field="pkce_required",
+        policy_method=DEFAULT_POLICY.requires_pkce,
+        fail_safe_default=True,
+        log_prefix="OIDC PKCE",
+    )

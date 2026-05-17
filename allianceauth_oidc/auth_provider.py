@@ -14,6 +14,7 @@ from .app_settings import OIDCSettings
 from .claims import ClaimsBuilder, build_oidc_claim_scope
 from .security import (
     DEFAULT_POLICY,
+    AccessDecision,
     AllowedDecision,
     AppDeny,
     AppLike,
@@ -135,6 +136,35 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             return None, None
         return user, client
 
+    @staticmethod
+    def _emit_denial(decision: AccessDecision, *, stage: str) -> str | None:
+        """
+        Arbitrate the discriminated union + emit the cross-stage metric.
+
+        Returns ``None`` when ``decision`` allows, otherwise returns
+        the deny reason string and increments ``policy_rejections``
+        with the per-stage label. Callers stay responsible for the
+        stage-specific log format and the final action (``return
+        False`` vs ``raise InvalidGrantError``) — sharing those at
+        this layer would conflate two contracts oauthlib treats
+        differently.
+
+        ``match`` over ``AccessDecision`` keeps the exhaustiveness
+        check (``assert_never`` on the fall-through) at one site,
+        so a future fourth variant trips a type error rather than
+        silently falling through to ``None`` and being treated as
+        "allowed" at the caller.
+        """
+        match decision:
+            case AllowedDecision():
+                return None
+            case GlobalDeny() | AppDeny():
+                reason = decision.deny_reason.value
+                policy_rejections.labels(stage=stage, reason=reason).inc()
+                return reason
+            case _:
+                assert_never(decision)
+
     def _enforce_policy(
         self,
         request: OAuthRequestLike,
@@ -164,45 +194,23 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         # dataclass construction per request) for a major dashboard
         # win on "which gate fired in which stage".
         decision = self.policy.decide(user, resolved_client)
-        # ``match`` over the AccessDecision discriminated union — both
-        # mypy and basedpyright narrow ``decision.deny_reason`` to a
-        # non-Optional ``DenyReason`` inside the deny arms, which the
-        # plain ``if decision.allowed`` shape did not give basedpyright
-        # (reportOptionalMemberAccess). Mirrors the pattern in
-        # ``views_authorize.AuthAuthorizationView.dispatch``.
-        match decision:
-            case AllowedDecision():
-                return True
-            case GlobalDeny() | AppDeny():
-                reason = decision.deny_reason.value
-                policy_rejections.labels(stage=stage, reason=reason).inc()
-                # Validator path doesn't render a denied page (the
-                # OAuth response is the bool → invalid_grant
-                # translation), so log here for operator visibility —
-                # the policy gate itself is decision-only after the
-                # M1 consolidation.
-                logger.warning(
-                    "OIDC DENIED: validator stage=%s reason=%s "
-                    "user=%s client=%s client_id=%s",
-                    stage,
-                    reason,
-                    user,
-                    resolved_client,
-                    getattr(resolved_client, "client_id", None),
-                )
-                return False
-            case _:
-                # ``AccessDecision`` is a closed discriminated union;
-                # ``assert_never`` makes the exhaustiveness a static
-                # invariant. Without this arm a future fourth variant
-                # would silently let the function fall off the end and
-                # return ``None``, which oauthlib treats as falsy at
-                # the ``validate_code`` / ``validate_refresh_token``
-                # callsites — surfacing as ``invalid_grant`` rather
-                # than the loud TypeError that ``assert_never``
-                # produces. Mirrors the same pattern in
-                # ``views_authorize.AuthAuthorizationView.dispatch``.
-                assert_never(decision)
+        reason = self._emit_denial(decision, stage=stage)
+        if reason is None:
+            return True
+        # Validator path doesn't render a denied page (the
+        # OAuth response is the bool → invalid_grant translation),
+        # so log here for operator visibility — the policy gate
+        # itself is decision-only after the M1 consolidation.
+        logger.warning(
+            "OIDC DENIED: validator stage=%s reason=%s "
+            "user=%s client=%s client_id=%s",
+            stage,
+            reason,
+            user,
+            resolved_client,
+            getattr(resolved_client, "client_id", None),
+        )
+        return False
 
     def validate_silent_login(self, request):
         """
@@ -407,32 +415,23 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         user, client = self._resolve_user_and_client(request)
         if user is not None and client is not None:
             decision = self.policy.decide(user, client)
-            # ``match`` narrows ``deny_reason`` for basedpyright; see
-            # the ``_enforce_policy`` site for the rationale.
-            match decision:
-                case AllowedDecision():
-                    pass
-                case GlobalDeny() | AppDeny():
-                    reason = decision.deny_reason.value
-                    policy_rejections.labels(
-                        stage="save_bearer", reason=reason
-                    ).inc()
-                    logger.warning(
-                        "OIDC DENIED: save_bearer_token reason=%s "
-                        "user=%s client=%s client_id=%s",
-                        reason,
-                        user,
-                        client,
-                        getattr(client, "client_id", None),
-                    )
-                    # Convert the policy decision into the protocol-
-                    # level error response (no 500). ``from None``
-                    # keeps the OAuth response stack-trace-free even
-                    # if a future change to ``decide`` starts raising
-                    # under us.
-                    raise oauth_errors.InvalidGrantError(
-                        description="Access denied"
-                    ) from None
+            reason = self._emit_denial(decision, stage="save_bearer")
+            if reason is not None:
+                logger.warning(
+                    "OIDC DENIED: save_bearer_token reason=%s "
+                    "user=%s client=%s client_id=%s",
+                    reason,
+                    user,
+                    client,
+                    getattr(client, "client_id", None),
+                )
+                # Convert the policy decision into the protocol-
+                # level error response (no 500). ``from None`` keeps
+                # the OAuth response stack-trace-free even if a
+                # future change to ``decide`` starts raising under us.
+                raise oauth_errors.InvalidGrantError(
+                    description="Access denied"
+                ) from None
         elif user is not None and client is None:
             # The policy gate is intentionally skipped on grant types
             # that do not carry a client on the oauthlib request

@@ -7,6 +7,7 @@ dispatch UIDs) live here. Module-local magic numbers / format strings
 stay next to their consumer.
 """
 
+from enum import Enum
 from typing import Final
 
 # Permission codename + dotted label.
@@ -83,41 +84,73 @@ BCL_AUDIT_DISPATCH_UID: Final[str] = (
 # past one of the call sites and silently disappear from operator
 # dashboards.
 
-# Outcomes for ``aa_oidc_bcl_delivery_seconds`` (histogram, observed
-# per HTTP attempt in ``tasks.send_logout_token``). Derived from the
-# RP status code: 2xx → success, 3xx → redirect_blocked,
-# 4xx → rp_client_error, 5xx → rp_server_error. Note this is the
-# per-attempt vocabulary; the terminal-dispatch counter
-# (:data:`BCL_DISPATCH_OUTCOMES`) is a different set because some
-# terminal events never produce an HTTP exchange.
+# ``str, Enum`` mixin (not ``StrEnum`` — that landed in 3.11 and the
+# project floor is 3.10) so each member equals its ``.value`` for
+# free, label-emit sites can pass a member where Prometheus expects
+# a string, and ``isinstance(x, str)`` keeps working. Mirrors the
+# proven pattern in ``security.DenyReason``. Existing frozensets
+# (:data:`BCL_HISTOGRAM_OUTCOMES` etc.) are rebuilt from the enum
+# members so the value-set has one source of truth and Grafana
+# queries keep matching the same strings.
+
+
+class BCLHistogramOutcome(str, Enum):
+    """
+    Per-HTTP-attempt outcomes for ``aa_oidc_bcl_delivery_seconds``.
+
+    Derived from the RP status code by ``_bcl_outcome_for_status``:
+    2xx → SUCCESS, 3xx → REDIRECT_BLOCKED,
+    4xx → RP_CLIENT_ERROR, 5xx → RP_SERVER_ERROR. Per-attempt
+    vocabulary; the terminal-dispatch counter (:class:`BCLDispatchOutcome`)
+    has its own set because some terminal events never produce an
+    HTTP exchange.
+    """
+
+    SUCCESS = "success"
+    REDIRECT_BLOCKED = "redirect_blocked"
+    RP_CLIENT_ERROR = "rp_client_error"
+    RP_SERVER_ERROR = "rp_server_error"
+
+
+class BCLDispatchOutcome(str, Enum):
+    """
+    Terminal outcomes for ``aa_oidc_bcl_dispatches_total``.
+
+    Fires once per terminal ``oidc_logout_dispatched`` audit. Derived
+    from the ``(success, reason)`` signature: ``success=True`` →
+    ``SUCCESS``, ``success=False`` → the ``reason`` kwarg. Keep in
+    sync with the values emitted from ``tasks.send_logout_token``
+    and ``logout.dispatch_backchannel_logout`` — a value that fires
+    the audit signal but is NOT a member here will produce a
+    counter sample with an unrecognised label, which Grafana
+    queries will silently miss.
+    """
+
+    SUCCESS = "success"
+    REDIRECT_BLOCKED = "redirect_blocked"
+    RP_CLIENT_ERROR = "rp_client_error"
+    RETRIES_EXHAUSTED = "retries_exhausted"
+    SIGNING_KID_RETIRED = "signing_kid_retired"
+    SIGNING_KID_RESOLVE_FAILED = "signing_kid_resolve_failed"
+    BROKER_UNAVAILABLE = "broker_unavailable"
+    DNS_RESOLVE_FAILED = "dns_resolve_failed"
+    UNSAFE_TARGET_IP = "unsafe_target_ip"
+
+
+# Outcomes for ``aa_oidc_bcl_delivery_seconds`` — built from the
+# enum so the frozenset cannot drift from the typed source of
+# truth. Frozenset form preserved for callers iterating on it
+# (Prometheus label-set validators in tests).
 BCL_HISTOGRAM_OUTCOMES: Final[frozenset[str]] = frozenset(
-    {
-        "success",
-        "redirect_blocked",
-        "rp_client_error",
-        "rp_server_error",
-    }
+    m.value for m in BCLHistogramOutcome
 )
 
-# Outcomes for ``aa_oidc_bcl_dispatches_total`` (counter, fires once
-# per terminal ``oidc_logout_dispatched`` audit). Derived from the
-# ``(success, reason)`` signature: ``success=True`` → ``"success"``,
-# ``success=False`` → the literal ``reason`` kwarg. Keep in sync with
-# the values emitted from ``tasks.send_logout_token`` and
-# ``logout.dispatch_backchannel_logout`` — a value that fires the
-# audit signal but is NOT in this set will produce a counter sample
-# with an unrecognised label, which Grafana queries will silently
-# miss.
+# Outcomes for ``aa_oidc_bcl_dispatches_total`` — built from the
+# typed enum source. DNS_RESOLVE_FAILED and UNSAFE_TARGET_IP joined
+# the set when the request-time SSRF gate started emitting them
+# (see ``tasks._request_time_ssrf_gate_passes``).
 BCL_DISPATCH_OUTCOMES: Final[frozenset[str]] = frozenset(
-    {
-        "success",
-        "redirect_blocked",
-        "rp_client_error",
-        "retries_exhausted",
-        "signing_kid_retired",
-        "signing_kid_resolve_failed",
-        "broker_unavailable",
-    }
+    m.value for m in BCLDispatchOutcome
 )
 
 # Subset of :data:`BCL_DISPATCH_OUTCOMES` classified as terminal
@@ -133,12 +166,14 @@ BCL_DISPATCH_OUTCOMES: Final[frozenset[str]] = frozenset(
 # audit signal carries ``reason="retries_exhausted"`` instead.
 BCL_DEAD_LETTER_OUTCOMES: Final[frozenset[str]] = frozenset(
     {
-        "retries_exhausted",
-        "signing_kid_retired",
-        "signing_kid_resolve_failed",
-        "broker_unavailable",
-        "redirect_blocked",
-        "rp_client_error",
+        BCLDispatchOutcome.RETRIES_EXHAUSTED.value,
+        BCLDispatchOutcome.SIGNING_KID_RETIRED.value,
+        BCLDispatchOutcome.SIGNING_KID_RESOLVE_FAILED.value,
+        BCLDispatchOutcome.BROKER_UNAVAILABLE.value,
+        BCLDispatchOutcome.REDIRECT_BLOCKED.value,
+        BCLDispatchOutcome.RP_CLIENT_ERROR.value,
+        BCLDispatchOutcome.DNS_RESOLVE_FAILED.value,
+        BCLDispatchOutcome.UNSAFE_TARGET_IP.value,
     }
 )
 

@@ -49,7 +49,7 @@ _PUBLIC_IP = "1.1.1.1"
 def _stub_resolver(*ips: str):
     """
     Build a ``getaddrinfo``-compatible return value enumerating ``ips``
-    so ``models._resolve_host_bounded`` exits with those addresses.
+    so ``_dns_safety.resolve_host_bounded`` exits with those addresses.
     """
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, 0)) for ip in ips]
 
@@ -98,7 +98,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="http://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver(_PUBLIC_IP),
             ),
             self.assertRaises(ValidationError) as ctx,
@@ -110,7 +110,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
     def test_ac3_http_allowed_when_debug_true(self) -> None:
         app = self._new_app(uri="http://rp.example.com/bcl")
         with mock.patch(
-            "allianceauth_oidc.models._resolve_host_bounded",
+            "allianceauth_oidc._dns_safety.resolve_host_bounded",
             return_value=_stub_resolver(_PUBLIC_IP),
         ):
             app.full_clean()
@@ -122,7 +122,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver("10.0.0.1"),
             ),
             self.assertRaises(ValidationError) as ctx,
@@ -201,7 +201,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
                 app = self._new_app(uri="https://rp.example.com/bcl")
                 with (
                     mock.patch(
-                        "allianceauth_oidc.models._resolve_host_bounded",
+                        "allianceauth_oidc._dns_safety.resolve_host_bounded",
                         return_value=_stub_resolver(ip),
                     ),
                     self.assertRaises(ValidationError),
@@ -224,7 +224,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver("not-an-ip", "10.0.0.1"),
             ),
             self.assertRaises(ValidationError) as ctx,
@@ -251,7 +251,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="http://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver(_PUBLIC_IP),
             ),
             self.assertRaises(ValidationError) as ctx,
@@ -269,7 +269,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
     def test_ac3a_private_allowed_when_dev_flag_set(self) -> None:
         app = self._new_app(uri="https://rp.example.com/bcl")
         with mock.patch(
-            "allianceauth_oidc.models._resolve_host_bounded",
+            "allianceauth_oidc._dns_safety.resolve_host_bounded",
             return_value=_stub_resolver("10.0.0.1"),
         ):
             app.full_clean()
@@ -278,7 +278,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
     def test_ac3a_public_ip_accepted(self) -> None:
         app = self._new_app(uri="https://rp.example.com/bcl")
         with mock.patch(
-            "allianceauth_oidc.models._resolve_host_bounded",
+            "allianceauth_oidc._dns_safety.resolve_host_bounded",
             return_value=_stub_resolver(_PUBLIC_IP),
         ):
             app.full_clean()
@@ -300,7 +300,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver(_PUBLIC_IP, "10.0.0.1"),
             ),
             self.assertRaises(ValidationError),
@@ -314,7 +314,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 side_effect=socket.gaierror("nodename nor servname"),
             ),
             self.assertLogs(
@@ -330,7 +330,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 side_effect=TimeoutError("timed out"),
             ),
             self.assertLogs(
@@ -344,7 +344,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 side_effect=OSError("network unreachable"),
             ),
             self.assertLogs(
@@ -358,7 +358,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         app = self._new_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 side_effect=concurrent.futures.TimeoutError(),
             ),
             self.assertLogs(
@@ -371,7 +371,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
     def test_ac3a_skips_dns_when_uri_blank(self) -> None:
         app = self._new_app(uri="")
         with mock.patch(
-            "allianceauth_oidc.models._resolve_host_bounded"
+            "allianceauth_oidc._dns_safety.resolve_host_bounded"
         ) as resolver:
             app.full_clean()
         resolver.assert_not_called()
@@ -1438,7 +1438,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
             # ``TestSendLogoutTokenSSRFGate``.
             with (
                 mock.patch(
-                    "allianceauth_oidc.models._resolve_host_bounded",
+                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
                     return_value=_stub_resolver(_PUBLIC_IP),
                 ),
                 mock.patch("allianceauth_oidc.tasks.requests.post") as post,
@@ -1615,7 +1615,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                     return_value=fake_request,
                 ),
                 mock.patch(
-                    "allianceauth_oidc.models._resolve_host_bounded",
+                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
                     return_value=_stub_resolver(_PUBLIC_IP),
                 ),
                 mock.patch("allianceauth_oidc.tasks.requests.post") as post,
@@ -1792,7 +1792,7 @@ class TestSendLogoutTokenBoundaries(OIDCTestCase):
                     return_value=fake_request,
                 ),
                 mock.patch(
-                    "allianceauth_oidc.models._resolve_host_bounded",
+                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
                     return_value=_stub_resolver(_PUBLIC_IP),
                 ),
                 mock.patch("allianceauth_oidc.tasks.requests.post") as post,
@@ -2039,7 +2039,7 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
                 "extensions.allianceauth_oidc.tasks", level=logging.WARNING
             ) as captured,
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver(_PUBLIC_IP),
             ),
             mock.patch("allianceauth_oidc.tasks.requests.post") as post,
@@ -2117,7 +2117,7 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
         try:
             with (
                 mock.patch(
-                    "allianceauth_oidc.models._resolve_host_bounded",
+                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
                     return_value=_stub_resolver(_PUBLIC_IP),
                 ),
                 mock.patch("allianceauth_oidc.tasks.requests.post") as post,
@@ -3071,7 +3071,7 @@ class TestModelsKillMutants(OIDCTestCase):
 
     Three groups of surviving cosmic-ray mutants:
 
-    * ``_DNS_BOUND_SECONDS = 3`` — ``NumberReplacer`` flips the
+    * ``DNS_BOUND_SECONDS = 3`` — ``NumberReplacer`` flips the
       module constant; no existing test pins the literal value.
     * ``BackChannelLogoutAttempt.__str__`` carries an ``AddNot`` on
       the success/FAIL ternary and two ``ReplaceOrWithAnd`` on the
@@ -3081,16 +3081,16 @@ class TestModelsKillMutants(OIDCTestCase):
       ``is``.
     """
 
-    # ---- _DNS_BOUND_SECONDS literal ---------------------------
+    # ---- DNS_BOUND_SECONDS literal ----------------------------
 
     def test_dns_bound_seconds_is_three_by_default(self) -> None:
         # Pin the literal. ``NumberReplacer`` flipping to 2 or 4
         # would silently change the resolver wall-clock contract:
         # 2s is uncomfortably tight on cold-DNS first-resolves;
         # 4s pushes past the operator-facing form-save SLA.
-        from allianceauth_oidc.models import _DNS_BOUND_SECONDS
+        from allianceauth_oidc._dns_safety import DNS_BOUND_SECONDS
 
-        self.assertEqual(3, _DNS_BOUND_SECONDS)
+        self.assertEqual(3, DNS_BOUND_SECONDS)
 
     # ---- BackChannelLogoutAttempt.__str__ ---------------------
 
@@ -3235,7 +3235,7 @@ class TestSendLogoutTokenSSRFGate(OIDCTestCase):
 
     Fixture pattern: ``make_app`` stubs DNS at create-time (returns
     ``1.1.1.1``) so the app row exists, then each test overrides
-    ``_resolve_host_bounded`` separately to drive the request-time
+    ``resolve_host_bounded`` separately to drive the request-time
     path. Tests assert two things in tandem: (1) ``requests.post``
     is NOT called, and (2) the ``oidc_logout_dispatched`` audit
     signal fires with the expected reason. Failing either assertion
@@ -3278,12 +3278,12 @@ class TestSendLogoutTokenSSRFGate(OIDCTestCase):
 
         if resolver_raises is not None:
             resolver_mock = mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 side_effect=resolver_raises,
             )
         else:
             resolver_mock = mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver(*(resolver_ips or ())),
             )
         oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ssrf")
@@ -3440,7 +3440,7 @@ class TestBclUriPreSaveGate(OIDCTestCase):
         app = self._new_unsaved_app(uri="https://rp.example.com/bcl")
         with (
             mock.patch(
-                "allianceauth_oidc.models._resolve_host_bounded",
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver("10.0.0.1"),
             ),
             self.assertRaises(ValidationError) as ctx,
@@ -3453,7 +3453,7 @@ class TestBclUriPreSaveGate(OIDCTestCase):
         """Public-IP resolution → save proceeds normally."""
         app = self._new_unsaved_app(uri="https://rp.example.com/bcl")
         with mock.patch(
-            "allianceauth_oidc.models._resolve_host_bounded",
+            "allianceauth_oidc._dns_safety.resolve_host_bounded",
             return_value=_stub_resolver(_PUBLIC_IP),
         ):
             app.save()
@@ -3471,7 +3471,7 @@ class TestBclUriPreSaveGate(OIDCTestCase):
         """
         app = self._new_unsaved_app(uri="")
         with mock.patch(
-            "allianceauth_oidc.models._resolve_host_bounded"
+            "allianceauth_oidc._dns_safety.resolve_host_bounded"
         ) as resolver:
             app.save()
         resolver.assert_not_called()

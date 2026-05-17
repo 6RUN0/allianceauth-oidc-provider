@@ -33,6 +33,8 @@ def _good_kwargs(**overrides: object) -> dict:
         "eve_claim_scope": "profile",
         "email_verified_default": True,
         "force_email_verified": None,
+        "default_access_token_format": "opaque",
+        "jwt_size_warn_bytes": 4096,
     }
     base.update(overrides)
     return base

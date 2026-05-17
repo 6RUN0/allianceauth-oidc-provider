@@ -257,7 +257,7 @@ def make_app(
         if backchannel_logout_uri:
             stack.enter_context(
                 mock.patch(
-                    "allianceauth_oidc.models._resolve_host_bounded",
+                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
                     return_value=_FACTORY_PUBLIC_RESOLVER_REPLY,
                 )
             )
