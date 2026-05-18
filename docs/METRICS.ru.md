@@ -364,6 +364,7 @@ delta-pattern-фикстур и плановый smoke-тест, patch'ащий
 | `aa_oidc_authorize_denied_total`       | Counter   | `reason` (`global`/`app`) | `views.py`            | `AuthAuthorizationView.dispatch`.       |
 | `aa_oidc_bcl_delivery_seconds`         | Histogram | `client_id`, `outcome`    | `tasks.py`            | `send_logout_token` — observed вокруг `requests.post`. |
 | `aa_oidc_bcl_dispatches_total`         | Counter   | `client_id`, `outcome`    | `_metrics.py`         | Receiver сигнала `oidc_logout_dispatched` — фireет на каждом terminal-событии. |
+| `aa_oidc_code_reuse_audit_misses_total`| Counter   | `client_id`               | `auth_provider.py`    | `_handle_potential_code_reuse` инкрементирует когда для предъявленного `code` нет строки в `IssuedCodeAudit` — upper bound для race-window-деградации RFC 6749 §10.5 SHOULD-overlay (также срабатывает на never-issued / fuzzed-кодах). Коррелировать с сигналом `oidc_code_reuse_detected` для disambiguation. |
 
 Анонимные authorize-запросы не вносят вклад в
 `aa_oidc_authorize_denied_total` — они редиректятся на

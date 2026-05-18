@@ -220,6 +220,38 @@ policy_rejections = _counter(
 )
 
 
+# F-3: reuse-detection observability for the RFC 6749 §10.5 SHOULD
+# overlay. ``_handle_potential_code_reuse`` walks the
+# ``IssuedCodeAudit`` table to find the linked tokens to revoke on a
+# reuse hit. When no audit row exists for the presented code, this
+# counter fires. Two real-world sources contribute:
+#
+# * **Race window**: the audit row is written AFTER
+#   ``super().save_bearer_token`` commits, so a second presenter
+#   exchanging the same code in that micro-window sees no audit row
+#   and the SHOULD-overlay revocation silently degrades to log-only.
+# * **Never-issued code**: an attacker fuzzing ``/o/token/`` with
+#   random ``code=...`` values also hits this branch (DOT's
+#   Grant-delete already rejected them via ``invalid_grant``).
+#
+# The counter is therefore an *upper bound* on race-window hits;
+# operators correlate against the ``oidc_code_reuse_detected``
+# Django signal (which fires only when the audit row WAS found) to
+# distinguish "race window hit" from "fuzzer noise". A non-zero
+# delta between the two is the observability signal that the
+# RFC 6749 §10.5 SHOULD overlay degraded for a real reuse event.
+code_reuse_audit_misses = _counter(
+    "aa_oidc_code_reuse_audit_misses",
+    (
+        "Reuse-detection attempts where the audit row was absent — "
+        "race window between save_bearer_token commit and audit "
+        "insert, or never-issued code (operators correlate against "
+        "the oidc_code_reuse_detected signal to disambiguate)."
+    ),
+    labelnames=("client_id",),
+)
+
+
 # AccessToken rows removed by the periodic ``clear_expired_tokens``
 # Celery task. The counter increments by the per-run delta, so
 # ``rate(aa_oidc_tokens_cleaned_total[5m])`` matches the observed

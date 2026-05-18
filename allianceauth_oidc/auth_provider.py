@@ -9,7 +9,7 @@ from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 from typing_extensions import assert_never
 
-from ._metrics import policy_rejections
+from ._metrics import code_reuse_audit_misses, policy_rejections
 from .app_settings import OIDCSettings
 from .claims import ClaimsBuilder, build_oidc_claim_scope
 from .security import (
@@ -681,9 +681,20 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 .first()
             )
             if audit is None:
-                # No audit row — the code is genuinely unknown to
-                # this provider, not a replay. Caller will return
-                # False (``invalid_grant``) on its own.
+                # No audit row — either the code is genuinely unknown
+                # to this provider (not a replay; caller returns False
+                # / ``invalid_grant`` on its own) OR we hit the
+                # ``_record_code_issuance`` race window between
+                # ``super().save_bearer_token`` commit and audit
+                # insert. F-3: increment the ``code_reuse_audit_misses``
+                # counter on either path so operators can correlate
+                # against the ``oidc_code_reuse_detected`` signal —
+                # the counter is an upper bound, the signal is the
+                # confirmed-hit signal.
+                code_reuse_audit_misses.labels(
+                    client_id=getattr(client, "client_id", "unknown")
+                    or "unknown"
+                ).inc()
                 return
 
             at_pk = audit.access_token_pk

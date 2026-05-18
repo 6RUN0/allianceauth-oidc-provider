@@ -595,3 +595,100 @@ class TestTokensCleanedCounter(OIDCTestCase):
             after - before,
             f"expected two removed tokens, got delta={after - before}",
         )
+
+
+class TestCodeReuseAuditMissesCounter(OIDCTestCase):
+    """
+    F-3: ``aa_oidc_code_reuse_audit_misses_total{client_id}`` fires
+    when :meth:`AllianceAuthOAuth2Validator._handle_potential_code_reuse`
+    walks ``IssuedCodeAudit`` and finds no row for the presented
+    code. This is the observability hook for the RFC 6749 §10.5
+    SHOULD-overlay race window: pre-F-3 the branch was silent, so
+    a reuse hit that landed inside the
+    ``_record_code_issuance``-after-``save_bearer_token`` window
+    degraded to log-only without surfacing on dashboards.
+
+    Operators correlate this counter against the
+    ``oidc_code_reuse_detected`` Django signal — the counter is an
+    upper bound (fuzzers probing ``/o/token/`` with random codes
+    also hit the same branch), the signal is the confirmed-hit
+    indicator.
+    """
+
+    def test_audit_miss_increments_counter_with_client_id_label(
+        self,
+    ) -> None:
+        """
+        A ``_handle_potential_code_reuse`` call against a code with
+        no ``IssuedCodeAudit`` row increments the counter by one,
+        labelled with the presenting client's ``client_id``.
+        """
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        labels = {"client_id": self.oauth_app.client_id}
+        before = _sample_value(
+            "aa_oidc_code_reuse_audit_misses_total", **labels
+        )
+
+        validator = AllianceAuthOAuth2Validator()
+        # No IssuedCodeAudit row exists for this code — drives the
+        # ``audit is None`` branch where F-3 increments the counter.
+        validator._handle_potential_code_reuse(
+            "code-with-no-audit-row", self.oauth_app
+        )
+
+        after = _sample_value(
+            "aa_oidc_code_reuse_audit_misses_total", **labels
+        )
+        self.assertEqual(
+            1.0,
+            after - before,
+            f"expected delta=1 for client_id={self.oauth_app.client_id!r}, "
+            f"got {after - before}",
+        )
+
+    def test_audit_miss_counter_increments_separately_per_client_id(
+        self,
+    ) -> None:
+        """
+        Two distinct clients fuzzing ``/o/token/`` with random codes
+        each contribute to their own ``client_id`` bucket — the
+        label is not shared. Pin this so a future operator dashboard
+        slicing by ``client_id`` does not collapse traffic from
+        different RPs into a single time series.
+        """
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        from ._factories import make_app
+
+        # Reuse the fixture app + create a second app to exercise
+        # the per-client_id label split.
+        second_app = make_app(owner=self.user2).app
+
+        labels_a = {"client_id": self.oauth_app.client_id}
+        labels_b = {"client_id": second_app.client_id}
+        before_a = _sample_value(
+            "aa_oidc_code_reuse_audit_misses_total", **labels_a
+        )
+        before_b = _sample_value(
+            "aa_oidc_code_reuse_audit_misses_total", **labels_b
+        )
+
+        validator = AllianceAuthOAuth2Validator()
+        validator._handle_potential_code_reuse(
+            "miss-code-app-a", self.oauth_app
+        )
+        validator._handle_potential_code_reuse("miss-code-app-b", second_app)
+
+        after_a = _sample_value(
+            "aa_oidc_code_reuse_audit_misses_total", **labels_a
+        )
+        after_b = _sample_value(
+            "aa_oidc_code_reuse_audit_misses_total", **labels_b
+        )
+        self.assertEqual(1.0, after_a - before_a)
+        self.assertEqual(1.0, after_b - before_b)

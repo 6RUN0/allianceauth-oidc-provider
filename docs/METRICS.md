@@ -359,6 +359,7 @@ three real adopters.
 | `aa_oidc_policy_rejections_total`      | Counter   | `stage`, `reason`       | `_metrics.py`         | Cross-stage view of policy rejections: `stage` ∈ {`authorize`, `validate_code`, `validate_refresh`, `validate_bearer`, `save_bearer`}, `reason` ∈ {`global`, `app`, `app_unusable`, `unknown`}. Emitted alongside `authorize_denied` for the `authorize` stage so dashboards can migrate without a flag-day cutover. |
 | `aa_oidc_bcl_delivery_seconds`         | Histogram | `client_id`, `outcome`  | `tasks.py`            | `send_logout_token` — observed around `requests.post`. |
 | `aa_oidc_bcl_dispatches_total`         | Counter   | `client_id`, `outcome`  | `_metrics.py`         | `oidc_logout_dispatched` signal receiver — fires on every terminal event. |
+| `aa_oidc_code_reuse_audit_misses_total`| Counter   | `client_id`             | `auth_provider.py`    | `_handle_potential_code_reuse` increments when no `IssuedCodeAudit` row exists for the presented code — race-window upper bound for the RFC 6749 §10.5 SHOULD-overlay degradation (also fires on never-issued / fuzzed codes). Correlate against the `oidc_code_reuse_detected` signal to disambiguate. |
 
 Anonymous authorize requests do not contribute to
 `aa_oidc_authorize_denied_total` (nor to
