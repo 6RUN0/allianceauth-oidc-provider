@@ -329,6 +329,57 @@ def forward_to_siem(sender, *, app, user, request, body, **kwargs):
 Не наследуйтесь от `TokenView` ради этого — сигнал и есть документированная точка интеграции,
 он переживает bump'ы DOT, которые меняют внутренности view'хи.
 
+#### Семплирование высокочастотных audit-сигналов
+
+`oidc_token_introspected` кидается на **каждый** запрос RFC 7662 introspection. Resource server'ы,
+которые introspect'ят на каждый API-вызов, бьют по нему с request-rate — пробрасывать сырые
+события в SIEM, который тарифицируется по объёму, очень дорого. Дефолтный receiver пишет одну
+строку `INFO` на событие; SIEM-forwarder'ы должны семплировать или агрегировать, не пробрасывать
+пассом:
+
+```python
+import secrets
+from django.dispatch import receiver
+from allianceauth_oidc.signals import oidc_token_introspected
+
+# 1% reservoir-семплер; подберите под бюджет SIEM.
+_SAMPLE_RATE = 0.01
+
+@receiver(oidc_token_introspected, dispatch_uid="siem.introspect")
+def forward_introspect_sampled(sender, *, request, introspector, body, **kwargs):
+    if secrets.SystemRandom().random() > _SAMPLE_RATE:
+        return
+    # Пробрасываем `body` (отредактированный, без секретов — см.
+    # OIDCIntrospectionAuditBody) + identity introspector'а. Сырые
+    # значения токенов НИКОГДА не пробрасывайте.
+    ...
+```
+
+`oidc_token_issued` и `oidc_code_reuse_detected` — низкочастотные (выпуск токена и факт
+реального replay соответственно), для них pass-through нормален.
+
+### Audit-таблица повторного использования кодов
+
+RFC 6749 §10.5 SHOULD-clause defence-in-depth: каждый успешный обмен authorization-code пишет
+строку в `IssuedCodeAudit` (`code_hash`, `application`, `access_token_pk`, `refresh_token_pk`,
+`reuse_count`, `last_reuse_at`, `created_at`). При повторной попытке предъявить тот же код
+`validate_code` отзывает связанные токены и кидает `oidc_code_reuse_detected` для корреляции
+в SIEM.
+
+**Retention**:
+
+- Строки с `reuse_count = 0` автоматически удаляются `clear_expired_tokens` после того, как
+  они проживут дольше `OAUTH2_PROVIDER['REFRESH_TOKEN_EXPIRE_SECONDS']` — после этого код
+  всё равно нельзя обменять ни на один токен, который AS согласится выпустить, так что
+  audit-строка больше не несёт никакой ценности.
+- Строки с `reuse_count >= 1` **сохраняются навсегда** — это форензическая улика попытки
+  replay-атаки. Операторы чистят их вручную (admin → «Issued code audits») после закрытия
+  incident-review окна.
+
+Сигнал `oidc_code_reuse_detected` кидается на каждый replay, так что real-time корреляция в
+SIEM работает без polling'а таблицы. Подключите свой receiver под уникальным `dispatch_uid`,
+чтобы маршрутизировать reuse-события через alerting pipeline.
+
 ### Поля приложения
 
 Помимо схемы DOT'овского `AbstractApplication`, `AllianceAuthApplication` добавляет:

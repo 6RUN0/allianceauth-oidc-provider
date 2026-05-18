@@ -23,6 +23,15 @@ from .constants import PERM_ACCESS_OIDC_CODENAME
 
 logger = logging.getLogger(f"extensions.{__name__}")
 
+# Fields scanned by ``AllianceAuthApplication._validate_no_nul_in_uri_fields``.
+# Module-level so adding a new URI-shaped field to the model is a one-
+# entry diff here, not a hidden append inside the validator loop.
+_NUL_GUARDED_URI_FIELDS: tuple[str, ...] = (
+    "redirect_uris",
+    "post_logout_redirect_uris",
+    "backchannel_logout_uri",
+)
+
 
 # Module-level so admin/forms/tests can re-import the same source of
 # truth, mirroring DOT's ``CLIENT_TYPES`` / ``GRANT_TYPES`` pattern on
@@ -216,23 +225,25 @@ class AllianceAuthApplication(AbstractApplication):
         Keyed per field so the admin form points at the offending
         input.
         """
-        for field in (
-            "redirect_uris",
-            "post_logout_redirect_uris",
-            "backchannel_logout_uri",
-        ):
-            value = getattr(self, field, "") or ""
-            if "\x00" in value:
-                raise ValidationError(
-                    {
-                        field: _(
-                            "NUL byte (\\x00) is not permitted in URI "
-                            "fields; legacy parsers truncate at NUL "
-                            "and would mean two different things to "
-                            "two different consumers."
-                        ),
-                    }
-                )
+        offending = next(
+            (
+                f
+                for f in _NUL_GUARDED_URI_FIELDS
+                if "\x00" in (getattr(self, f, "") or "")
+            ),
+            None,
+        )
+        if offending is not None:
+            raise ValidationError(
+                {
+                    offending: _(
+                        "NUL byte (\\x00) is not permitted in URI "
+                        "fields; legacy parsers truncate at NUL "
+                        "and would mean two different things to "
+                        "two different consumers."
+                    ),
+                }
+            )
 
     def _validate_backchannel_logout_uri(self) -> None:
         """

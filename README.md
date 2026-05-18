@@ -334,6 +334,55 @@ def forward_to_siem(sender, *, app, user, request, body, **kwargs):
 Don't extend `TokenView` to do this — the signal is the documented integration point and survives
 DOT version bumps that change view internals.
 
+#### Sampling high-volume audit signals
+
+`oidc_token_introspected` fires on **every** RFC 7662 introspection request. Resource servers
+that introspect on every API call hit it at request rate — forwarding raw to a SIEM that
+charges per event volume gets expensive fast. The default receiver writes one `INFO` log line
+per event; SIEM forwarders should sample or aggregate rather than pass-through:
+
+```python
+import secrets
+from django.dispatch import receiver
+from allianceauth_oidc.signals import oidc_token_introspected
+
+# 1% reservoir sampler; tune to whatever the SIEM budget allows.
+_SAMPLE_RATE = 0.01
+
+@receiver(oidc_token_introspected, dispatch_uid="siem.introspect")
+def forward_introspect_sampled(sender, *, request, introspector, body, **kwargs):
+    if secrets.SystemRandom().random() > _SAMPLE_RATE:
+        return
+    # Forward `body` (curated, secret-free per OIDCIntrospectionAuditBody)
+    # plus the introspector identity. NEVER forward raw token values.
+    ...
+```
+
+`oidc_token_issued` and `oidc_code_reuse_detected` are low-rate (issuance and an actual reuse
+incident respectively) — pass-through is fine for both.
+
+### Code-reuse audit table
+
+RFC 6749 §10.5 SHOULD-clause defence-in-depth: every successful authorization-code exchange
+writes a row to `IssuedCodeAudit` (`code_hash`, `application`, `access_token_pk`,
+`refresh_token_pk`, `reuse_count`, `last_reuse_at`, `created_at`). If the same code is
+presented a second time, `validate_code` revokes the linked tokens and fires
+`oidc_code_reuse_detected` for SIEM correlation.
+
+**Retention**:
+
+- Rows with `reuse_count = 0` are garbage-collected automatically by `clear_expired_tokens`
+  once they age past `OAUTH2_PROVIDER['REFRESH_TOKEN_EXPIRE_SECONDS']` — past that point the
+  code could no longer be replayed against any token the AS would mint, so the audit row
+  carries no further value.
+- Rows with `reuse_count >= 1` are **preserved forever** — they are forensic evidence of an
+  attempted replay. Operators clean them up explicitly (admin → "Issued code audits") once
+  the incident-review window closes.
+
+The `oidc_code_reuse_detected` signal also fires on every replay, so SIEM correlation works
+in real time without polling the table. Connect a custom receiver under a unique
+`dispatch_uid` to route reuse events through the alerting pipeline.
+
 ### Application fields
 
 Beyond DOT's `AbstractApplication` schema, `AllianceAuthApplication` adds:

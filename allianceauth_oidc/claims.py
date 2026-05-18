@@ -21,6 +21,7 @@ from oauth2_provider.oauth2_validators import OAuth2Validator
 
 if TYPE_CHECKING:
     from .app_settings import OIDCSettings
+    from .security import DjangoModelField
 
 
 @runtime_checkable
@@ -35,17 +36,16 @@ class ClaimsUser(Protocol):
     former. Splitting the two protocols keeps each contract minimal
     and documents which call sites depend on which attrs.
 
-    Fields are typed ``Any`` for the same reason ``AppLike`` does:
-    django-stubs renders FK descriptors as opaque types incompatible
-    with Protocol invariance against ``str`` / ``int``. The runtime
-    contract — ``ClaimsBuilder`` only ``getattr``-reads each field —
-    is unaffected.
+    Fields use :data:`security.DjangoModelField` (alias of ``Any``);
+    the deliberate-Any rationale lives there so the alias is the
+    single source of truth across the five Protocol classes in the
+    codebase.
     """
 
-    email: Any
-    profile: Any
-    groups: Any
-    id: Any
+    email: DjangoModelField
+    profile: DjangoModelField
+    groups: DjangoModelField
+    id: DjangoModelField
 
 
 logger = logging.getLogger(f"extensions.{__name__}")

@@ -24,6 +24,18 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+# Type alias documenting the deliberate ``Any`` typing on Protocol
+# fields backed by Django model attributes. ``django-stubs`` renders
+# model FKs, M2M managers, and field descriptors as opaque generic
+# types (``BooleanField[Unknown, Unknown]``, ``ManyRelatedManager[...]``)
+# that fail Protocol invariance against concrete Python types
+# (``bool`` / ``Manager``). ``Any`` keeps each Protocol as a
+# typo-catching contract — a consumer reading ``token.applicaiton``
+# is rejected statically — without forcing casts at producer sites.
+# Centralised so the explanation lives in one place rather than being
+# repeated in every Protocol docstring.
+DjangoModelField = Any
+
 # This module intentionally uses getattr/callable checks:
 # - these functions are called from multiple places (views/validators) and must
 #   tolerate partially mocked objects in tests/integrations.
@@ -66,42 +78,33 @@ class AppLike(Protocol):
     Shape of the ``app`` (client / application) argument to
     ``AccessPolicy._check_app``.
 
-    All three fields are typed ``Any`` because django-stubs renders
-    Django model fields as opaque descriptors
-    (``BooleanField[Unknown, Unknown]``, ``ManyRelatedManager[...]``)
-    that fail Protocol invariance against plain ``bool`` / ``Manager``
-    annotations. ``Any`` keeps the Protocol value as documentation
-    + ``isinstance`` runtime check while letting the static checker
-    accept a concrete ``AllianceAuthApplication`` argument without a
-    cast at every call site. The runtime semantics are unchanged:
-    the policy only reads ``.debug_mode``, ``.states``, ``.groups``.
+    All five fields use :data:`DjangoModelField` (alias of ``Any``)
+    because django-stubs renders Django model fields as opaque
+    descriptors that fail Protocol invariance. The policy only
+    reads ``.debug_mode``, ``.states``, ``.groups``,
+    ``.pkce_required``, ``.access_token_format`` — the runtime
+    contract is unchanged.
     """
 
-    debug_mode: Any
-    states: Any
-    groups: Any
-    pkce_required: Any
-    access_token_format: Any
+    debug_mode: DjangoModelField
+    states: DjangoModelField
+    groups: DjangoModelField
+    pkce_required: DjangoModelField
+    access_token_format: DjangoModelField
 
 
 @runtime_checkable
 class TokenLike(Protocol):
     """
     Smallest shape ``TokenAudit`` and ``audit_oidc_token_issued``
-    require for an issued ``AccessToken``.
-
-    Fields are typed ``Any`` for the same reason ``AppLike`` does:
-    django-stubs renders FK descriptors and model managers as opaque
-    objects that fail Protocol invariance against concrete types.
-    ``Any`` keeps the Protocol as a typo-catching contract — a
-    consumer accidentally reading ``token.applicaiton`` is rejected
-    statically — without forcing casts on the producer side.
+    require for an issued ``AccessToken``. Fields use
+    :data:`DjangoModelField` for the same django-stubs reason.
     """
 
-    application: Any
-    user: Any
-    id: Any
-    scope: Any
+    application: DjangoModelField
+    user: DjangoModelField
+    id: DjangoModelField
+    scope: DjangoModelField
 
 
 @runtime_checkable
@@ -113,16 +116,17 @@ class OAuthRequestLike(Protocol):
     ``oauthlib`` does not ship type stubs; DOT adds ``application``
     dynamically on top of oauthlib's ``Request`` (the attribute is
     not declared on oauthlib's class). Capturing the four attrs we
-    actually read (``user`` / ``client`` / ``application`` / ``POST``)
-    here means a typo on the validator side surfaces as a Protocol
-    mismatch at type-check time rather than ``AttributeError`` at
-    request time.
+    actually read here means a typo on the validator side surfaces
+    as a Protocol mismatch at type-check time rather than an
+    ``AttributeError`` at request time. Fields use
+    :data:`DjangoModelField` for stub-opacity consistency with the
+    surrounding protocols.
     """
 
-    user: Any
-    client: Any
-    application: Any
-    POST: Any
+    user: DjangoModelField
+    client: DjangoModelField
+    application: DjangoModelField
+    POST: DjangoModelField
 
 
 class DenyReason(str, Enum):
@@ -364,6 +368,11 @@ class AccessPolicy:
         Validator-path callers (no prefetch) still benefit: one
         SELECT all instead of one ``exists()`` plus one ``filter
         ... exists()``.
+
+        Diagnostic ``OIDC STATE`` / ``OIDC GROUP`` log lines have
+        moved to :meth:`_log_state_diag` / :meth:`_log_group_diag`;
+        the decision flow below stays a straight read of the access
+        membership without interleaved debug emission.
         """
         if self.is_superuser(user):
             return
@@ -388,49 +397,62 @@ class AccessPolicy:
         if not app_states and not app_groups:
             return
 
-        state_access = False
-        group_access = False
+        user_state = self._user_state(user)
+        user_state_pk = getattr(user_state, "pk", None)
+        user_groups: list[Any] = []
+        user_groups_mgr = getattr(user, "groups", None)
+        if user_groups_mgr is not None:
+            user_groups = list(user_groups_mgr.all())
 
-        if app_states:
-            profile = getattr(user, "profile", None)
-            user_state = (
-                getattr(profile, "state", None)
-                if profile is not None
-                else None
-            )
-            user_state_pk = getattr(user_state, "pk", None)
-            state_pks = {s.pk for s in app_states}
-            state_access = (
-                user_state_pk is not None and user_state_pk in state_pks
-            )
-            # The STATE / GROUP debug logs expose what matched (not
-            # the decision itself), so they survive the M1 logging
-            # consolidation. Materialised lists are reused for both
-            # the access check and the log line.
-            if debug_mode and self.log.isEnabledFor(logging.INFO):
-                self.log.info(
-                    "OIDC STATE: user_state=%s app_states=%s",
-                    user_state,
-                    [s.name for s in app_states],
-                )
+        app_state_pks = {s.pk for s in app_states}
+        app_group_pks = {g.pk for g in app_groups}
+        state_access = (
+            user_state_pk is not None and user_state_pk in app_state_pks
+        )
+        group_access = bool(app_group_pks) and any(
+            g.pk in app_group_pks for g in user_groups
+        )
 
-        if app_groups:
-            user_groups_mgr = getattr(user, "groups", None)
-            if user_groups_mgr is not None:
-                user_groups = list(user_groups_mgr.all())
-                if debug_mode and self.log.isEnabledFor(logging.INFO):
-                    self.log.info(
-                        "OIDC GROUP: user_groups=%s app_groups=%s",
-                        [g.name for g in user_groups],
-                        [g.name for g in app_groups],
-                    )
-                group_pks = {g.pk for g in app_groups}
-                group_access = any(g.pk in group_pks for g in user_groups)
+        if debug_mode:
+            self._log_state_diag(app_states, user_state)
+            self._log_group_diag(app_groups, user_groups)
 
         if group_access or state_access:
             return
 
         raise PermissionDenied("User not allowed for this application")
+
+    @staticmethod
+    def _user_state(user: UserLike | None) -> object | None:
+        """Return ``user.profile.state`` defensively (mocks may lack it)."""
+        profile = getattr(user, "profile", None)
+        if profile is None:
+            return None
+        return getattr(profile, "state", None)
+
+    def _log_state_diag(
+        self, app_states: list[Any], user_state: object | None
+    ) -> None:
+        """Emit the ``debug_mode`` STATE-match diagnostic when relevant."""
+        if not app_states or not self.log.isEnabledFor(logging.INFO):
+            return
+        self.log.info(
+            "OIDC STATE: user_state=%s app_states=%s",
+            user_state,
+            [s.name for s in app_states],
+        )
+
+    def _log_group_diag(
+        self, app_groups: list[Any], user_groups: list[Any]
+    ) -> None:
+        """Emit the ``debug_mode`` GROUP-match diagnostic when relevant."""
+        if not app_groups or not self.log.isEnabledFor(logging.INFO):
+            return
+        self.log.info(
+            "OIDC GROUP: user_groups=%s app_groups=%s",
+            [g.name for g in user_groups],
+            [g.name for g in app_groups],
+        )
 
 
 # Process-wide default policy. Module-level singleton so callers
