@@ -565,13 +565,52 @@ class TestValidateSilentAuthorization(OIDCTestCase):
         )
         self.assertFalse(self.validator.validate_silent_authorization(request))
 
-    def test_skip_authorization_true_short_circuits_to_allow(self):
+    def test_skip_authorization_true_returns_true_after_deactivation_check(
+        self,
+    ):
+        """
+        F-2: positive path — ``skip_authorization=True`` returns True
+        only after the deactivation gate passes. The fixture pins the
+        ``is_usable`` callable explicitly to True so the test exercises
+        the new gate ordering rather than the pre-fix short-circuit.
+        """
+        client_stub = SimpleNamespace(
+            client_id="c",
+            skip_authorization=True,
+            is_usable=lambda request: True,
+        )
         request = SimpleNamespace(
-            client=SimpleNamespace(client_id="c", skip_authorization=True),
-            user=None,  # would otherwise deny
+            client=client_stub,
+            user=None,  # validator-layer reality: no user attached
             scopes=["openid"],
         )
         self.assertTrue(self.validator.validate_silent_authorization(request))
+
+    def test_skip_authorization_true_does_not_bypass_deactivation(self):
+        """
+        F-2 regression: an operator who flips ``skip_authorization=True``
+        on a deactivated app must NOT silently re-auth its users via
+        ``prompt=none``. Pre-fix the trusted-client short-circuit ran
+        BEFORE the deactivation check, letting ``active=False`` slip
+        through. The trust signal is "skip consent UI", not "skip the
+        kill-switch".
+
+        Layer note: only the client-side ``is_usable`` check is
+        enforceable here — oauthlib does not populate ``request.user``
+        at this layer, so per-user policy is left to the dispatch
+        layer.
+        """
+        client_stub = SimpleNamespace(
+            client_id="c",
+            skip_authorization=True,
+            is_usable=lambda request: False,  # app deactivated
+        )
+        request = SimpleNamespace(
+            client=client_stub,
+            user=self.user1,
+            scopes=["openid"],
+        )
+        self.assertFalse(self.validator.validate_silent_authorization(request))
 
     def test_anonymous_user_denies_silent_consent(self):
         # ``user is None`` — left side of the ``or`` fires.

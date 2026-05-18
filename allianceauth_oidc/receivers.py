@@ -202,6 +202,16 @@ def on_user_post_delete(sender: Any, instance: Any, **kwargs: Any) -> None:
     NB: by post_delete, ``instance.pk`` has not yet been zeroed, and
     the tokens themselves are gone — so we cannot re-derive
     application set from the DB here. Hence the pre-delete snapshot.
+
+    F-7: rehydrate with ``active=True`` to match the snapshot taken in
+    :func:`on_user_pre_delete` — ``apps_with_active_tokens`` filters on
+    ``active=True`` at snapshot time, so an app deactivated in the
+    micro-window between ``pre_delete`` and ``post_delete`` (long-running
+    cascade on a heavy User row, concurrent admin save) must NOT
+    receive a BCL fan-out. ``dispatch_backchannel_logout`` already has
+    a downstream ``is_usable`` kill-switch (see ``logout.py:247-249``),
+    but symmetrising the rehydrate filter closes the gap one layer
+    earlier and keeps the invariant local to this receiver.
     """
     from oauth2_provider.models import get_application_model
 
@@ -209,7 +219,7 @@ def on_user_post_delete(sender: Any, instance: Any, **kwargs: Any) -> None:
     if not app_ids:
         return
     Application = get_application_model()
-    for app in Application.objects.filter(pk__in=app_ids):
+    for app in Application.objects.filter(pk__in=app_ids, active=True):
         oidc_logout_required.send(
             sender=sender,
             user=instance,

@@ -7,8 +7,10 @@ enabled.
 import json
 import logging
 
-from django.test import override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from oauth2_provider.models import get_access_token_model
+
+from allianceauth_oidc.views_token import TokenView
 
 from ._jwt_helpers import _jwt_mode_oauth2_provider, split_jwt
 from ._oidc_testcase import (
@@ -246,3 +248,44 @@ class TestDebugLoggingJWTMode(OIDCTestCase):
         #    opaque. The masking pipeline shares one code path; this
         #    assertion just locks the JWT-mode side.
         self.assertNotIn(self.oauth_secret, log_text)
+
+
+class TestTokenViewSensitivePostParameters(SimpleTestCase):
+    """
+    F-4 regression: the ``sensitive_post_parameters`` decorator on
+    :meth:`TokenView.post` must cover every credential the token
+    endpoint may receive — not only ``password``. Django consults
+    ``request.sensitive_post_parameters`` from the 500-debug page
+    renderer and from third-party error reporters that honour the
+    marker (Sentry, Rollbar); an unredacted ``client_secret`` /
+    ``code`` / ``refresh_token`` / ``assertion`` on a captured POST
+    body becomes an immediate credential leak.
+    """
+
+    def test_post_marks_all_oauth_secrets_as_sensitive(self):
+        # The decorator sets ``request.sensitive_post_parameters``
+        # BEFORE the view body runs. Stub ``create_token_response``
+        # with a synthetic 4-tuple so the body completes without
+        # needing a real OAuth context; the marker is still set on
+        # the request by the decorator chain.
+        from unittest.mock import patch
+
+        factory = RequestFactory()
+        request = factory.post("/o/token/", {"grant_type": "password"})
+        view = TokenView()
+        view.setup(request)
+        with patch.object(
+            view, "create_token_response", return_value=(None, {}, b"{}", 400)
+        ):
+            view.post(request)
+
+        self.assertEqual(
+            request.sensitive_post_parameters,
+            (
+                "password",
+                "client_secret",
+                "code",
+                "refresh_token",
+                "assertion",
+            ),
+        )

@@ -258,7 +258,31 @@ class TokenView(OAuthLibMixin, View):
       issuance.
     """
 
-    @method_decorator(sensitive_post_parameters("password"))
+    # F-4: every OAuth2 / OIDC secret the token endpoint may receive
+    # must be marked sensitive so Django's debug-error rendering and
+    # any post-mortem error reporter that honours the marker
+    # (Sentry, Rollbar) redact it before the body is captured. With
+    # ``DEBUG=True`` (operator error) a 500-page would otherwise echo
+    # the raw credential in plaintext on the technical 500 page.
+    #
+    # * ``password``           — RFC 6749 §4.3 Resource Owner Password
+    # * ``client_secret``      — RFC 6749 §2.3.1 Client Authentication
+    # * ``code``                — RFC 6749 §4.1 single-use code (still
+    #                              hot until exchanged)
+    # * ``refresh_token``      — RFC 6749 §6 long-lived rotation token
+    # * ``assertion``          — RFC 7521 client / RFC 7522 SAML / RFC
+    #                              7523 JWT assertion grants (DOT may
+    #                              register grant handlers that consume
+    #                              this body field)
+    @method_decorator(
+        sensitive_post_parameters(
+            "password",
+            "client_secret",
+            "code",
+            "refresh_token",
+            "assertion",
+        )
+    )
     def post(
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponse:

@@ -119,12 +119,23 @@ class DiscoveryCapabilities:
 #   1.0 §3. Clients doing RFC 9068 JWT access-token validation
 #   feature-detect on this; provider only signs with RS256.
 _CAPABILITIES: Final[DiscoveryCapabilities] = DiscoveryCapabilities(
+    # F-5: ``password`` (RFC 6749 §4.3) and ``implicit`` (RFC 6749 §4.2)
+    # were deprecated by RFC 9700 §2.1.2/§2.1.1. ``response_types_supported``
+    # below already pins ``("code",)`` and per-app
+    # ``authorization_grant_type`` gating rejects non-code requests at
+    # runtime; advertising them in ``grant_types_supported`` was a
+    # spec-conformance lie that invited RP libraries to try
+    # password/implicit flows and silently observe ``invalid_grant``
+    # responses they could not diagnose. The remaining three reflect
+    # what this provider actually issues: authorization_code (the
+    # primary OIDC flow), refresh_token (rotation under
+    # ``OAUTH2_PROVIDER.ROTATE_REFRESH_TOKEN``), and client_credentials
+    # (machine-to-machine; restricted by per-app
+    # ``authorization_grant_type``).
     grant_types_supported=(
         "authorization_code",
         "refresh_token",
         "client_credentials",
-        "password",
-        "implicit",
     ),
     claim_types_supported=("normal",),
     response_types_supported=("code",),

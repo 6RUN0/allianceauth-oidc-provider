@@ -282,7 +282,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         OIDC Core 1.0 §3.1.2.4 ``prompt=none`` silent-consent gate.
 
-        Returns ``True`` in either of two cases:
+        Returns ``True`` in either of two cases (AFTER the
+        deactivation gate passes):
 
         1. The client is operator-declared trusted
            (``skip_authorization=True``) — DOT's
@@ -309,17 +310,42 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         ``openid profile`` request — the user has not yet consented
         to the additional claim.
 
-        :meth:`_silent_consent_preconditions_pass` symmetrises this
-        gate with ``validate_bearer_token`` and ``_enforce_policy``:
-        a deactivated application or a user who lost the global
-        ``access_oidc`` permission / fell out of the per-app
-        state/group whitelist must NOT silently re-auth via
-        ``prompt=none``. The authorize-view dispatch already filters
-        these out, but the validator owns its own contract — without
-        these checks the silent path relies on implicit ordering
-        that a future refactor could break.
+        Layer contract — what we CAN and CANNOT enforce here:
+
+        * ``request.client`` is populated by DOT (resolved from
+          ``client_id``); the ``is_usable`` deactivation kill-switch
+          can be checked directly.
+        * ``request.user`` is NOT populated at this point — oauthlib's
+          ``validate_authorization_request`` is called before DOT
+          attaches the Django session user to the credentials dict.
+          Permission / state-group policy enforcement happens one
+          layer up at :meth:`AuthAuthorizationView._dispatch_inner`
+          against the real session user (which has ``access_oidc``
+          and the per-app whitelist re-evaluated freshly per HTTP
+          request).
+
+        F-2: deactivation gate runs BEFORE ``skip_authorization`` so
+        an operator who flips ``skip_authorization=True`` on a
+        deactivated app cannot silently re-auth its users — the
+        ``active=False`` kill-switch is honoured even on a
+        previously-trusted client. The narrower per-user policy
+        enforcement (which would need the user) is left to the
+        dispatch layer.
         """
         client = getattr(request, "client", None)
+        # F-2 deactivation gate — runs FIRST, BEFORE the
+        # ``skip_authorization`` short-circuit, so operator-toggled
+        # ``active=False`` is honoured even on a trusted client. Works
+        # without ``request.user`` because ``is_usable`` reads only
+        # the client's own ``active`` field. ``client is None`` is
+        # naturally skipped here (``callable(None)`` is False) and
+        # caught one branch below in the helper.
+        is_usable = getattr(client, "is_usable", None)
+        if callable(is_usable) and not is_usable(request):
+            policy_rejections.labels(
+                stage="validate_silent_auth", reason="app_unusable"
+            ).inc()
+            return False
         if getattr(client, "skip_authorization", False):
             return True
         if not self._silent_consent_preconditions_pass(request, client):
@@ -684,20 +710,27 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                     access_token = AccessToken.objects.filter(pk=at_pk).first()
                     if access_token is not None:
                         access_token.revoke()
-            except (DatabaseError, ObjectDoesNotExist, AttributeError):
+            except (DatabaseError, ObjectDoesNotExist):
                 # Narrow to the realistic missed-revocation set:
                 # ``DatabaseError`` for transient DB hiccups,
                 # ``ObjectDoesNotExist`` for the documented
-                # ``clear_expired_tokens`` mid-transaction race,
-                # ``AttributeError`` for the rare case where the
-                # token row exists but has stale state on the
-                # in-memory instance. Other exceptions (programming
-                # errors, misconfigured DOT subclass, etc.) propagate
-                # up to ``validate_code`` where the outer guard logs
-                # them and returns False — audit signal is dropped in
-                # that path on purpose, because a programming error
-                # is more important to surface loudly than to
-                # decorate with a misleading "we tried to revoke" audit.
+                # ``clear_expired_tokens`` mid-transaction race.
+                #
+                # F-6: ``AttributeError`` was previously caught here on
+                # the theory that a stale in-memory token instance
+                # could be missing the ``revoke()`` method. In practice
+                # DOT's `RefreshToken`/`AccessToken` ALWAYS expose
+                # ``revoke``; the only realistic source of
+                # ``AttributeError`` is a programming bug — a DOT
+                # major bump that renames the method, or a misconfigured
+                # custom token model. Swallowing it here would silently
+                # degrade reuse-detection's "revoke linked tokens" SHOULD
+                # overlay (RFC 6749 §10.5) into log-only and let the
+                # leaked code's tokens stay valid. Propagate to
+                # ``validate_code``'s outer guard so the failure is
+                # loud and observable; the audit signal is dropped in
+                # that path on purpose (programming error > misleading
+                # "we tried to revoke" audit).
                 logger.exception(
                     "OIDC: token revocation failed during "
                     "code-reuse handling; emitting audit signal "

@@ -1264,6 +1264,60 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
         # directly.
         self.assertEqual(len(bcl_receivers._PENDING_LOGOUTS), 0)
 
+    def test_f7_post_delete_skips_apps_deactivated_after_snapshot(
+        self,
+    ) -> None:
+        """
+        F-7 regression: ``apps_with_active_tokens`` filters on
+        ``active=True`` at snapshot time. If an app is deactivated in
+        the micro-window between ``on_user_pre_delete`` and
+        ``on_user_post_delete``, the rehydrate query in post_delete
+        MUST also filter on ``active=True`` — otherwise a deactivated
+        RP receives a BCL fan-out it should never see again.
+
+        Reproduces the race deterministically by populating
+        ``_PENDING_LOGOUTS`` directly with two app pks (one active,
+        one deactivated) and invoking ``on_user_post_delete``.
+        """
+        from allianceauth_oidc import receivers as bcl_receivers
+
+        active_creds = make_app(
+            owner=self.user2,
+            backchannel_logout_uri="https://rp-active.example.com/bcl",
+        )
+        deactivated_creds = make_app(
+            owner=self.user2,
+            backchannel_logout_uri="https://rp-deact.example.com/bcl",
+        )
+        deactivated_creds.app.active = False
+        deactivated_creds.app.save()
+
+        # Stand in for the pre-delete snapshot (both pks would have
+        # been captured when both apps were still active, then one
+        # flipped before post_delete fires).
+        bcl_receivers._PENDING_LOGOUTS[self.user1] = [
+            active_creds.app.pk,
+            deactivated_creds.app.pk,
+        ]
+        try:
+            with _CapturedDispatches() as cap:
+                bcl_receivers.on_user_post_delete(
+                    sender=type(self.user1), instance=self.user1
+                )
+        finally:
+            bcl_receivers._PENDING_LOGOUTS.pop(self.user1, None)
+
+        delete_calls = [
+            (pk, r) for (pk, r) in cap.calls if r == "user_deleted"
+        ]
+        self.assertEqual(
+            delete_calls,
+            [(active_creds.app.pk, "user_deleted")],
+            "post_delete fan-out must skip apps deactivated between "
+            "snapshot and rehydrate; symmetric with the active=True "
+            "filter on apps_with_active_tokens",
+        )
+
     # ---------- AC-31 — multi-RP fanout skips blank URI ----------
 
     def test_ac31_multi_rp_fanout_skips_blank_uri(self) -> None:

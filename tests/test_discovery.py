@@ -120,6 +120,31 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
 
         self.assertEqual(["normal"], doc.get("claim_types_supported"))
 
+    def test_discovery_grant_types_excludes_deprecated_flows(self):
+        """
+        F-5 regression: discovery must NOT advertise grant types this
+        provider does not implement. ``password`` (RFC 6749 §4.3,
+        deprecated by RFC 9700 §2.1.2) and ``implicit`` (RFC 6749 §4.2,
+        deprecated by RFC 9700 §2.1.1) used to appear in
+        ``grant_types_supported`` even though
+        ``response_types_supported`` is pinned to ``("code",)`` and
+        per-app ``authorization_grant_type`` gating rejects them at
+        runtime. Advertising them was a spec-conformance lie that
+        invited RP libraries to attempt the flows and silently observe
+        opaque ``invalid_grant`` responses.
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        doc = json.loads(resp.content.decode("utf-8"))
+        grant_types = doc.get("grant_types_supported")
+
+        self.assertNotIn("password", grant_types)
+        self.assertNotIn("implicit", grant_types)
+        # Positive list — exactly the three the provider actually issues.
+        self.assertEqual(
+            ["authorization_code", "refresh_token", "client_credentials"],
+            grant_types,
+        )
+
     def test_discovery_advertises_end_session_endpoint(self):
         """
         OIDC RP-Initiated Logout 1.0 §2.1: discovery MUST publish

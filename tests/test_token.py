@@ -1199,6 +1199,77 @@ class TestConcurrentReuseLockingInvariant(OIDCTestCase):
             "would both succeed without it",
         )
 
+    def test_handle_potential_code_reuse_does_not_swallow_attribute_error(
+        self,
+    ) -> None:
+        """
+        F-6 regression: a previous narrow ``except`` clause caught
+        ``AttributeError`` on the theory that a stale in-memory token
+        instance could be missing ``revoke()``. In practice that
+        scenario does not occur — the only realistic source of
+        ``AttributeError`` is a programming bug (DOT major rename of
+        ``revoke()``, custom token model missing the method). Catching
+        it here silently degraded the RFC 6749 §10.5 SHOULD overlay
+        ("revoke linked tokens on reuse") into log-only and left the
+        leaked code's tokens valid. Pin the narrow except clause to
+        ``(DatabaseError, ObjectDoesNotExist)`` only.
+
+        AST-based pin: a bare ``"AttributeError" in src`` substring
+        check would false-positive on the F-6 commentary block; parse
+        the ``except`` handlers and assert against their exception
+        names directly.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        src = textwrap.dedent(
+            inspect.getsource(
+                AllianceAuthOAuth2Validator._handle_potential_code_reuse
+            )
+        )
+        tree = ast.parse(src)
+
+        handler_names: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            exc = node.type
+            if isinstance(exc, ast.Name):
+                handler_names.append(exc.id)
+            elif isinstance(exc, ast.Tuple):
+                handler_names.extend(
+                    elt.id for elt in exc.elts if isinstance(elt, ast.Name)
+                )
+
+        self.assertIn(
+            "DatabaseError",
+            handler_names,
+            "code-reuse handler must catch DatabaseError for transient "
+            "DB hiccups",
+        )
+        self.assertIn(
+            "ObjectDoesNotExist",
+            handler_names,
+            "code-reuse handler must catch ObjectDoesNotExist for the "
+            "clear_expired_tokens mid-transaction race",
+        )
+        self.assertNotIn(
+            "AttributeError",
+            handler_names,
+            "AttributeError must NOT be caught in the code-reuse "
+            "handler — it would mask DOT API drift (e.g. ``revoke()`` "
+            "rename) and silently break token revocation under reuse.",
+        )
+        # Belt-and-suspenders: no broad ``Exception`` / ``BaseException``
+        # either, even if specific narrows are kept.
+        self.assertNotIn("Exception", handler_names)
+        self.assertNotIn("BaseException", handler_names)
+
 
 class TestTokenEndpointAntiEnumeration(OIDCTestCase):
     """
