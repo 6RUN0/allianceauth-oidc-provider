@@ -408,7 +408,7 @@ class TestSaveBearerTokenNoClientSkip(OIDCTestCase):
         super().setUp()
         self.validator = AllianceAuthOAuth2Validator()
 
-    def test_user_present_but_no_client_logs_skip(self):
+    def test_user_present_but_no_client_logs_skip_on_password_grant(self):
         # The defensive ``elif user is not None and client is None``
         # branch is only reachable when the resolver returns
         # ``(user, None)`` — a shape it does not naturally produce
@@ -416,8 +416,94 @@ class TestSaveBearerTokenNoClientSkip(OIDCTestCase):
         # ``(None, None)``). Patching the resolver to that shape
         # exercises the elif branch directly so the log marker and
         # the ``and`` boolean operator on its guard are pinned.
+        #
+        # ``grant_type="password"`` selects the documented silent-skip
+        # branch (DOT serves password/client_credentials through code
+        # paths where ``request.client`` is populated elsewhere).
         request = SimpleNamespace(
-            user=self.user1, client=None, application=None
+            user=self.user1,
+            client=None,
+            application=None,
+            grant_type="password",
+        )
+        pol = _stub_policy()
+        with (
+            patch.object(AllianceAuthOAuth2Validator, "policy", pol),
+            patch.object(
+                AllianceAuthOAuth2Validator,
+                "_resolve_user_and_client",
+                return_value=(self.user1, None),
+            ),
+            patch(
+                "oauth2_provider.oauth2_validators.OAuth2Validator"
+                ".save_bearer_token",
+                return_value=None,
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.auth_provider", level="INFO"
+            ) as cap,
+        ):
+            self.validator.save_bearer_token({"access_token": "x"}, request)
+        self.assertTrue(
+            any("no_client" in m for m in cap.output),
+            f"skip-INFO missing in {cap.output!r}",
+        )
+        pol.decide.assert_not_called()
+
+    def test_no_client_rejects_when_grant_type_is_unexpected(self):
+        """
+        ``user is not None and client is None`` with an unexpected
+        grant type fails closed via ``InvalidGrantError`` instead of
+        silently letting the parent persist tokens past the policy
+        gate. Pins L-4: ``request.grant_type`` falling outside the
+        documented ``{"password", "client_credentials"}`` set is
+        treated as an oauthlib regression that nulled out
+        ``request.client``.
+        """
+        from oauthlib.oauth2.rfc6749 import errors as oauth_errors
+
+        request = SimpleNamespace(
+            user=self.user1,
+            client=None,
+            application=None,
+            # The grant type DOT uses for the code-flow exchange —
+            # the documented silent-skip set does NOT cover it, so
+            # this branch must reject.
+            grant_type="authorization_code",
+        )
+        pol = _stub_policy()
+        super_target = (
+            "oauth2_provider.oauth2_validators.OAuth2Validator"
+            ".save_bearer_token"
+        )
+        with (
+            patch.object(AllianceAuthOAuth2Validator, "policy", pol),
+            patch.object(
+                AllianceAuthOAuth2Validator,
+                "_resolve_user_and_client",
+                return_value=(self.user1, None),
+            ),
+            patch(super_target, return_value=None) as super_call,
+            self.assertLogs(
+                "extensions.allianceauth_oidc.auth_provider", level="WARNING"
+            ) as cap,
+            self.assertRaises(oauth_errors.InvalidGrantError),
+        ):
+            self.validator.save_bearer_token({"access_token": "x"}, request)
+        super_call.assert_not_called()
+        pol.decide.assert_not_called()
+        self.assertTrue(
+            any("no_client" in m for m in cap.output),
+            f"reject-warning missing in {cap.output!r}",
+        )
+
+    def test_no_client_logs_skip_on_client_credentials_grant(self):
+        """Symmetric coverage for client_credentials grant type."""
+        request = SimpleNamespace(
+            user=self.user1,
+            client=None,
+            application=None,
+            grant_type="client_credentials",
         )
         pol = _stub_policy()
         with (
@@ -513,9 +599,83 @@ class TestValidateSilentAuthorization(OIDCTestCase):
         # Empty scope set is not positive proof of prior consent —
         # let oauthlib drive. ``ReplaceFalseWithTrue`` on the early
         # return would turn empty-scopes into auto-approve.
+        #
+        # The M-1 fix adds an ``is_usable`` + ``policy.decide`` gate
+        # ahead of the scope check; stub-policy with allow=True so
+        # the test still exercises the documented empty-scopes path
+        # rather than tripping the new gate on missing state/groups.
         request = SimpleNamespace(
-            client=SimpleNamespace(client_id="c", skip_authorization=False),
+            client=SimpleNamespace(
+                client_id="c",
+                skip_authorization=False,
+                is_usable=lambda r: True,
+            ),
             user=self.user1,  # authenticated real user
             scopes=[],
+        )
+        with patch.object(
+            AllianceAuthOAuth2Validator, "policy", _stub_policy()
+        ):
+            self.assertFalse(
+                self.validator.validate_silent_authorization(request)
+            )
+
+    def test_silent_consent_denies_when_app_is_unusable(self):
+        """
+        M-1: deactivated app must NOT silently re-consent via
+        ``prompt=none``. The ``is_usable`` check symmetrises this
+        path with ``validate_bearer_token``.
+        """
+        client_stub = SimpleNamespace(
+            client_id="c",
+            skip_authorization=False,
+            is_usable=lambda request: False,
+        )
+        request = SimpleNamespace(
+            client=client_stub,
+            user=self.user1,
+            scopes=["openid"],
+        )
+        with patch.object(
+            AllianceAuthOAuth2Validator, "policy", _stub_policy()
+        ) as pol:
+            self.assertFalse(
+                self.validator.validate_silent_authorization(request)
+            )
+        # is_usable rejected before policy was consulted — no
+        # AccessDecision was built for this request.
+        pol.decide.assert_not_called()
+
+    def test_silent_consent_denies_when_policy_denies(self):
+        """
+        M-1: user who lost the global ``access_oidc`` permission (or
+        fell out of the per-app whitelist) must NOT silently re-consent.
+        """
+        client_stub = SimpleNamespace(
+            client_id="c",
+            skip_authorization=False,
+            is_usable=lambda request: True,
+        )
+        request = SimpleNamespace(
+            client=client_stub,
+            user=self.user1,
+            scopes=["openid"],
+        )
+        pol = _stub_policy(is_allowed=False, deny_reason=DenyReason.GLOBAL)
+        with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
+            self.assertFalse(
+                self.validator.validate_silent_authorization(request)
+            )
+        pol.decide.assert_called_once_with(self.user1, client_stub)
+
+    def test_silent_consent_denies_when_client_is_none(self):
+        """
+        M-1: missing client at the silent-auth point cannot identify
+        the target app — fail-closed.
+        """
+        request = SimpleNamespace(
+            client=None,
+            user=self.user1,
+            scopes=["openid"],
         )
         self.assertFalse(self.validator.validate_silent_authorization(request))

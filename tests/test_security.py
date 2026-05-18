@@ -194,10 +194,15 @@ class TestPkceRequiredAdapter(OIDCTestCase):
         )
 
     def test_unknown_client_id_logs_warning(self):
+        # Post-refactor (c747ee1): the unknown-client_id WARNING comes
+        # from :func:`security.resolve_per_app_setting`, the shared
+        # adapter recipe behind both ``per_app_pkce_required`` and
+        # ``_resolve_access_token_format``. The log namespace therefore
+        # lives on the recipe module rather than the adapter caller.
         from allianceauth_oidc.pkce import per_app_pkce_required
 
         with self.assertLogs(
-            "extensions.allianceauth_oidc.pkce", level="WARNING"
+            "extensions.allianceauth_oidc.security", level="WARNING"
         ) as cm:
             per_app_pkce_required("unknown-cid-xyz")
         self.assertTrue(

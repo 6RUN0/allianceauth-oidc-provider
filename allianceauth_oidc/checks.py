@@ -72,6 +72,35 @@ that are not fatal but routinely cause incident-class confusion:
   from out-of-band events (e.g. admin-triggered session
   invalidation, future feature additions); the check surfaces the
   apparent mismatch but does not block deployment.
+
+* **W004** — back-channel logout URI uses ``http://`` while
+  ``DEBUG=False``. The admin form rejects new ``http://`` URIs in
+  production, but legacy rows persisted under ``DEBUG=True`` survive
+  a later flip to ``DEBUG=False``. The worker (``tasks.py``)
+  re-checks DNS but not scheme, so an unmigrated ``http://`` BCL URI
+  on a production app continues to receive ``logout_token`` JWTs
+  in cleartext — the token body contains ``sub``/``iss``/``aud``/
+  ``jti``, a credential-class disclosure on a tapped link.
+
+* **W005** — ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True`` in
+  a production-shaped environment (``DEBUG=False``). The flag is a
+  blanket SSRF-gate bypass intended for local development and
+  in-cluster testing; if left ``True`` in production the worker will
+  POST signed ``logout_token`` JWTs to ``127.0.0.1`` /
+  ``169.254.169.254`` / k8s overlay IPs without resistance.
+  Warning (not Error) symmetric with W001 — some operators
+  legitimately accept the trade-off on isolated networks.
+
+* **E005** — ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` is not
+  :func:`allianceauth_oidc.pkce.per_app_pkce_required` (or a
+  callable that wraps it). Without the adapter, DOT falls back to
+  its own ``PKCE_REQUIRED`` resolution and the per-app
+  ``pkce_required=False`` override silently no-ops. Severity
+  ``Error`` (not Warning) per the same rationale as E001-E004:
+  every public-client deployment shipped without PKCE has a
+  documented auth-code interception attack — better to fail loud at
+  ``manage.py check`` than to discover the gap from an incident
+  report.
 """
 
 from __future__ import annotations
@@ -93,9 +122,12 @@ E001_ID = "allianceauth_oidc.E001"
 E002_ID = "allianceauth_oidc.E002"
 E003_ID = "allianceauth_oidc.E003"
 E004_ID = "allianceauth_oidc.E004"
+E005_ID = "allianceauth_oidc.E005"
 W001_ID = "allianceauth_oidc.W001"
 W002_ID = "allianceauth_oidc.W002"
 W003_ID = "allianceauth_oidc.W003"
+W004_ID = "allianceauth_oidc.W004"
+W005_ID = "allianceauth_oidc.W005"
 
 # Dotted-path the W002 check compares ``ACCESS_TOKEN_GENERATOR``
 # against. Kept as a module-level constant so the same string is
@@ -618,3 +650,205 @@ def check_logout_wiring(
             ),
         )
     ]
+
+
+@checks.register(checks.Tags.security)
+def check_bcl_http_uri_in_production(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W004`` (Warning) when any active
+    ``AllianceAuthApplication`` has a ``backchannel_logout_uri``
+    starting with ``http://`` in a production-shaped environment
+    (``DEBUG=False``).
+
+    The admin form's ``_validate_uri_scheme_safety`` rejects new
+    ``http://`` URIs unless ``DEBUG=True``; rows persisted under
+    ``DEBUG=True`` survive a subsequent flip to ``DEBUG=False`` and
+    the Celery worker continues POSTing signed ``logout_token``
+    payloads to them in cleartext. The JWT body carries
+    ``iss``/``aud``/``sub``/``jti`` — every interception on the wire
+    leaks the user's identifier and the AS issuer URL, sufficient
+    to correlate a session across logs.
+
+    Severity is **Warning** (not Error) because legacy installations
+    may carry such rows on apps that are deliberately deactivated;
+    a hard Error would block ``manage.py check`` until the operator
+    edits each row. The Warning makes the migration visible without
+    veto.
+    """
+    from urllib.parse import urlsplit
+
+    if getattr(settings, "DEBUG", False):
+        return []
+    try:
+        Application = apps.get_model(
+            "allianceauth_oidc", "AllianceAuthApplication"
+        )
+        rows = list(
+            Application.objects.filter(active=True)
+            .exclude(backchannel_logout_uri="")
+            .values_list("name", "backchannel_logout_uri")
+        )
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.W004 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    offenders = sorted(
+        name for (name, uri) in rows if urlsplit(uri).scheme == "http"
+    )
+    if not offenders:
+        return []
+    names = ", ".join(repr(n) for n in offenders)
+    return [
+        checks.Warning(
+            (
+                f"Active application(s) {names} have a "
+                "``backchannel_logout_uri`` using ``http://`` while "
+                "DEBUG=False. The worker will POST signed "
+                "``logout_token`` JWTs (carrying iss/aud/sub/jti) "
+                "to those URIs in cleartext."
+            ),
+            id=W004_ID,
+            hint=(
+                "Edit each application's backchannel_logout_uri to "
+                "use https://, or deactivate the application if the "
+                "RP has been retired. The admin form will reject the "
+                "http:// scheme on save."
+            ),
+        )
+    ]
+
+
+@checks.register(checks.Tags.security)
+def check_logout_uri_allow_private_in_production(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W005`` (Warning) when
+    ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE`` is truthy in a
+    production-shaped environment (``DEBUG=False``).
+
+    The flag is a blanket bypass of the SSRF gate on
+    ``backchannel_logout_uri`` host resolution, intended for local
+    development (``localhost``, ``host.docker.internal``) and
+    in-cluster testing (overlay network IPs). When left ``True`` in
+    production the worker will POST signed ``logout_token`` JWTs to
+    ``127.0.0.1`` / ``169.254.169.254`` / Kubernetes overlay IPs /
+    any other private address an admin (or a compromised admin)
+    registers — credential-class disclosure with no resistance.
+
+    Severity is **Warning** (not Error) symmetric with
+    :func:`check_masked_secret_logging_in_production` (W001) — some
+    operators legitimately accept the trade-off on isolated air-
+    gapped networks. The check surfaces the choice; it does not
+    veto deployment.
+    """
+    if not getattr(
+        settings, "ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE", False
+    ):
+        return []
+    if getattr(settings, "DEBUG", False):
+        return []
+    return [
+        checks.Warning(
+            (
+                "ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True with "
+                "DEBUG=False — the SSRF gate on back-channel logout "
+                "target resolution is disabled, so the worker will "
+                "POST signed logout_token JWTs to any private / "
+                "loopback / link-local / metadata-service IP a "
+                "registered backchannel_logout_uri resolves to."
+            ),
+            id=W005_ID,
+            hint=(
+                "Set ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = "
+                "False (or remove the setting) in production. The "
+                "default rejects private / loopback / link-local / "
+                "multicast / reserved / CGNAT addresses."
+            ),
+        )
+    ]
+
+
+@checks.register(checks.Tags.compatibility)
+def check_pkce_required_wiring(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.E005`` (Error) when
+    ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` is not (or does not wrap)
+    :func:`allianceauth_oidc.pkce.per_app_pkce_required`.
+
+    The per-app ``pkce_required`` column on
+    ``AllianceAuthApplication`` is only consulted when DOT routes
+    its ``is_pkce_required(client_id)`` resolution through our
+    adapter. Without the wire-up, DOT falls back to its own
+    ``PKCE_REQUIRED`` setting — a bool / static callable — and the
+    per-app override silently no-ops. Public clients that the
+    operator believed were PKCE-protected are now vulnerable to
+    authorization-code interception per RFC 9700 §2.1.1.
+
+    Severity is **Error** because the silent no-op produces the
+    same protocol behaviour as "PKCE off", with no error surface
+    until an attacker exploits the gap. The check catches the
+    operator-time mis-wire at ``manage.py check``.
+
+    Accepted shapes:
+
+    1. ``per_app_pkce_required`` itself (the canonical wire-up).
+    2. Any callable — operators sometimes wrap the adapter to add
+       request logging or a deployment-specific allow-list. The
+       check cannot tell whether such a wrapper still delegates to
+       ``per_app_pkce_required``; it accepts callables on trust and
+       documents the contract in the hint.
+    """
+    cfg = getattr(settings, "OAUTH2_PROVIDER", None)
+    if not isinstance(cfg, dict):
+        return [_e005(None)]
+    configured = cfg.get("PKCE_REQUIRED")
+    if configured is None:
+        return [_e005(None)]
+    try:
+        from allianceauth_oidc.pkce import per_app_pkce_required
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.E005 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    if configured is per_app_pkce_required:
+        return []
+    # Accept any callable on trust — operators wrap the adapter for
+    # extra logging / allowlists. The contract documented in the
+    # hint asks them to delegate to per_app_pkce_required.
+    if callable(configured):
+        return []
+    return [_e005(configured)]
+
+
+def _e005(configured: Any) -> checks.Error:
+    expected = "allianceauth_oidc.pkce.per_app_pkce_required"
+    return checks.Error(
+        (
+            "OAUTH2_PROVIDER['PKCE_REQUIRED'] must be "
+            f"{expected!r} (or a callable that delegates to it), "
+            f"got {configured!r}. Without the adapter, DOT ignores "
+            "per-app pkce_required overrides and the public-client "
+            "auth-code interception defence silently no-ops."
+        ),
+        id=E005_ID,
+        hint=(
+            "Set OAUTH2_PROVIDER['PKCE_REQUIRED'] = "
+            f"{expected} in your Django settings (pass the function "
+            "object, not a dotted-path string — DOT does not import "
+            "this setting)."
+        ),
+    )

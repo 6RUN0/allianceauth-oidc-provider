@@ -162,6 +162,14 @@ class TestValidateSilentAuthorizationPriorConsent(OIDCTestCase):
             skip_authorization=False,
             pkce_required=False,
         ).app
+        # M-1 fix re-runs the policy gate inside
+        # ``validate_silent_authorization``; without the
+        # ``access_oidc`` permission the gate denies BEFORE the scope
+        # coverage check the tests below are pinning. Granting on the
+        # fixture user keeps the assertions about ``positive consent``
+        # honest — they exercise scope coverage, not the policy gate.
+        cls.users[0].user_permissions.add(cls.access_oauth)
+        cls.users[0].refresh_from_db()
 
     def _build_request(self, *, user, scopes):
         """Minimal oauthlib-shaped request stand-in for the validator."""

@@ -667,3 +667,205 @@ class TestLogoutWiringCheck(TestCase):
         with override_settings(OAUTH2_PROVIDER=None):
             msgs = check_logout_wiring(None)
         self.assertEqual(msgs, [])
+
+
+class TestBclHttpInProductionCheck(TestCase):
+    """
+    W004 — back-channel logout URI uses ``http://`` while
+    ``DEBUG=False``. The admin form rejects new ``http://`` URIs in
+    production; this check surfaces legacy rows persisted under
+    ``DEBUG=True`` that the worker would still POST to in cleartext.
+    """
+
+    def setUp(self) -> None:
+        from tests._factories import make_app, make_user
+
+        self.user = make_user(username="w004-fixture")
+        # ``http://`` URI persisted via the factory (which mocks the
+        # DNS resolver); the model layer does not run ``full_clean``
+        # on ``objects.create`` so the scheme guard is bypassed at
+        # creation. This is the exact state legacy production rows
+        # land in after a ``DEBUG=True → False`` flip.
+        self.creds = make_app(
+            owner=self.user,
+            backchannel_logout_uri="http://rp.example.org/bcl/",
+        )
+
+    def test_w004_warning_when_http_bcl_with_debug_false(self) -> None:
+        from allianceauth_oidc.checks import (
+            W004_ID,
+            check_bcl_http_uri_in_production,
+        )
+
+        with override_settings(DEBUG=False):
+            msgs = check_bcl_http_uri_in_production(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W004_ID)
+        self.assertEqual(msg.level, checks.WARNING)
+        self.assertIn(self.creds.app.name, msg.msg)
+
+    def test_w004_clean_when_debug_true(self) -> None:
+        """``DEBUG=True`` is the development posture; no warning."""
+        from allianceauth_oidc.checks import (
+            check_bcl_http_uri_in_production,
+        )
+
+        with override_settings(DEBUG=True):
+            msgs = check_bcl_http_uri_in_production(None)
+        self.assertEqual(msgs, [])
+
+    def test_w004_clean_when_only_https_apps(self) -> None:
+        """All BCL URIs use https → no warning."""
+        from allianceauth_oidc.checks import (
+            check_bcl_http_uri_in_production,
+        )
+
+        self.creds.app.backchannel_logout_uri = "https://rp.example.org/bcl/"
+        self.creds.app.save(update_fields=["backchannel_logout_uri"])
+        with override_settings(DEBUG=False):
+            msgs = check_bcl_http_uri_in_production(None)
+        self.assertEqual(msgs, [])
+
+    def test_w004_clean_when_app_inactive(self) -> None:
+        """
+        Inactive apps cannot mint logout-tokens (the worker filters
+        ``active=True``), so a stale ``http://`` URI on a deactivated
+        row is documentation-only — no warning.
+        """
+        from allianceauth_oidc.checks import (
+            check_bcl_http_uri_in_production,
+        )
+
+        self.creds.app.active = False
+        self.creds.app.save(update_fields=["active"])
+        with override_settings(DEBUG=False):
+            msgs = check_bcl_http_uri_in_production(None)
+        self.assertEqual(msgs, [])
+
+
+class TestLogoutAllowPrivateInProductionCheck(TestCase):
+    """
+    W005 — ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True`` in a
+    production-shaped environment (``DEBUG=False``).
+    """
+
+    def test_w005_warning_when_allow_private_with_debug_false(self) -> None:
+        from allianceauth_oidc.checks import (
+            W005_ID,
+            check_logout_uri_allow_private_in_production,
+        )
+
+        with override_settings(
+            ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True,
+            DEBUG=False,
+        ):
+            msgs = check_logout_uri_allow_private_in_production(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W005_ID)
+        self.assertEqual(msg.level, checks.WARNING)
+
+    def test_w005_clean_when_debug_true(self) -> None:
+        """``DEBUG=True`` is the development posture; no warning."""
+        from allianceauth_oidc.checks import (
+            check_logout_uri_allow_private_in_production,
+        )
+
+        with override_settings(
+            ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True,
+            DEBUG=True,
+        ):
+            msgs = check_logout_uri_allow_private_in_production(None)
+        self.assertEqual(msgs, [])
+
+    def test_w005_clean_when_flag_false(self) -> None:
+        """Default flag (False) → no warning, regardless of DEBUG."""
+        from allianceauth_oidc.checks import (
+            check_logout_uri_allow_private_in_production,
+        )
+
+        with override_settings(
+            ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=False,
+            DEBUG=False,
+        ):
+            msgs = check_logout_uri_allow_private_in_production(None)
+        self.assertEqual(msgs, [])
+
+
+class TestPkceRequiredWiringCheck(TestCase):
+    """
+    E005 — ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` must be (or wrap)
+    :func:`allianceauth_oidc.pkce.per_app_pkce_required`. Without
+    it the per-app ``pkce_required`` override silently no-ops.
+    """
+
+    def test_e005_error_when_pkce_required_absent(self) -> None:
+        from allianceauth_oidc.checks import (
+            E005_ID,
+            check_pkce_required_wiring,
+        )
+
+        cfg = _override_oauth2_provider()
+        cfg.pop("PKCE_REQUIRED", None)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_pkce_required_wiring(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, E005_ID)
+        self.assertEqual(msg.level, checks.ERROR)
+
+    def test_e005_error_when_pkce_required_is_bool(self) -> None:
+        """A bool / non-callable triggers the silent-no-op scenario."""
+        from allianceauth_oidc.checks import (
+            E005_ID,
+            check_pkce_required_wiring,
+        )
+
+        cfg = _override_oauth2_provider(PKCE_REQUIRED=True)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_pkce_required_wiring(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertEqual(msgs[0].id, E005_ID)
+
+    def test_e005_clean_when_pkce_required_is_adapter(self) -> None:
+        """The canonical wire-up — adapter function object itself."""
+        from allianceauth_oidc.checks import check_pkce_required_wiring
+        from allianceauth_oidc.pkce import per_app_pkce_required
+
+        cfg = _override_oauth2_provider(PKCE_REQUIRED=per_app_pkce_required)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_pkce_required_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_e005_clean_when_pkce_required_is_callable_wrapper(self) -> None:
+        """
+        Operators sometimes wrap the adapter for extra logging or
+        deployment-specific allow-lists. The check accepts callables
+        on trust — the wrapper is contractually obligated to delegate.
+        """
+        from allianceauth_oidc.checks import check_pkce_required_wiring
+
+        def _wrapper(client_id: str | None) -> bool:
+            return True
+
+        cfg = _override_oauth2_provider(PKCE_REQUIRED=_wrapper)
+        with override_settings(OAUTH2_PROVIDER=cfg):
+            msgs = check_pkce_required_wiring(None)
+        self.assertEqual(msgs, [])
+
+    def test_e005_clean_when_oauth2_provider_missing(self) -> None:
+        """
+        Missing ``OAUTH2_PROVIDER`` triggers E005 (no adapter to find)
+        — symmetric with the absent-key case rather than silent. DOT
+        wouldn't boot without the dict anyway.
+        """
+        from allianceauth_oidc.checks import (
+            E005_ID,
+            check_pkce_required_wiring,
+        )
+
+        with override_settings(OAUTH2_PROVIDER=None):
+            msgs = check_pkce_required_wiring(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertEqual(msgs[0].id, E005_ID)

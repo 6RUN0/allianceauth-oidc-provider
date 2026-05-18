@@ -216,6 +216,33 @@ class TestEmailClaim(SimpleTestCase):
             out = builder.build()
         self.assertIs(True, out["email_verified"])
 
+    def test_m2_placeholder_blocks_force_true_security_fix(self):
+        """
+        M-2 regression: ``aa_skip_email`` placeholder must NOT be
+        promoted to ``email_verified=true`` by the
+        ``ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`` operator override.
+
+        Attack model: an RP that auto-links accounts on
+        ``email_verified=true`` (Keycloak's first-broker-login is
+        the canonical example) would otherwise accept a
+        user-controlled synthetic placeholder as proof of email
+        ownership, enabling account-takeover via the linked AA
+        account.
+        """
+        with patch(
+            "allianceauth_oidc.claims._aa_skip_email_is_placeholder",
+            return_value=True,
+        ):
+            builder = ClaimsBuilder(
+                user=_user(email="alice_42@noreply.example"),
+                settings=_settings(
+                    email_verified_default=True,
+                    force_email_verified=True,
+                ),
+            )
+            out = builder.build()
+        self.assertIs(False, out["email_verified"])
+
     def test_email_verified_false_when_aa_skip_email_not_installed(self):
         # The detector is None when the optional plugin is absent; we
         # then trust the global setting and do not flag the email as
@@ -236,15 +263,21 @@ class TestEmailClaim(SimpleTestCase):
         """
         Sweep the force_email_verified x default x placeholder matrix.
 
-        Pins each branch of the escape-hatch decision tree:
+        Pins each branch of the decision tree (after the M-2 security
+        fix that swaps placeholder ahead of force):
 
         * ``force_true_overrides_default_false`` — operator
-          forces verified=True even though AA's default emits
-          False. Use case: users imported from a trusted
-          external IdP.
-        * ``force_true_overrides_placeholder`` — Force takes
-          precedence over the placeholder check; that IS the
-          point of an escape hatch.
+          forces verified=True on a real address even though AA's
+          default emits False. Use case: users imported from a
+          trusted external IdP.
+        * ``placeholder_overrides_force_true`` — M-2 fix: a
+          synthetic ``aa_skip_email`` placeholder is by
+          construction unverifiable; the force override cannot
+          promote it to ``true``. Without this branch an RP that
+          auto-links accounts on ``email_verified=true``
+          (Keycloak's first-broker-login) could be tricked into
+          accepting a user-controlled placeholder string as proof
+          of ownership.
         * ``force_false_overrides_default_true`` — site policy
           distrusts AA's confirmation workflow and wants every
           RP to re-verify on its own.
@@ -264,12 +297,13 @@ class TestEmailClaim(SimpleTestCase):
                 True,
             ),
             (
-                "force_true_overrides_placeholder",
+                # M-2 security fix: placeholder wins over force=True.
+                "placeholder_overrides_force_true",
                 True,
                 True,
                 True,
                 "bob_42@noreply.example",
-                True,
+                False,
             ),
             (
                 "force_false_overrides_default_true",

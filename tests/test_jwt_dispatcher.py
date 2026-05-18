@@ -353,10 +353,16 @@ class TestUnknownClient(TestCase):
     def test_unknown_client_id_falls_back_to_opaque_with_warning(
         self,
     ) -> None:
+        # Post-refactor (c747ee1): the unknown-client_id WARNING comes
+        # from :func:`security.resolve_per_app_setting` (shared adapter
+        # recipe), so the log namespace is ``security`` rather than
+        # ``tokens``. The dedicated empty-client_id fast path below
+        # keeps the ``tokens`` namespace because tokens.py logs that
+        # one directly.
         from allianceauth_oidc.tokens import _resolve_access_token_format
 
         with self.assertLogs(
-            "extensions.allianceauth_oidc.tokens", level="WARNING"
+            "extensions.allianceauth_oidc.security", level="WARNING"
         ) as captured:
             self.assertEqual(
                 "opaque",
@@ -397,6 +403,11 @@ class TestDispatchingAccessTokenGeneratorBoundary(OIDCTestCase):
         # the boundary too. Driving the dispatcher with a stub
         # ``_build_jwt`` returning a known-length token gives us
         # precise control over the inequality.
+        #
+        # Post-refactor (c747ee1): the threshold is read inline from
+        # ``OIDCSettings.from_django().jwt_size_warn_bytes`` whose
+        # default is 4096; the previous ``_size_warn_threshold``
+        # helper was removed in favour of the snapshot.
         from unittest import mock
 
         from allianceauth_oidc import tokens as tokens_mod
@@ -411,9 +422,6 @@ class TestDispatchingAccessTokenGeneratorBoundary(OIDCTestCase):
             ),
             mock.patch.object(
                 tokens_mod, "_build_jwt", return_value=fake_token
-            ),
-            mock.patch.object(
-                tokens_mod, "_size_warn_threshold", return_value=threshold
             ),
             self.assertNoLogs(
                 "extensions.allianceauth_oidc.tokens", level="WARNING"
@@ -439,9 +447,6 @@ class TestDispatchingAccessTokenGeneratorBoundary(OIDCTestCase):
             ),
             mock.patch.object(
                 tokens_mod, "_build_jwt", return_value=fake_token
-            ),
-            mock.patch.object(
-                tokens_mod, "_size_warn_threshold", return_value=threshold
             ),
             self.assertLogs(
                 "extensions.allianceauth_oidc.tokens", level="WARNING"

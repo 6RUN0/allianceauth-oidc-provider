@@ -218,16 +218,24 @@ class ClaimsBuilder:
             #
             # Decision tree, top to bottom:
             #
-            # 1. If the operator set
+            # 1. If ``aa_skip_email`` stamped a synthetic placeholder
+            #    (``username_42@noreply.example``), the user never
+            #    verified anything by construction — emit ``False``
+            #    UNCONDITIONALLY. The operator override below cannot
+            #    promote a placeholder to ``verified=true`` because no
+            #    one ever sent a confirmation to that synthetic
+            #    address. RPs that auto-link accounts on
+            #    ``email_verified=true`` (e.g. Keycloak's
+            #    first-broker-login) would otherwise accept
+            #    user-controlled placeholder strings as proof of
+            #    ownership.
+            # 2. Else if the operator set
             #    ``ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`` to a
             #    non-None value, that wins — escape hatch for
             #    deployments where the trust signal originates outside
             #    AA (e.g. users imported from an already-verifying
             #    external IdP, or a site that knowingly accepts the
             #    trade-off).
-            # 2. Else if ``aa_skip_email`` stamped a synthetic
-            #    placeholder (``username_42@noreply.example``), the
-            #    user never verified anything — emit ``False``.
             # 3. Otherwise mirror AA's ``REGISTRATION_VERIFY_EMAIL``
             #    via ``OIDCSettings.email_verified_default``: when AA
             #    required confirmation at registration the address is
@@ -236,10 +244,10 @@ class ClaimsBuilder:
             #
             # The default path keeps the trust level consistent with
             # AA-side reality; the override is opt-in and audit-worthy.
-            if self.settings.force_email_verified is not None:
-                out["email_verified"] = self.settings.force_email_verified
-            elif _email_is_placeholder(email):
+            if _email_is_placeholder(email):
                 out["email_verified"] = False
+            elif self.settings.force_email_verified is not None:
+                out["email_verified"] = self.settings.force_email_verified
             else:
                 out["email_verified"] = self.settings.email_verified_default
         if (picture := self._picture()) is not None:

@@ -18,7 +18,7 @@ from django.utils.translation import gettext_lazy as _
 from oauth2_provider.models import AbstractApplication
 from typing_extensions import override
 
-from ._dns_safety import addresses_have_unsafe, resolve_host_bounded
+from . import _dns_safety
 from .constants import PERM_ACCESS_OIDC_CODENAME
 
 logger = logging.getLogger(f"extensions.{__name__}")
@@ -305,7 +305,12 @@ class AllianceAuthApplication(AbstractApplication):
         if not host:
             return
         try:
-            infos = resolve_host_bounded(host)
+            # Module-level reference (not a local ``from … import``)
+            # so ``mock.patch("…._dns_safety.resolve_host_bounded")``
+            # in tests substitutes the function the runtime call site
+            # actually resolves. A ``from`` import would create a
+            # local binding that ignores later patching.
+            infos = _dns_safety.resolve_host_bounded(host)
         except (
             TimeoutError,
             socket.gaierror,
@@ -325,7 +330,7 @@ class AllianceAuthApplication(AbstractApplication):
         )
         if allow_private:
             return
-        if addresses_have_unsafe(infos):
+        if _dns_safety.addresses_have_unsafe(infos):
             raise ValidationError(
                 {
                     "backchannel_logout_uri": _(

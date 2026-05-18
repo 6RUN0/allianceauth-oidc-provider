@@ -270,16 +270,19 @@ class TestSizeGuard(OIDCTestCase):
     def test_size_threshold_setting_invalid_falls_back_to_default(
         self,
     ) -> None:
-        # Garbage value falls back silently to ``_DEFAULT_SIZE_WARN_BYTES``.
-        from allianceauth_oidc.tokens import (
-            _DEFAULT_SIZE_WARN_BYTES,
-            _size_warn_threshold,
+        # Garbage value falls back silently to the module default.
+        from allianceauth_oidc.app_settings import (
+            _DEFAULT_JWT_SIZE_WARN_BYTES,
+            OIDCSettings,
         )
 
         provider = _jwt_mode_oauth2_provider()
         provider["ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES"] = "not-a-number"
         with override_settings(OAUTH2_PROVIDER=provider):
-            self.assertEqual(_DEFAULT_SIZE_WARN_BYTES, _size_warn_threshold())
+            self.assertEqual(
+                _DEFAULT_JWT_SIZE_WARN_BYTES,
+                OIDCSettings.from_django().jwt_size_warn_bytes,
+            )
 
 
 class TestKeyRotationOverlap(OIDCTestCase):
@@ -358,7 +361,7 @@ class TestKeyRotationOverlap(OIDCTestCase):
 
 class TestSizeWarnDefault(TestCase):
     """
-    Pin the ``_DEFAULT_SIZE_WARN_BYTES`` literal value at 4096.
+    Pin the JWT size-warn default at 4096.
 
     Cosmic-ray's ``NumberReplacer`` flips the literal to neighbouring
     integers (4095, 4097) and the existing ``TestSizeGuard`` suite
@@ -367,24 +370,31 @@ class TestSizeWarnDefault(TestCase):
     AA JWT size (~600-1500 bytes), and the explicit override test
     uses ``16``. The exact-value assertion below kills every
     NumberReplacer flip on the constant.
+
+    Post-refactor (c747ee1): the constant now lives in
+    ``allianceauth_oidc.app_settings`` and is exposed via
+    ``OIDCSettings.from_django().jwt_size_warn_bytes`` — tokens.py
+    delegates to the snapshot.
     """
 
     def test_default_size_warn_bytes_constant_is_4096(self) -> None:
-        from allianceauth_oidc.tokens import _DEFAULT_SIZE_WARN_BYTES
+        from allianceauth_oidc.app_settings import (
+            _DEFAULT_JWT_SIZE_WARN_BYTES,
+        )
 
         # 4096 is a deliberate choice: Apache LimitRequestFieldSize
         # defaults to 8190, leaving headroom; documented in the module.
-        self.assertEqual(4096, _DEFAULT_SIZE_WARN_BYTES)
+        self.assertEqual(4096, _DEFAULT_JWT_SIZE_WARN_BYTES)
 
     def test_default_threshold_is_4096_via_resolver(self) -> None:
-        # Doubles as a contract check on ``_size_warn_threshold()``:
-        # the resolver must read the module default when the operator
-        # has not overridden the setting.
-        from allianceauth_oidc.tokens import _size_warn_threshold
+        # Doubles as a contract check on the resolver pipeline: the
+        # ``OIDCSettings`` snapshot must read the module default when
+        # the operator has not overridden the setting.
+        from allianceauth_oidc.app_settings import OIDCSettings
 
         # Default OAUTH2_PROVIDER in test settings does not set the
-        # threshold key — the resolver returns the module constant.
-        self.assertEqual(4096, _size_warn_threshold())
+        # threshold key — the snapshot returns the module constant.
+        self.assertEqual(4096, OIDCSettings.from_django().jwt_size_warn_bytes)
 
 
 class TestRequiredClaimsArithmetic(TestCase):

@@ -29,6 +29,17 @@ import socket
 DNS_BOUND_SECONDS = 3
 
 
+# RFC 6598 carrier-grade NAT space - not flagged by
+# ``ipaddress.IPv4Address.is_private`` (which only covers RFC 1918)
+# nor by ``is_reserved`` (which doesn't include 100.64.0.0/10 on the
+# 3.10-3.13 standard library). Deployments behind CGNAT - k8s overlay
+# networks using the range, some ISP-managed appliances - would
+# otherwise be reachable by an attacker-controlled RP whose hostname
+# resolves into the range, leaking a signed ``logout_token`` JWT
+# (``iss``/``aud``/``sub``/``jti``) into internal infrastructure.
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+
+
 def resolve_host_bounded(
     host: str, deadline_seconds: int = DNS_BOUND_SECONDS
 ) -> list[tuple]:
@@ -99,6 +110,7 @@ def is_unsafe_address(addr_str: str) -> bool:
         or addr.is_link_local
         or addr.is_multicast
         or addr.is_reserved
+        or (isinstance(addr, ipaddress.IPv4Address) and addr in _CGNAT_NETWORK)
     )
 
 

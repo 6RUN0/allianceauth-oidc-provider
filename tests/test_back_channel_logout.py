@@ -195,6 +195,15 @@ class TestBackChannelLogoutModel(OIDCTestCase):
             # private IPv4. Without unmap the address bypasses every
             # legacy predicate — the canonical 6to4 SSRF bypass.
             ("sixtofour_loopback", "2002:7f00:0001::"),
+            # ``100.64.0.0/10`` is RFC 6598 carrier-grade NAT space;
+            # ``IPv4Address.is_private`` covers only RFC 1918, so
+            # CGNAT addresses fall through every legacy predicate.
+            # k8s overlay networks and some ISP-managed appliances
+            # use this range — an attacker-controlled RP resolving
+            # into it would otherwise leak ``logout_token`` JWTs
+            # into internal infrastructure.
+            ("ipv4_cgnat_low", "100.64.0.1"),
+            ("ipv4_cgnat_high", "100.127.255.254"),
         )
         for label, ip in cases:
             with self.subTest(address=label):

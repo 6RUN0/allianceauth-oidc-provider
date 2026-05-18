@@ -226,11 +226,19 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         ``error=login_required`` per OIDC §3.1.2.6 — the
         anonymous case never reaches this validator.
 
-        ``oauthlib`` does not propagate the Django session user onto
-        the authorize-time ``request`` object, so a user-aware
-        implementation is not possible here without first attaching
-        ``request.user`` from the view layer; until then this single
-        fact (``LoginRequiredMixin`` already passed`` => session user
+        ``oauthlib`` does NOT propagate the Django session user onto
+        the authorize-time ``request`` object (verified empirically:
+        ``request.user`` is absent on oauthlib's ``Request``), so a
+        user-aware implementation is not possible here without first
+        attaching ``request.user`` from the view layer. Reading
+        ``request.user`` defensively here would fail-closed against
+        every legitimate ``prompt=none`` request and trigger
+        ``login_required`` even for users who actually are signed in
+        — exactly the regression the
+        ``test_prompt_none_skip_authorization_redirects_with_code``
+        test guards. Until oauthlib starts propagating the Django
+        session user (or DOT does), this single fact
+        (``LoginRequiredMixin`` already passed`` => session user
         exists``) is the correct semantics.
 
         Without this override the parent abstract raises
@@ -238,6 +246,37 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         an authenticated user 500s the authorize endpoint.
         """
         return True
+
+    def _silent_consent_preconditions_pass(self, request, client) -> bool:
+        """
+        Authentication + deactivation + policy gate for silent consent.
+
+        Extracted from :meth:`validate_silent_authorization` so the
+        public entry point keeps its ``return`` count under the
+        ruff PLR0911 cap. Each fail-closed branch corresponds to a
+        distinct adversary model documented on the parent method's
+        docstring: anonymous-bypass, missing-client, deactivated app,
+        revoked permission. Order matches cost-cheapest-first: attr
+        check → attr check → callable predicate → policy decision.
+        """
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+        if client is None:
+            return False
+        # Deactivation kill-switch: ``is_usable`` is provided by DOT's
+        # ``AbstractApplication`` so it is always callable on our
+        # ``AllianceAuthApplication``; the ``callable`` guard tolerates
+        # test seams that hand in synthetic clients.
+        is_usable = getattr(client, "is_usable", None)
+        if callable(is_usable) and not is_usable(request):
+            policy_rejections.labels(
+                stage="validate_silent_auth", reason="app_unusable"
+            ).inc()
+            return False
+        decision = self.policy.decide(user, client)
+        reason = self._emit_denial(decision, stage="validate_silent_auth")
+        return reason is None
 
     def validate_silent_authorization(self, request):
         """
@@ -269,13 +308,23 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         ``openid`` token does NOT cover a new
         ``openid profile`` request — the user has not yet consented
         to the additional claim.
+
+        :meth:`_silent_consent_preconditions_pass` symmetrises this
+        gate with ``validate_bearer_token`` and ``_enforce_policy``:
+        a deactivated application or a user who lost the global
+        ``access_oidc`` permission / fell out of the per-app
+        state/group whitelist must NOT silently re-auth via
+        ``prompt=none``. The authorize-view dispatch already filters
+        these out, but the validator owns its own contract — without
+        these checks the silent path relies on implicit ordering
+        that a future refactor could break.
         """
         client = getattr(request, "client", None)
         if getattr(client, "skip_authorization", False):
             return True
-        user = getattr(request, "user", None)
-        if user is None or not getattr(user, "is_authenticated", False):
+        if not self._silent_consent_preconditions_pass(request, client):
             return False
+        user = getattr(request, "user", None)
         requested = set(getattr(request, "scopes", None) or [])
         if not requested:
             # An empty scope set is not a positive proof of consent —
@@ -435,16 +484,39 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         elif user is not None and client is None:
             # The policy gate is intentionally skipped on grant types
             # that do not carry a client on the oauthlib request
-            # (e.g. password / client_credentials variants that DOT
+            # (``password`` / ``client_credentials`` variants that DOT
             # serves through code paths where ``request.client`` is
-            # populated elsewhere). Emit an INFO marker so an
-            # operator scanning logs after a regression that nulled
-            # out ``client`` upstream can spot the silent skip
-            # instead of guessing why a deny never fired.
-            logger.info(
-                "OIDC policy skipped: save_bearer_token user=%s no_client",
-                user,
-            )
+            # populated elsewhere). Any OTHER grant type reaching
+            # here with ``user`` set but ``client`` unset is an
+            # unexpected oauthlib state — fail closed via
+            # ``InvalidGrantError`` rather than silently letting the
+            # super().save_bearer_token() call mint tokens past the
+            # policy gate. Narrowing the silent-skip to the documented
+            # grant types means a future regression that nulls
+            # ``request.client`` on a code-flow path surfaces as a
+            # denied request instead of a policy bypass.
+            grant_type = getattr(request, "grant_type", None)
+            if grant_type in {"password", "client_credentials"}:
+                logger.info(
+                    "OIDC policy skipped: save_bearer_token "
+                    "user=%s grant=%s no_client",
+                    user,
+                    grant_type,
+                )
+            else:
+                logger.warning(
+                    "OIDC DENIED: save_bearer_token user=%s "
+                    "grant=%r no_client (unexpected grant type with "
+                    "no resolved client; rejecting)",
+                    user,
+                    grant_type,
+                )
+                policy_rejections.labels(
+                    stage="save_bearer", reason="no_client"
+                ).inc()
+                raise oauth_errors.InvalidGrantError(
+                    description="Access denied"
+                ) from None
         result = super().save_bearer_token(token, request, *args, **kwargs)
         # Record the code → tokens link only for the original
         # authorization_code exchange — refresh_token grants reuse the
@@ -480,6 +552,25 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         we re-query the persisted ``AccessToken`` / ``RefreshToken``
         rows by their ``token`` column so we hold the database PKs,
         not the bearer values, in the audit table.
+
+        Known race window — RFC 6749 §10.5 SHOULD overlay
+        ------------------------------------------------
+        The audit row is written AFTER ``super().save_bearer_token``
+        commits. In a tight race where a second presenter exchanges
+        the same code in the window between DOT's Grant-delete commit
+        and the audit row's insert, ``_handle_potential_code_reuse``
+        will observe ``audit is None`` and skip revocation. The
+        protocol-level MUST half (``invalid_grant`` to the second
+        presenter) is preserved by DOT's single-use Grant; the SHOULD
+        overlay (revoke previously-issued tokens on reuse) degrades
+        gracefully in that narrow window — the first exchange's
+        tokens remain valid. Operators monitoring
+        ``oidc_code_reuse_detected`` will not see a signal for this
+        race. Closing the window fully requires pre-allocating the
+        audit row at authorize-time (hook into the authorize-flow);
+        the current code accepts the degraded SHOULD overlay because
+        an attacker reaching this race must already possess a leaked
+        authorization code.
         """
         import hashlib
 
@@ -542,7 +633,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         import hashlib
 
-        from django.db import transaction
+        from django.core.exceptions import ObjectDoesNotExist
+        from django.db import DatabaseError, transaction
         from django.utils import timezone
         from oauth2_provider.models import (
             get_access_token_model,
@@ -592,12 +684,20 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                     access_token = AccessToken.objects.filter(pk=at_pk).first()
                     if access_token is not None:
                         access_token.revoke()
-            except Exception:
-                # If revocation itself failed (e.g. the AccessToken
-                # was already cleaned up by ``clear_expired_tokens``
-                # mid-transaction), still emit the audit signal and
-                # bump the counter — the missed revocation is itself
-                # a signal worth surfacing.
+            except (DatabaseError, ObjectDoesNotExist, AttributeError):
+                # Narrow to the realistic missed-revocation set:
+                # ``DatabaseError`` for transient DB hiccups,
+                # ``ObjectDoesNotExist`` for the documented
+                # ``clear_expired_tokens`` mid-transaction race,
+                # ``AttributeError`` for the rare case where the
+                # token row exists but has stale state on the
+                # in-memory instance. Other exceptions (programming
+                # errors, misconfigured DOT subclass, etc.) propagate
+                # up to ``validate_code`` where the outer guard logs
+                # them and returns False — audit signal is dropped in
+                # that path on purpose, because a programming error
+                # is more important to surface loudly than to
+                # decorate with a misleading "we tried to revoke" audit.
                 logger.exception(
                     "OIDC: token revocation failed during "
                     "code-reuse handling; emitting audit signal "
