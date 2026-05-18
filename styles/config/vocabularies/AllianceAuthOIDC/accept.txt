@@ -303,3 +303,10 @@ TOCTOU
 6to4
 hostname
 hostnames
+URIs
+JWTs
+IPs
+cleartext
+loopback
+multicast
+CGNAT

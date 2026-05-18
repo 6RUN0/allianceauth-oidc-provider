@@ -558,11 +558,44 @@ data-minimization, troubleshooting** — см.
 | `allianceauth_oidc.W001` | Warning | Словарь `OAUTH2_PROVIDER` отсутствует в settings, хотя `allianceauth_oidc` установлен. | Добавьте словарь, пусть даже пустой. Провайдер опирается на него для opt-in настроек (`OIDC_ISS_ENDPOINT`, `ACCESS_TOKEN_GENERATOR`, `OIDC_RP_INITIATED_LOGOUT_ENABLED`); отсутствие означает, что любой operator knob невидим. |
 | `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching generator. JWT-режим молча деградирует до выпуска opaque-токенов. | Включите `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Обе настройки должны быть согласованы, иначе JWT не активен. |
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` явно `False`, при том что у одного или нескольких приложений выставлен `backchannel_logout_uri`. Single-Logout chain рвётся на первом hop'е, потому что RP-initiated logout — точка входа, которая триггерит back-channel fan-out. | Либо снимите `backchannel_logout_uri` с затронутых приложений (перечислены в тексте warning'а), либо включите RP-initiated logout обратно (по умолчанию он on — задайте `True` или уберите явный `False`). |
+| `allianceauth_oidc.W004` | Warning | У одного или нескольких **активных** приложений `backchannel_logout_uri` использует `http://` при `DEBUG=False`. Admin-форма блокирует новые `http://` URI в проде, но legacy-строки, сохранённые при `DEBUG=True`, переживают переключение. Воркер re-checks DNS, но не схему — `logout_token` JWT (с `iss`/`aud`/`sub`/`jti`) продолжает уходить cleartext'ом. | Замените URI на `https://` либо деактивируйте строку, если RP уже выведен из эксплуатации. |
+| `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` при `DEBUG=False`. SSRF-гейт на back-channel logout target'ы отключён — воркер POST'ит подписанные `logout_token`'ы на `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IP, на которые резолвится зарегистрированный URI. Симметричен `W001`. | Поставьте флаг `False` (или удалите) в проде. Оставляйте `True` только на dev / staging хостах, которые осознанно указывают на private RP. |
+| `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` не является (и не оборачивает) `allianceauth_oidc.pkce.per_app_pkce_required`. Без адаптера DOT использует собственный резолвер, и per-app override `pkce_required=False` молча no-op'ит. Public-клиенты, выпущенные через этот разрыв, уязвимы к перехвату auth-code per RFC 9700 §2.1.1. | Поставьте `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (именно **объект функции**, не dotted-путь — DOT не импортирует эту настройку). |
 
 ID проверок стабильны между релизами; mute через
 `SILENCED_SYSTEM_CHECKS` поддерживается, но не рекомендуется — лучше
 поправить конфигурацию, чтобы следующий оператор не наступил на тот
 же drift.
+
+### Локальное тестирование на приватной сети
+
+Два переключателя позволяют прогнать полный BCL-flow против RP,
+которые резолвятся в приватные адреса (типичные dev / staging на
+`192.168.x.x`, `10.x.x.x`, k8s overlay, CGNAT `100.64.0.0/10`).
+
+| Настройка | Эффект |
+|---|---|
+| `DEBUG = True` | Admin-форма принимает `http://` BCL URI. `W001`, `W004`, `W005` молчат. |
+| `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = True` | Оба DNS-гейта (admin save И воркер re-check при диспатче) сразу `return True`; private / loopback / link-local / multicast / reserved / CGNAT target'ы проходят. |
+
+Типичные конфигурации:
+
+```python
+# Dev на localhost / LAN — тихо, BCL работает полностью
+DEBUG = True
+ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = True
+```
+
+```python
+# Staging на k8s overlay (10.244.x.x, 100.64.x.x) — работает, W005 виден
+DEBUG = False
+ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = True
+```
+
+`W005` в staging-варианте — **информационный**, не блокирующий:
+делает выбор «я осознанно принимаю SSRF-риск в этой среде» видимым
+на каждом `manage.py check`. Та же позиция у `W001` (masked-secret
+логи) и `W004` (`http://` BCL): предупреждения, а не ошибки.
 
 ### Debug-логи
 

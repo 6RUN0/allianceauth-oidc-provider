@@ -572,11 +572,45 @@ as configuration smells worth investigating.
 | `allianceauth_oidc.W001` | Warning | `OAUTH2_PROVIDER` dict missing from settings while `allianceauth_oidc` is installed. | Add the dict, even if empty. The provider relies on it for opt-in knobs (`OIDC_ISS_ENDPOINT`, `ACCESS_TOKEN_GENERATOR`, `OIDC_RP_INITIATED_LOGOUT_ENABLED`); absence means every operator knob is invisible. |
 | `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'` but `ACCESS_TOKEN_GENERATOR` is not the dispatching generator. JWT mode silently degrades to opaque token issuance. | Wire `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Both keys must agree for JWT to be active. |
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` is explicitly `False` while one or more applications carry a `backchannel_logout_uri`. The Single-Logout chain breaks at the first hop because RP-initiated logout is the entry-point that triggers back-channel fan-out. | Either remove `backchannel_logout_uri` from the affected applications (listed in the warning text), or re-enable RP-initiated logout (it is on by default — set the key to `True` or remove the explicit `False`). |
+| `allianceauth_oidc.W004` | Warning | One or more **active** applications have a `backchannel_logout_uri` using `http://` while `DEBUG=False`. The admin form rejects new `http://` URIs in production, but legacy rows persisted under `DEBUG=True` survive a flip. The worker re-checks DNS but not scheme, so `logout_token` JWTs (carrying `iss`/`aud`/`sub`/`jti`) keep flowing in cleartext. | Edit each affected application to use `https://`, or deactivate the row if the RP has been retired. |
+| `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` while `DEBUG=False`. The SSRF gate on back-channel logout targets is disabled — the worker will POST signed `logout_token`s to `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IPs that a registered URI resolves to. Symmetric posture to `W001`. | Set the flag to `False` (or remove it) in production. Keep it `True` only on dev / staging hosts that intentionally point at private RPs. |
+| `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` is not (or does not wrap) `allianceauth_oidc.pkce.per_app_pkce_required`. Without the adapter, DOT falls back to its own resolver and the per-app `pkce_required=False` override silently no-ops. Public clients shipped under this gap are vulnerable to RFC 9700 §2.1.1 auth-code interception. | Set `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (pass the **function object**, not a dotted-path — DOT does not import this key). |
 
 The check ids are stable across releases; muting via Django's
 `SILENCED_SYSTEM_CHECKS` is supported but discouraged — fix the
 underlying configuration so the next operator does not stumble on
 the same drift.
+
+### Local testing on a private network
+
+Two switches let you run a full BCL flow against RPs that resolve
+to private addresses (typical dev / staging on `192.168.x.x`,
+`10.x.x.x`, k8s overlay, CGNAT `100.64.0.0/10`).
+
+| Setting | Effect |
+|---|---|
+| `DEBUG = True` | Admin form accepts `http://` BCL URIs. `W001`, `W004`, `W005` stay quiet. |
+| `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = True` | Both DNS gates (admin save AND worker dispatch-time re-check) short-circuit; private / loopback / link-local / multicast / reserved / CGNAT targets pass. |
+
+Typical configurations:
+
+```python
+# Dev on localhost / LAN — silent, full BCL works
+DEBUG = True
+ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = True
+```
+
+```python
+# Staging on a k8s overlay (10.244.x.x, 100.64.x.x) — works, with W005 surfaced
+DEBUG = False
+ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = True
+```
+
+`W005` in the staging variant is **informational**, not blocking —
+it makes the "I have intentionally accepted SSRF risk in this
+environment" choice visible at every `manage.py check`. The same
+posture holds for `W001` (masked-secret logging) and `W004`
+(`http://` BCL): warnings, not errors.
 
 ### Debug logging
 
