@@ -36,6 +36,7 @@ from hypothesis import strategies as st
 
 from allianceauth_oidc.app_settings import OIDCSettings
 from allianceauth_oidc.claims import build_oidc_claim_scope
+from allianceauth_oidc.utils import SecretRedactor
 
 # RFC 7636 §4.1: code_verifier = high-entropy random string using
 # unreserved characters with length 43..128.
@@ -108,3 +109,65 @@ class TestClaimScopeMapShape(SimpleTestCase):
         # ``build_oidc_claim_scope`` is ``@functools.lru_cache``-decorated
         # keyed on the frozen settings; the second call must hit cache.
         self.assertIs(build_oidc_claim_scope(snap), scope_map)
+
+
+class TestSecretRedactorNoLeakage(SimpleTestCase):
+    """Masked output must never contain the unmasked middle of the secret."""
+
+    @given(
+        secret=st.text(
+            alphabet=string.ascii_letters + string.digits,
+            min_size=10,
+            max_size=200,
+        ),
+        head=st.integers(min_value=1, max_value=8),
+        tail=st.integers(min_value=1, max_value=8),
+    )
+    @settings(max_examples=200, deadline=None)
+    def test_middle_characters_never_appear_in_masked_output(
+        self, secret: str, head: int, tail: int
+    ) -> None:
+        # Skip degenerate inputs where head + tail >= len(secret) — those
+        # take the "shorter than the window" path that legitimately
+        # emits all stars and has no middle to leak.
+        if head + tail >= len(secret):
+            return
+        masked = SecretRedactor.mask_secret(secret, head=head, tail=tail)
+        self.assertIsNotNone(masked)
+        # The middle slice — characters that must NEVER appear in
+        # the masked output, otherwise we have a redaction leak.
+        middle = secret[head:-tail]
+        # Each character of ``middle`` is what we're protecting; if
+        # any substring of length >= 3 from ``middle`` appears in
+        # ``masked``, that is a leak. Length 3 chosen over 1 to skip
+        # incidental single-char alphabet collisions (a digit '7' in
+        # ``masked`` from the head/tail happens to also be in the
+        # middle); a 3-char substring is statistically unique enough
+        # to flag a real leak.
+        masked_str = str(masked)
+        for i in range(len(middle) - 2):
+            substring = middle[i : i + 3]
+            self.assertNotIn(
+                substring,
+                masked_str[head : -tail or None],
+                f"3-char leak {substring!r} in masked output {masked_str!r}",
+            )
+
+    @given(
+        secret=st.text(
+            alphabet=string.ascii_letters + string.digits,
+            min_size=0,
+            max_size=200,
+        ),
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_disabled_redactor_always_returns_redacted_marker(
+        self, secret: str
+    ) -> None:
+        # When the operator has NOT opted in to masking, every call
+        # must return the opaque ``<redacted>`` marker — there is no
+        # path that exposes any plaintext character of the secret.
+        redactor = SecretRedactor(enabled=False)
+        result = redactor(secret) if secret else None
+        if secret:
+            self.assertEqual(str(result), "<redacted>")
