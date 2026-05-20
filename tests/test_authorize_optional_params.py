@@ -24,11 +24,11 @@ from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
     SCOPE_OPENID,
-    OIDCTestCase,
+    GrantedOIDCTestCase,
 )
 
 
-class TestDisplayParameter(OIDCTestCase):
+class TestDisplayParameter(GrantedOIDCTestCase):
     """
     OIDC §3.1.2.1 ``display`` parameter graceful handling.
 
@@ -44,7 +44,6 @@ class TestDisplayParameter(OIDCTestCase):
     """
 
     def _authorize_with_display(self, value: str) -> object:
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         return self.client.get(
             "/o/authorize/",
@@ -89,7 +88,6 @@ class TestDisplayParameter(OIDCTestCase):
         template starts conditioning on ``display`` and accidentally
         rewrites scope, this test surfaces the regression.
         """
-        self.grant_oidc_access(self.user1)
         # Two parallel authorizations: one with display, one without.
         # Both must issue codes; the codes themselves differ (random)
         # but the *state* echoes verbatim and no error is reported.
@@ -109,7 +107,7 @@ class TestDisplayParameter(OIDCTestCase):
         self.assertNotEqual(code_plain, code_with)
 
 
-class TestUiLocalesParameter(OIDCTestCase):
+class TestUiLocalesParameter(GrantedOIDCTestCase):
     """
     OIDC §3.1.2.1 ``ui_locales`` parameter graceful handling.
 
@@ -127,7 +125,6 @@ class TestUiLocalesParameter(OIDCTestCase):
     """
 
     def _authorize_with_locales(self, value: str) -> object:
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         return self.client.get(
             "/o/authorize/",
@@ -163,7 +160,7 @@ class TestUiLocalesParameter(OIDCTestCase):
     # ``locale`` by design — see ``get_id_token_dictionary``).
 
 
-class TestLoginHintParameter(OIDCTestCase):
+class TestLoginHintParameter(GrantedOIDCTestCase):
     """
     OIDC §3.1.2.1 ``login_hint`` parameter binding contract.
 
@@ -190,7 +187,6 @@ class TestLoginHintParameter(OIDCTestCase):
         and id_token MUST identify user1 (the session), never the
         attacker's hint.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(
             self.user1,
             scope=SCOPE_FULL,
@@ -214,7 +210,6 @@ class TestLoginHintParameter(OIDCTestCase):
         oversized blob — none should escape into a 5xx or alter
         the flow.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         for hint in (
             "",
@@ -242,7 +237,7 @@ class TestLoginHintParameter(OIDCTestCase):
                 )
 
 
-class TestResponseModeFormPost(OIDCTestCase):
+class TestResponseModeFormPost(GrantedOIDCTestCase):
     """
     OAuth 2.0 Form Post Response Mode — ``response_mode=form_post``.
 
@@ -273,7 +268,6 @@ class TestResponseModeFormPost(OIDCTestCase):
     def test_response_mode_form_post_is_downgraded_or_rejected(
         self,
     ) -> None:
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.client.get(
             "/o/authorize/",
