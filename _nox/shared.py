@@ -79,6 +79,13 @@ TEST_RUNTIME_DEPS = [
     # matrix must provision it the same way the dev / AA5 environments
     # already do (see ``[dependency-groups].dev`` in pyproject.toml).
     "django-prometheus>=2.3",
+    # tests/test_property_invariants.py top-level-imports ``hypothesis``
+    # for property-based testing of PKCE round-trips and scope-claim
+    # monotonicity. Same drift class as the django-prometheus entry
+    # above: hypothesis lives in ``[dependency-groups].dev`` so the
+    # default ``tests`` session sees it via the lock, but the off-lock
+    # AA4 venv built by ``uv pip install -e . --group aa4`` does not.
+    "hypothesis>=6.118",
 ]
 
 

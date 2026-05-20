@@ -47,13 +47,24 @@ def tests_matrix(session: nox.Session) -> None:
         f"--python={session.python}",
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
+    # Force single-process for the entire matrix. Django's parallel
+    # runner serialises test results through a multiprocessing pool
+    # whose machinery cannot transport ``traceback`` objects between
+    # workers (the issue is most visible on Python 3.10 — PEP 657
+    # frame-handling rework in 3.11 narrowed it but did not eliminate
+    # it). Any failing test therefore crashes the pool with
+    # ``TypeError: cannot ... traceback object`` and hides the real
+    # diagnostics. ``tests_matrix`` is the "find a per-version
+    # regression" session — failure clarity outweighs the per-CPU
+    # speedup here. The default ``tests`` session keeps
+    # ``--parallel=auto`` (locked AA 5.x stack, expected green).
     session.run(
         "python",
         "-m",
         "django",
         "test",
         *TEST_ARGS_BASE,
-        "--parallel=auto",
+        "--parallel=1",
         *resolve_test_labels(tuple(session.posargs)),
         env=test_env(session),
     )
@@ -103,13 +114,19 @@ def tests_aa4(session: nox.Session) -> None:
         "_nox/_canary_imports.py",
         env=test_env(session),
     )
+    # AA 4.x ships Django 4.2's parallel runner which serialises test
+    # results through the multiprocessing pool the same way 3.10 does
+    # — any failing test crashes the pool with the
+    # ``cannot serialise 'traceback' object`` error rather than the
+    # actual diagnostics. Forcing single-process here makes failures
+    # legible across the whole AA4 Python matrix.
     session.run(
         "python",
         "-m",
         "django",
         "test",
         *TEST_ARGS_BASE,
-        "--parallel=auto",
+        "--parallel=1",
         *resolve_test_labels(tuple(session.posargs)),
         env=test_env(session),
     )
