@@ -89,3 +89,68 @@ rules:
       - metavariable-regex:
           metavariable: $TOKEN
           regex: ^(access_token|refresh_token|id_token|client_secret|authorization_code|code_verifier)$
+
+  - id: non-constant-time-token-comparison
+    message: |
+      Token / secret compared with ``==`` / ``!=``. Timing-attack
+      primitive: an attacker measures comparison time to learn the
+      shared secret byte by byte. Use ``hmac.compare_digest(a, b)``
+      for any string that represents a token, HMAC, signature, or
+      client secret.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: $TOKEN == $OTHER
+          - pattern: $TOKEN != $OTHER
+          - pattern: $OTHER == $TOKEN
+          - pattern: $OTHER != $TOKEN
+      - metavariable-regex:
+          metavariable: $TOKEN
+          regex: ^(client_secret|access_token|refresh_token|id_token|signature|hmac|csrf_token|auth_token|api_token|secret_key|session_token)$
+
+  - id: mark-safe-on-user-input
+    message: |
+      ``mark_safe`` / ``format_html`` / ``SafeString`` applied to
+      user-controlled input is an XSS primitive. The OIDC consent
+      page / admin templates render claim values and redirect URIs
+      — if any of those flows through mark_safe without sanitisation,
+      the provider becomes an XSS reflector for downstream clients.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: mark_safe(request.GET[...])
+      - pattern: mark_safe(request.POST[...])
+      - pattern: mark_safe(request.GET.get(...))
+      - pattern: mark_safe(request.POST.get(...))
+      - pattern: SafeString(request.GET[...])
+      - pattern: SafeString(request.POST[...])
+
+  - id: raw-sql-extra-or-raw
+    message: |
+      Django ORM ``.extra()`` and ``.raw()`` accept SQL fragments that
+      bypass parameterisation if interpolated from variables. Use
+      keyword params (``params=[...]``) or rewrite as ORM expressions.
+      For the OIDC provider this matters at admin filtering / audit
+      query call sites where ``client_id`` lookups may be templated.
+    severity: WARNING
+    languages: [python]
+    pattern-either:
+      - pattern: $QS.extra(where=[f"..."])
+      - pattern: $QS.extra(where=["..." + $X])
+      - pattern: $QS.raw(f"...")
+      - pattern: $QS.raw("..." + $X)
+
+  - id: cookie-missing-secure-flags
+    message: |
+      ``set_cookie`` call missing ``secure=True`` / ``httponly=True``
+      / ``samesite=...``. For an OIDC provider, cookies that carry
+      session / CSRF state must be transport-bound (Secure) and
+      JS-invisible (HttpOnly); SameSite is required for the consent
+      page that submits cross-origin to the RP redirect_uri.
+    severity: WARNING
+    languages: [python]
+    patterns:
+      - pattern: $RESPONSE.set_cookie(...)
+      - pattern-not: $RESPONSE.set_cookie(..., secure=True, ..., httponly=True, ...)
+      - pattern-not: $RESPONSE.set_cookie(..., httponly=True, ..., secure=True, ...)
