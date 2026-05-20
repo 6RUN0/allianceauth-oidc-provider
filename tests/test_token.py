@@ -24,6 +24,7 @@ from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
     SCOPE_OPENID,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
@@ -72,7 +73,7 @@ POLICY_MATRIX = [
 ]
 
 
-class TestPolicyMatrix(OIDCTestCase):
+class TestPolicyMatrix(GrantedOIDCTestCase):
     """
     Parametrised access-policy matrix exercised end-to-end.
 
@@ -101,7 +102,6 @@ class TestPolicyMatrix(OIDCTestCase):
         if is_superuser:
             self.user1.is_superuser = True
             self.user1.save()
-        self.grant_oidc_access(self.user1)
 
         if expect == "allow":
             self.run_code_flow(
@@ -119,12 +119,11 @@ class TestPolicyMatrix(OIDCTestCase):
             self.fail(f"unknown expect={expect!r}")
 
 
-class TestTokenPolicyGuards(OIDCTestCase):
+class TestTokenPolicyGuards(GrantedOIDCTestCase):
     """Refusal paths on /o/token/ and /o/authorize/ when context shifts."""
 
     def _grant_user1_with_test_grp(self) -> None:
         self.oauth_app.groups.add(self.test_grp)
-        self.grant_oidc_access(self.user1)
         self.user1.groups.add(self.test_grp)
         self.user1.refresh_from_db()
 
@@ -172,7 +171,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
         If the user loses the global OIDC permission after receiving a
         refresh_token, refresh must fail with invalid_grant.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="perm-removed-refresh")
         refresh = body["refresh_token"]
 
@@ -254,7 +252,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
         If redirect_uri at /o/token/ doesn't match the one used at
         /o/authorize/, token exchange must fail.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="redir-mismatch")
 
         resp = self.exchange_code_for_token(
@@ -271,7 +268,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
         Confidential clients must not exchange a code with an invalid
         client_secret.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1, scope=SCOPE_OPENID, state="bad-secret"
         )
@@ -296,7 +292,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
         A refresh_token minted while the app was active must NOT issue a new
         access_token after ``active=False``.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="inactive-after-issue")
         refresh = body["refresh_token"]
 
@@ -323,7 +318,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
 
         Regression for token-rotation contract.
         """
-        self.grant_oidc_access(self.user1)
         first = self.run_code_flow(self.user1, state="rotation-1")
         old_refresh = first["refresh_token"]
 
@@ -353,7 +347,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
 
         OAuth-only flows must skip id_token entirely.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(
             self.user1,
             scope="email",
@@ -368,7 +361,6 @@ class TestTokenPolicyGuards(OIDCTestCase):
         ``AllianceAuthApplication.active=False`` must make the app unusable
         — no code redirect to redirect_uri.
         """
-        self.grant_oidc_access(self.user1)
         self.oauth_app.active = False
         self.oauth_app.save()
 
@@ -402,7 +394,7 @@ class TestTokenPolicyGuards(OIDCTestCase):
             )
 
 
-class TestPkceRequiredRefreshFlow(OIDCTestCase):
+class TestPkceRequiredRefreshFlow(GrantedOIDCTestCase):
     """
     Per-app ``pkce_required=True`` must NOT block refresh-token grants.
 
@@ -420,7 +412,6 @@ class TestPkceRequiredRefreshFlow(OIDCTestCase):
         creds = make_app(
             owner=self.user1, pkce_required=True, skip_authorization=True
         )
-        self.grant_oidc_access(self.user1)
 
         verifier, challenge = self.make_pkce_pair()
 
@@ -463,7 +454,7 @@ class TestPkceRequiredRefreshFlow(OIDCTestCase):
         self.assertIn("access_token", refreshed)
 
 
-class TestCodeReuseTokenRevocation(OIDCTestCase):
+class TestCodeReuseTokenRevocation(GrantedOIDCTestCase):
     """
     Authorization-code reuse must invalidate any tokens previously
     issued from that code.
@@ -494,7 +485,6 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         ``invalid_grant``, the access_token issued by the FIRST
         exchange must no longer be accepted at ``/o/userinfo/``.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="code-replay-at")
 
         first = self.exchange_code_for_token(
@@ -538,7 +528,6 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         rate-limited at /token/) can still mint fresh access_tokens
         via the refresh flow indefinitely.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="code-replay-rt")
 
         first = self.exchange_code_for_token(
@@ -571,7 +560,6 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
 
         from allianceauth_oidc.models import IssuedCodeAudit
 
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="audit-row-test")
         self.exchange_code_for_token(
             code=code,
@@ -619,7 +607,6 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         AccessToken = get_access_token_model()
         RefreshToken = get_refresh_token_model()
 
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="n3-rollback-test")
 
         at_count_before = AccessToken.objects.count()
@@ -833,7 +820,6 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         """
         from allianceauth_oidc.models import IssuedCodeAudit
 
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="c4-snapshot")
         self.exchange_code_for_token(code=code, redirect_uri=REDIRECT_URI)
 
@@ -884,11 +870,9 @@ class _PkceCodeIssuanceMixin:
         # so ``authorize_get_default`` returns a 302 directly.
         from ._factories import make_app
 
-        creds = make_app(
+        return make_app(
             owner=self.user1, pkce_required=True, skip_authorization=True
         )
-        self.grant_oidc_access(self.user1)
-        return creds
 
     def _issue_code_with_challenge(
         self,
@@ -914,7 +898,7 @@ class _PkceCodeIssuanceMixin:
         return parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
 
 
-class TestPKCEAttackVectors(_PkceCodeIssuanceMixin, OIDCTestCase):
+class TestPKCEAttackVectors(_PkceCodeIssuanceMixin, GrantedOIDCTestCase):
     """
     PKCE (RFC 7636) negative paths on /o/token/ and /o/authorize/.
 
@@ -1069,7 +1053,7 @@ class TestTokenEndpointHTTPMethod(OIDCTestCase):
         self.assertIn("POST", resp.headers["Allow"])
 
 
-class TestAuthorizationCodeLifetime(OIDCTestCase):
+class TestAuthorizationCodeLifetime(GrantedOIDCTestCase):
     """
     RFC 6749 §4.1.2: authorization codes are SHORT-lived (DOT default
     60s in test settings). An expired code MUST be rejected with
@@ -1088,7 +1072,6 @@ class TestAuthorizationCodeLifetime(OIDCTestCase):
         from django.utils import timezone
         from oauth2_provider.models import get_grant_model
 
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="expired-code")
 
         # Force the Grant row's expires into the past. ``expires`` is
@@ -1111,7 +1094,7 @@ class TestAuthorizationCodeLifetime(OIDCTestCase):
         )
 
 
-class TestRedirectURIExactMatch(OIDCTestCase):
+class TestRedirectURIExactMatch(GrantedOIDCTestCase):
     """
     RFC 6749 §3.1.2.2 + §4.1.3: registered ``redirect_uri`` matching
     MUST be by simple string comparison — no substring / prefix /
@@ -1149,7 +1132,6 @@ class TestRedirectURIExactMatch(OIDCTestCase):
         rows would conflate DOT's single-use-code semantics
         with the redirect_uri-match invariant under test.
         """
-        self.grant_oidc_access(self.user1)
         cases: tuple[tuple[str, str], ...] = (
             ("path_suffix", REDIRECT_URI + "evil"),
             ("extra_query", REDIRECT_URI + "?steal=1"),
@@ -1178,7 +1160,7 @@ class TestRedirectURIExactMatch(OIDCTestCase):
                 )
 
 
-class TestRefreshScopeBoundary(OIDCTestCase):
+class TestRefreshScopeBoundary(GrantedOIDCTestCase):
     """
     Refresh-token grant scope contract.
 
@@ -1198,7 +1180,6 @@ class TestRefreshScopeBoundary(OIDCTestCase):
         ``openid`` must succeed and the response must echo the
         narrowed scope.
         """
-        self.grant_oidc_access(self.user1)
         first = self.run_code_flow(
             self.user1, scope=SCOPE_FULL, state="downscope-1"
         )
@@ -1227,7 +1208,6 @@ class TestRefreshScopeBoundary(OIDCTestCase):
         to the original. Either is spec-compliant; the test pins both
         acceptable outcomes so a regression that *widens* is caught.
         """
-        self.grant_oidc_access(self.user1)
         first = self.run_code_flow(
             self.user1,
             scope=SCOPE_OPENID,
@@ -1268,7 +1248,6 @@ class TestRefreshScopeBoundary(OIDCTestCase):
         reject or clamp; widening is forbidden. ``email`` was NOT in
         the original grant, so it must not appear in the response.
         """
-        self.grant_oidc_access(self.user1)
         first = self.run_code_flow(
             self.user1,
             scope=SCOPE_OPENID,
@@ -1303,7 +1282,7 @@ class TestRefreshScopeBoundary(OIDCTestCase):
             )
 
 
-class TestRefreshAfterUserDeactivation(OIDCTestCase):
+class TestRefreshAfterUserDeactivation(GrantedOIDCTestCase):
     """
     Refresh-token grant after the end-user's account changes state.
 
@@ -1325,7 +1304,6 @@ class TestRefreshAfterUserDeactivation(OIDCTestCase):
         be rejected. Mirror of
         ``test_refresh_token_denied_if_global_permission_removed``.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="refresh-inactive")
         refresh = body["refresh_token"]
 
@@ -1346,7 +1324,9 @@ class TestRefreshAfterUserDeactivation(OIDCTestCase):
         )
 
 
-class TestAuthorizationCodeSubstitution(_PkceCodeIssuanceMixin, OIDCTestCase):
+class TestAuthorizationCodeSubstitution(
+    _PkceCodeIssuanceMixin, GrantedOIDCTestCase
+):
     """
     PKCE binds an authorization code to the verifier-of-issue.
 
@@ -1633,7 +1613,7 @@ class TestTokenEndpointAntiEnumeration(OIDCTestCase):
         )
 
 
-class TestRedirectURIInjection(OIDCTestCase):
+class TestRedirectURIInjection(GrantedOIDCTestCase):
     """
     Header- and URL-injection guards on ``redirect_uri``.
 
@@ -1732,7 +1712,6 @@ class TestRedirectURIInjection(OIDCTestCase):
         creds = make_app(
             owner=self.user1, redirect_uri=latin, pkce_required=False
         )
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1,
             state="idn-mismatch",
@@ -1752,7 +1731,7 @@ class TestRedirectURIInjection(OIDCTestCase):
         )
 
 
-class TestTokenEndpointCacheControl(OIDCTestCase):
+class TestTokenEndpointCacheControl(GrantedOIDCTestCase):
     """
     RFC 6749 §5.1 — successful token responses MUST carry
     ``Cache-Control: no-store`` and ``Pragma: no-cache``.
@@ -1772,7 +1751,6 @@ class TestTokenEndpointCacheControl(OIDCTestCase):
     def test_successful_token_response_has_no_store_cache_control(
         self,
     ) -> None:
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="cache-pin-200")
         resp = self.exchange_code_for_token(
             code=code, redirect_uri=REDIRECT_URI
@@ -1785,7 +1763,6 @@ class TestTokenEndpointCacheControl(OIDCTestCase):
         )
 
     def test_successful_token_response_has_pragma_no_cache(self) -> None:
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="cache-pin-pragma")
         resp = self.exchange_code_for_token(
             code=code, redirect_uri=REDIRECT_URI
@@ -1815,7 +1792,7 @@ class TestTokenEndpointCacheControl(OIDCTestCase):
         )
 
 
-class TestTokenContentType(OIDCTestCase):
+class TestTokenContentType(GrantedOIDCTestCase):
     """
     RFC 6749 §5.1 / §5.2 — token responses (both 200 and 4xx) MUST
     be ``application/json``. RP libraries parse strictly on
@@ -1828,7 +1805,6 @@ class TestTokenContentType(OIDCTestCase):
     """
 
     def test_successful_response_is_application_json(self) -> None:
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="ct-200")
         resp = self.exchange_code_for_token(
             code=code, redirect_uri=REDIRECT_URI
@@ -1862,7 +1838,7 @@ class TestTokenContentType(OIDCTestCase):
         )
 
 
-class TestTokenClientAuthenticationMethods(OIDCTestCase):
+class TestTokenClientAuthenticationMethods(GrantedOIDCTestCase):
     """
     RFC 6749 §2.3.1 — confidential clients MAY authenticate at the
     token endpoint via HTTP Basic (preferred) OR via body params
@@ -1899,7 +1875,6 @@ class TestTokenClientAuthenticationMethods(OIDCTestCase):
 
     def test_body_credentials_yield_token(self) -> None:
         """Body ``client_id`` + ``client_secret`` is the legacy form."""
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="body-auth")
         resp = self._exchange_via_body(code=code)
         self.assertEqual(200, resp.status_code)
@@ -1908,7 +1883,6 @@ class TestTokenClientAuthenticationMethods(OIDCTestCase):
 
     def test_basic_auth_credentials_yield_token(self) -> None:
         """RFC 6749 §2.3.1: Basic auth is the RECOMMENDED form."""
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="basic-auth")
         resp = self._exchange_via_basic_auth(code=code)
         self.assertEqual(200, resp.status_code)
