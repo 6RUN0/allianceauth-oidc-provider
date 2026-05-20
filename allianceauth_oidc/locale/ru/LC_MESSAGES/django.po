@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: allianceauth-oidc-provider 0.0.1b9\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-17 19:27+0000\n"
+"POT-Creation-Date: 2026-05-20 19:35+0000\n"
 "PO-Revision-Date: 2026-05-06 11:25+0500\n"
 "Last-Translator: Boris Talovikov <boris@talovikov.ru>\n"
 "Language-Team: Russian <ru@li.org>\n"
@@ -32,6 +32,15 @@ msgstr ""
 #, python-format
 msgid "Skipped %(count)d application(s) without backchannel_logout_uri."
 msgstr ""
+
+#, python-format
+msgid ""
+"Skipped %(count)d application(s) with backchannel_logout_on_revoke_only=True "
+"(only fires on real user-revoke events; not on admin test)."
+msgstr ""
+"Пропущено %(count)d приложений(я) с backchannel_logout_on_revoke_only=True "
+"(срабатывает только на реальные revoke-события пользователя, не на admin-"
+"тест)."
 
 #, python-brace-format
 msgid "Alliance Auth OIDC v{version}"
@@ -254,6 +263,24 @@ msgstr "Может авторизовать внешние приложения 
 msgid "Application"
 msgstr ""
 
+msgid "Application client_id snapshot"
+msgstr "Снимок client_id приложения"
+
+msgid ""
+"Snapshot of the application's client_id at row-insert time. Survives RP "
+"deletion (FK becomes NULL) so per-RP forensic queries still work for "
+"historical events."
+msgstr ""
+"Снимок client_id приложения на момент вставки строки. Переживает удаление "
+"RP (FK становится NULL), поэтому per-RP forensic-запросы продолжают работать "
+"для исторических событий."
+
+msgid "Application name snapshot"
+msgstr "Снимок имени приложения"
+
+msgid "Snapshot of the application's name at row-insert time."
+msgstr "Снимок имени приложения на момент вставки строки."
+
 msgid "User PK"
 msgstr ""
 
@@ -304,6 +331,15 @@ msgid ""
 "sha256 hex digest of the authorization code. One-way by construction — the "
 "plaintext code is never stored."
 msgstr ""
+
+msgid ""
+"Snapshot of the application's client_id at row-insert time. Survives RP "
+"deletion (FK becomes NULL) so per-RP forensic queries still work for "
+"``reuse_count>=1`` rows after the originating app is gone."
+msgstr ""
+"Снимок client_id приложения на момент вставки строки. Переживает удаление "
+"RP (FK становится NULL), поэтому per-RP forensic-запросы продолжают работать "
+"для строк с ``reuse_count>=1`` после удаления исходного приложения."
 
 msgid "Access token PK"
 msgstr ""

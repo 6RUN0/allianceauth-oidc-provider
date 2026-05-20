@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-17 19:27+0000\n"
+"POT-Creation-Date: 2026-05-20 19:35+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -28,6 +28,12 @@ msgstr ""
 
 #, python-format
 msgid "Skipped %(count)d application(s) without backchannel_logout_uri."
+msgstr ""
+
+#, python-format
+msgid ""
+"Skipped %(count)d application(s) with backchannel_logout_on_revoke_only=True "
+"(only fires on real user-revoke events; not on admin test)."
 msgstr ""
 
 #, python-brace-format
@@ -240,6 +246,21 @@ msgstr ""
 msgid "Application"
 msgstr ""
 
+msgid "Application client_id snapshot"
+msgstr ""
+
+msgid ""
+"Snapshot of the application's client_id at row-insert time. Survives RP "
+"deletion (FK becomes NULL) so per-RP forensic queries still work for "
+"historical events."
+msgstr ""
+
+msgid "Application name snapshot"
+msgstr ""
+
+msgid "Snapshot of the application's name at row-insert time."
+msgstr ""
+
 msgid "User PK"
 msgstr ""
 
@@ -289,6 +310,12 @@ msgstr ""
 msgid ""
 "sha256 hex digest of the authorization code. One-way by construction — the "
 "plaintext code is never stored."
+msgstr ""
+
+msgid ""
+"Snapshot of the application's client_id at row-insert time. Survives RP "
+"deletion (FK becomes NULL) so per-RP forensic queries still work for "
+"``reuse_count>=1`` rows after the originating app is gone."
 msgstr ""
 
 msgid "Access token PK"
