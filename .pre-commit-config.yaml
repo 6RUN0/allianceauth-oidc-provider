@@ -123,9 +123,16 @@ repos:
         pass_filenames: false
         types: [python]
         # Thresholds documented above [tool.vulture] in pyproject.toml.
+        # ``--max-absolute C`` caps the most complex function/method at
+        # radon rank C (cyclomatic complexity <= 20). D (the prior bar)
+        # allowed up to 30 — generous enough that explosively branchy
+        # validators could land without surfacing the smell. Tightening
+        # to A is blocked by Celery retry handlers in tasks.py and a
+        # few rich management-command handlers; C is the best floor
+        # achievable without a refactor pass.
         args: [
           "run", "xenon",
-          "--max-absolute", "D",
+          "--max-absolute", "C",
           "--max-modules", "B",
           "--max-average", "A",
           "allianceauth_oidc/",
