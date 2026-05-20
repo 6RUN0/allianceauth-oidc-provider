@@ -238,14 +238,45 @@ class TestPkceRequiredAdapter(OIDCTestCase):
 
 
 class TestSettingsWiring(OIDCTestCase):
-    """Confirm DOT picks up the per-app callable verbatim."""
+    """
+    Behavioural wiring proof: ``oauth2_settings.PKCE_REQUIRED`` —
+    the callable DOT consults at every authorize/token request —
+    must resolve the per-app value from the database.
 
-    def test_dot_picks_up_per_app_pkce_callable(self):
+    The earlier identity check (``assertIs(oauth2_settings.PKCE_REQUIRED,
+    per_app_pkce_required)``) was tautological: it imported the
+    function under test from the SUT and compared it to itself.
+    The replacement instead installs two apps with opposite
+    ``pkce_required`` flags and observes that DOT's resolved
+    setting returns the matching per-app value. A refactor that
+    swaps the callable for a static ``True`` / ``False`` or for a
+    different callable that ignores ``client_id`` fails this test.
+    """
+
+    def test_dot_pkce_required_resolves_per_app_value(self):
         from oauth2_provider.settings import oauth2_settings
 
-        from allianceauth_oidc.pkce import per_app_pkce_required
+        _, app_yes_id, _ = make_app(
+            owner=self.user1,
+            pkce_required=True,
+            skip_authorization=True,
+            redirect_uri="http://localhost/pkce-yes/",
+        )
+        _, app_no_id, _ = make_app(
+            owner=self.user1,
+            pkce_required=False,
+            skip_authorization=True,
+            redirect_uri="http://localhost/pkce-no/",
+        )
 
-        self.assertIs(oauth2_settings.PKCE_REQUIRED, per_app_pkce_required)
+        self.assertTrue(
+            oauth2_settings.PKCE_REQUIRED(app_yes_id),
+            "DOT MUST observe pkce_required=True for the yes-app",
+        )
+        self.assertFalse(
+            oauth2_settings.PKCE_REQUIRED(app_no_id),
+            "DOT MUST observe pkce_required=False for the no-app",
+        )
 
 
 class TestAccessDecisionStructuralInvariants(SimpleTestCase):
