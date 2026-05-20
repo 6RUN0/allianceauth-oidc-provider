@@ -18,10 +18,10 @@ from allianceauth_oidc.signals import (
     oidc_token_issued,
 )
 
-from ._oidc_testcase import REDIRECT_URI, OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, GrantedOIDCTestCase
 
 
-class TestOidcTokenIssuedSignal(OIDCTestCase):
+class TestOidcTokenIssuedSignal(GrantedOIDCTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.captured: list[dict] = []
@@ -43,7 +43,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         persisted ``token`` model and the request ``body`` dict carrying
         ``grant_type``/``scope``.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="signal-success")
         self.assertIn("access_token", body)
 
@@ -77,7 +76,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         Otherwise audit sinks would record successful issuance for tokens that
         were never minted.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="signal-fail")
 
         # Revoke the global OIDC permission before exchange — the
@@ -104,7 +102,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         still run. Regression for ``send_robust`` semantics in
         ``signals.dispatch_audit_signal`` (Architect#6 / N-6).
         """
-        self.grant_oidc_access(self.user1)
 
         def boom(sender, **kwargs):
             raise RuntimeError("simulated SIEM forwarder failure")
@@ -139,8 +136,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         log), not crash and not leak the exception to the OAuth
         client.
         """
-        self.grant_oidc_access(self.user1)
-
         access_token_model = get_access_token_model()
         with (
             patch.object(
@@ -175,8 +170,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         misconfiguration and is not worth parsing.
         """
         from allianceauth_oidc.views import TokenView
-
-        self.grant_oidc_access(self.user1)
 
         # Replace TokenView.create_token_response with a stub that
         # returns a >64 KiB body containing a fake access_token.
@@ -214,7 +207,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         must not contain raw access/refresh/id tokens — those live only on the
         ``token`` model that receivers can query.
         """
-        self.grant_oidc_access(self.user1)
         token_body = self.run_code_flow(self.user1, state="signal-no-leak")
 
         self.assertEqual(1, len(self.captured))
@@ -236,7 +228,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         existing shared fixture has ``pkce_required=False``, so a plain
         run_code_flow exercises this path directly.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="signal-pkce-off")
         self.assertIn("access_token", body)
         self.assertEqual(1, len(self.captured))
@@ -253,7 +244,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         creds = make_app(
             owner=self.user1, pkce_required=True, skip_authorization=True
         )
-        self.grant_oidc_access(self.user1)
 
         verifier, challenge = self.make_pkce_pair()
 
@@ -280,7 +270,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         self.assertEqual(1, len(self.captured))
 
 
-class TestOidcCodeReuseDetectedSignal(OIDCTestCase):
+class TestOidcCodeReuseDetectedSignal(GrantedOIDCTestCase):
     """
     Contract test for ``oidc_code_reuse_detected``.
 
@@ -320,7 +310,6 @@ class TestOidcCodeReuseDetectedSignal(OIDCTestCase):
         """
         import hashlib
 
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="signal-reuse")
         self.exchange_code_for_token(code=code, redirect_uri=REDIRECT_URI)
         # Replay → signal fires.
