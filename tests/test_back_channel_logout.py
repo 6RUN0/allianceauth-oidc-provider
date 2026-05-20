@@ -2208,27 +2208,22 @@ class TestBackChannelLogoutDiscovery(OIDCTestCase):
     DISCOVERY_URL = "/o/.well-known/openid-configuration/"
 
     def test_ac33_backchannel_logout_supported_true(self) -> None:
-        import json
 
         resp = self.client.get(self.DISCOVERY_URL)
         self.assertEqual(resp.status_code, 200)
-        data = json.loads(resp.content)
+        data = self.json_body(resp, expected_status=None)
         self.assertIs(data.get("backchannel_logout_supported"), True)
 
     def test_ac34_backchannel_logout_session_supported_absent(self) -> None:
         """v5 path-b regression: session-scoped flag MUST NOT leak."""
-        import json
-
         resp = self.client.get(self.DISCOVERY_URL)
-        data = json.loads(resp.content)
+        data = self.json_body(resp, expected_status=None)
         self.assertNotIn("backchannel_logout_session_supported", data)
 
     def test_existing_discovery_fields_preserved(self) -> None:
         """Negative regression — pre-existing fields stay intact."""
-        import json
-
         resp = self.client.get(self.DISCOVERY_URL)
-        data = json.loads(resp.content)
+        data = self.json_body(resp, expected_status=None)
         for key in (
             "issuer",
             "authorization_endpoint",

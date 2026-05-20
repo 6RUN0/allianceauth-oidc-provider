@@ -101,7 +101,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
         actual = frozenset(doc.keys())
         added = actual - PINNED_DISCOVERY_KEYS
         removed = PINNED_DISCOVERY_KEYS - actual
@@ -118,7 +118,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
 
         missing = REQUIRED_DISCOVERY_KEYS - doc.keys()
         self.assertFalse(
@@ -146,7 +146,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
         self.assertEqual(
             ["RS256"],
             doc.get("access_token_signing_alg_values_supported"),
@@ -163,7 +163,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
 
         grant_types = doc.get("grant_types_supported")
         self.assertIsInstance(grant_types, list)
@@ -190,7 +190,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         opaque ``invalid_grant`` responses.
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
         grant_types = doc.get("grant_types_supported")
 
         self.assertNotIn("password", grant_types)
@@ -221,7 +221,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         """
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
         end_session = doc.get("end_session_endpoint")
         self.assertIsInstance(end_session, str)
         self.assertTrue(
@@ -244,7 +244,7 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         """
         resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         keys = body.get("keys", [])
         self.assertTrue(keys, "JWKS endpoint returned no keys")
         first = keys[0]
@@ -331,7 +331,7 @@ class TestDiscoveryPolicyAndTosUris(OIDCTestCase):
     def _discovery(self) -> dict[str, Any]:
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     def test_neither_key_present_by_default(self) -> None:
         doc = self._discovery()
@@ -398,7 +398,7 @@ class TestDiscoveryFieldTypes(OIDCTestCase):
     def _doc(self) -> dict[str, Any]:
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     def test_response_types_supported_includes_code(self) -> None:
         """The project supports only the authorization-code flow."""
@@ -468,7 +468,7 @@ class TestDiscoveryPkceAcrSilentAuthMetadata(OIDCTestCase):
     def _doc(self) -> dict[str, Any]:
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     def test_code_challenge_methods_supported_is_s256_only(self) -> None:
         doc = self._doc()
@@ -551,7 +551,7 @@ class TestJWKSCryptoHygiene(OIDCTestCase):
     def _jwks(self) -> dict:
         resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     @staticmethod
     def _decode_b64url_uint(value: str) -> int:
@@ -685,7 +685,7 @@ class TestExtensionEndpointsAbsence(OIDCTestCase):
     def _doc(self) -> dict[str, Any]:
         resp = self.client.get("/o/.well-known/openid-configuration/")
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     def test_extension_keys_absent_from_discovery_sweep(self) -> None:
         """

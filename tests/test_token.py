@@ -1039,7 +1039,7 @@ class TestPKCEAttackVectors(_PkceCodeIssuanceMixin, OIDCTestCase):
             client_secret=creds.client_secret,
         )
         self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         self.assertIn("access_token", body)
 
 
@@ -1209,7 +1209,7 @@ class TestRefreshScopeBoundary(OIDCTestCase):
         resp = self.refresh_token(
             refresh_token=refresh, scope=SCOPE_OPENID, expected_status=200
         )
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         # Scope echo: at most a subset of the original grant.
         got = set((body.get("scope") or "").split())
         self.assertTrue(
@@ -1245,7 +1245,7 @@ class TestRefreshScopeBoundary(OIDCTestCase):
         )
 
         if resp.status_code == 200:
-            body = json.loads(resp.content.decode("utf-8"))
+            body = self.json_body(resp, expected_status=None)
             got = set((body.get("scope") or "").split())
             self.assertEqual(
                 {"openid"},
@@ -1286,7 +1286,7 @@ class TestRefreshScopeBoundary(OIDCTestCase):
         )
 
         if resp.status_code == 200:
-            body = json.loads(resp.content.decode("utf-8"))
+            body = self.json_body(resp, expected_status=None)
             got = set((body.get("scope") or "").split())
             self.assertNotIn(
                 "email",
@@ -1905,7 +1905,7 @@ class TestTokenClientAuthenticationMethods(OIDCTestCase):
         code = self.authorize_to_code(self.user1, state="body-auth")
         resp = self._exchange_via_body(code=code)
         self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         self.assertIn("access_token", body)
 
     def test_basic_auth_credentials_yield_token(self) -> None:
@@ -1914,5 +1914,5 @@ class TestTokenClientAuthenticationMethods(OIDCTestCase):
         code = self.authorize_to_code(self.user1, state="basic-auth")
         resp = self._exchange_via_basic_auth(code=code)
         self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         self.assertIn("access_token", body)

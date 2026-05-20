@@ -332,7 +332,7 @@ class TestKeyRotationOverlap(OIDCTestCase):
         with override_settings(OAUTH2_PROVIDER=provider):
             resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content)
+        doc = self.json_body(resp, expected_status=None)
         self.assertIn("keys", doc)
         kids = {k.get("kid") for k in doc["keys"]}
         self.assertEqual(

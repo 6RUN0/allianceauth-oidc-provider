@@ -709,8 +709,6 @@ class TestHostHeaderPoisoning(OIDCTestCase):
         publish a malicious discovery document that points RPs at
         their forged JWKS.
         """
-        import json
-
         from oauth2_provider.settings import oauth2_settings
 
         configured_iss = getattr(oauth2_settings, "OIDC_ISS_ENDPOINT", "")
@@ -720,7 +718,7 @@ class TestHostHeaderPoisoning(OIDCTestCase):
             headers={"host": self.EVIL_HOST},
         )
         self.assertEqual(200, resp.status_code)
-        doc = json.loads(resp.content.decode("utf-8"))
+        doc = self.json_body(resp, expected_status=None)
         self.assertEqual(
             configured_iss,
             doc.get("issuer"),

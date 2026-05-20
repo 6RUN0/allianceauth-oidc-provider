@@ -160,7 +160,7 @@ class TestPKCEFlow(OIDCTestCase):
     ) -> tuple[int, dict]:
         """Wrap :meth:`exchange_code_with_verifier` for legacy tuple shape."""
         resp = self.exchange_code_with_verifier(code=code, verifier=verifier)
-        return resp.status_code, json.loads(resp.content.decode("utf-8"))
+        return resp.status_code, self.json_body(resp, expected_status=None)
 
     def test_pkce_s256_round_trip(self):
         """

@@ -248,7 +248,7 @@ class TestMissingPrivateKey(OIDCTestCase):
         # Body must NOT contain a usable access_token. Even on 500
         # responses the body is rendered, so check structurally.
         try:
-            body = json.loads(resp.content.decode("utf-8"))
+            body = self.json_body(resp, expected_status=None)
         except json.JSONDecodeError:
             return  # non-JSON 500 page; absence of token is implicit
         self.assertNotIn(

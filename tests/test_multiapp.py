@@ -25,8 +25,6 @@ upgrades that change it are caught:
   ``request.client.id``.
 """
 
-import json
-
 from ._factories import make_app
 from ._oidc_testcase import OIDCTestCase
 
@@ -92,7 +90,7 @@ class TestMultiAppIsolation(OIDCTestCase):
             },
         )
         self.assertEqual(200, resp.status_code)
-        introspection = json.loads(resp.content.decode("utf-8"))
+        introspection = self.json_body(resp, expected_status=None)
         self.assertTrue(
             introspection.get("active"),
             "DOT used to treat any authenticated client as authorized "

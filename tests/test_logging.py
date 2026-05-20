@@ -4,7 +4,6 @@ no raw tokens or secrets are ever written to logs, even when debug logging is
 enabled.
 """
 
-import json
 import logging
 
 from django.test import RequestFactory, SimpleTestCase, override_settings
@@ -185,7 +184,7 @@ class TestDebugLoggingJWTMode(OIDCTestCase):
                 redirect_uri=REDIRECT_URI,
                 expected_status=200,
             )
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         return body["access_token"], "\n".join(cm.output)
 
     def test_debug_logging_does_not_leak_jwt_or_decoded_claims(self) -> None:

@@ -98,7 +98,7 @@ class TestRevokeAndIntrospect(OIDCTestCase):
             },
         )
         self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         self.assertTrue(body.get("active"))
         self.assertIn("openid", body.get("scope", "").split())
         self.assertIn("profile", body.get("scope", "").split())
@@ -123,7 +123,7 @@ class TestRevokeAndIntrospect(OIDCTestCase):
             },
         )
         self.assertEqual(200, resp.status_code)
-        body = json.loads(resp.content.decode("utf-8"))
+        body = self.json_body(resp, expected_status=None)
         self.assertFalse(body.get("active"))
 
 

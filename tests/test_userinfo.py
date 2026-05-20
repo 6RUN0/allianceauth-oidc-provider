@@ -3,8 +3,6 @@ Tests for /o/userinfo/ — claim emission, scope filtering, and bearer-token
 requirements.
 """
 
-import json
-
 from django.contrib.auth.models import Group
 from django.test import override_settings
 
@@ -48,7 +46,7 @@ class TestUserinfoClaims(OIDCTestCase):
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     def test_userinfo_returns_expected_claims(self):
         """/o/userinfo/ returns name, picture, groups (+ email if set)."""
@@ -235,7 +233,7 @@ class TestUserinfoClaims(OIDCTestCase):
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
         self.assertEqual(200, resp.status_code)
-        info = json.loads(resp.content.decode("utf-8"))
+        info = self.json_body(resp, expected_status=None)
         self.assertNotIn("name", info)
         self.assertNotIn("picture", info)
 
@@ -276,7 +274,7 @@ class TestUserinfoClaims(OIDCTestCase):
             "/o/userinfo/",
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
-        info = json.loads(resp.content.decode("utf-8"))
+        info = self.json_body(resp, expected_status=None)
         self.assertEqual(self.char3.alliance_id, info["eve_alliance_id"])
         self.assertEqual(self.char3.alliance_name, info["eve_alliance_name"])
         self.assertEqual(
@@ -323,7 +321,7 @@ class TestUserinfoClaims(OIDCTestCase):
             "/o/userinfo/",
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
-        info = json.loads(resp.content.decode("utf-8"))
+        info = self.json_body(resp, expected_status=None)
         for claim in (
             "eve_character_id",
             "eve_corporation_id",
@@ -403,7 +401,7 @@ class TestUserinfoEveDeltaClaims(OIDCTestCase):
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
         self.assertEqual(200, resp.status_code)
-        return json.loads(resp.content.decode("utf-8"))
+        return self.json_body(resp, expected_status=None)
 
     def test_main_character_id_alias_equals_character_id(self) -> None:
         """
@@ -505,7 +503,7 @@ class TestUserinfoEveDeltaClaims(OIDCTestCase):
             "/o/userinfo/",
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
-        info = json.loads(resp.content.decode("utf-8"))
+        info = self.json_body(resp, expected_status=None)
         self.assertNotIn("eve_affiliation", info)
         self.assertNotIn("eve_main_character_id", info)
 
@@ -807,7 +805,7 @@ class TestUserinfoClaimAntiLeak(OIDCTestCase):
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
         self.assertEqual(200, resp.status_code)
-        return set(json.loads(resp.content.decode("utf-8")).keys())
+        return set(self.json_body(resp, expected_status=None).keys())
 
     def test_regular_user_emits_no_auth_flag_claims(self) -> None:
         keys = self._userinfo_keys(SCOPE_FULL, self.user1)

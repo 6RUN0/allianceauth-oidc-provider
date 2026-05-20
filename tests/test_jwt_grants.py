@@ -9,7 +9,6 @@ tests/_jwt_helpers.py.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from django.test import override_settings
@@ -120,7 +119,7 @@ class TestClientCredentials(OIDCTestCase):
             },
         )
         self.assertEqual(200, resp.status_code, resp.content)
-        body = json.loads(resp.content)
+        body = self.json_body(resp, expected_status=None)
         return body["access_token"]
 
     def test_sub_eq_client_id_when_user_is_none(self) -> None:
@@ -158,7 +157,7 @@ class TestClientCredentials(OIDCTestCase):
             },
         )
         self.assertEqual(200, resp.status_code, resp.content)
-        body = json.loads(resp.content)
+        body = self.json_body(resp, expected_status=None)
         self.assertNotIn(
             "id_token",
             body,
@@ -211,7 +210,7 @@ class TestPasswordGrant(OIDCTestCase):
             },
         )
         self.assertEqual(200, resp.status_code, resp.content)
-        body = json.loads(resp.content)
+        body = self.json_body(resp, expected_status=None)
         token = body["access_token"]
         header, payload = split_jwt(token)
         self.assertEqual("at+jwt", header.get("typ"))
@@ -234,7 +233,7 @@ class TestRefreshRotation(OIDCTestCase):
         original_refresh = body["refresh_token"]
 
         resp = self.refresh_token(refresh_token=original_refresh)
-        rotated = json.loads(resp.content)
+        rotated = self.json_body(resp, expected_status=None)
         rotated_at = rotated["access_token"]
         # Rotated AT is itself a JWT.
         header, _ = split_jwt(rotated_at)
@@ -263,7 +262,7 @@ class TestRefreshFormatFlip(OIDCTestCase):
         # Step 2: flip to opaque, refresh → rotated AT is opaque.
         with override_settings(OAUTH2_PROVIDER=_opaque_mode_oauth2_provider()):
             resp = self.refresh_token(refresh_token=refresh)
-            rotated = json.loads(resp.content)
+            rotated = self.json_body(resp, expected_status=None)
             rotated_at = rotated["access_token"]
         # Opaque tokens never have 3 dot-separated segments.
         self.assertNotEqual(
