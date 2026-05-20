@@ -28,10 +28,10 @@ from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase
 
 
-class TestOIDCShowEffectivePolicyCommand(OIDCTestCase):
+class TestOIDCShowEffectivePolicyCommand(GrantedOIDCTestCase):
     def _run(self, **opts: Any) -> dict[str, Any]:
         """Invoke the command with ``--format=json`` and return the row."""
         out = StringIO()
@@ -52,7 +52,6 @@ class TestOIDCShowEffectivePolicyCommand(OIDCTestCase):
         User1 with the global ``access_oidc`` permission and no
         per-app whitelist hits ``AllowedDecision``.
         """
-        self.grant_oidc_access(self.user1)
         row = self._run()
         self.assertEqual("allowed", row["decision"])
         self.assertEqual("", row["deny_reason"])
@@ -79,7 +78,6 @@ class TestOIDCShowEffectivePolicyCommand(OIDCTestCase):
         the row carries ``deny_reason="app"`` AND lists the missing
         group(s) so the operator can act on the output.
         """
-        self.grant_oidc_access(self.user1)
         # ``self.oauth_app`` is the fixture app; gate it on a fresh
         # group that user1 is NOT a member of.
         gate_group = Group.objects.create(name="oidc-policy-gate-grp")
@@ -127,7 +125,6 @@ class TestOIDCShowEffectivePolicyCommand(OIDCTestCase):
         operator sees deactivation as part of the diagnostic — they
         otherwise wouldn't know why a policy-allowed user still 401s.
         """
-        self.grant_oidc_access(self.user1)
         self.oauth_app.active = False
         self.oauth_app.save(update_fields=["active"])
         try:

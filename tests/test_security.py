@@ -33,7 +33,7 @@ from allianceauth_oidc.security import (
 )
 
 from ._factories import make_app
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase, OIDCTestCase
 
 policy = AccessPolicy()
 
@@ -66,11 +66,16 @@ class TestEvaluateAccessPure(SimpleTestCase):
         self.assertIsNone(decision.app)
 
 
-class TestEvaluateAccessAgainstFixture(OIDCTestCase):
+class TestEvaluateAccessAgainstFixture(GrantedOIDCTestCase):
     """Composition checks that need real users + Application rows."""
 
     def test_unprivileged_user_denied_global(self):
-        # User1 has no ``access_oidc`` permission by default.
+        # Revert the setUp grant so this test actually exercises the
+        # global-denial path. The class as a whole inherits from
+        # GrantedOIDCTestCase because the other two tests assume user1
+        # has the global perm; this one needs the inverse.
+        self.user1.user_permissions.remove(self.access_oauth)
+        self.user1.refresh_from_db()
         decision = policy.decide(self.user1, self.oauth_app)
         self.assertFalse(decision.allowed)
         self.assertIs(DenyReason.GLOBAL, decision.deny_reason)
@@ -81,7 +86,6 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
     def test_user_with_global_perm_and_unrestricted_app_allowed(self):
         # oauth_app from the fixture has no states/groups configured,
         # so any user with the global perm passes the app check.
-        self.grant_oidc_access(self.user1)
         decision = policy.decide(self.user1, self.oauth_app)
         self.assertEqual(AllowedDecision(app=self.oauth_app), decision)
 
@@ -89,7 +93,6 @@ class TestEvaluateAccessAgainstFixture(OIDCTestCase):
         # App constrained to "Blue" state; user1 is "Member" → denied
         # at the app stage, and the app object must be echoed back so
         # the renderer can show its name on the denial page.
-        self.grant_oidc_access(self.user1)
         self.oauth_app.states.set(
             self.oauth_app.states.model.objects.filter(name="Blue")
         )
