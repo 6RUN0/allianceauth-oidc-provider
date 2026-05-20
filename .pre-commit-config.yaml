@@ -312,6 +312,23 @@ repos:
         types: [python]
         args: ["deptry", "."]
 
+  # Test-suite hygiene gate. Encodes conventions surfaced by the
+  # 4-agent test review and closed across the existing call sites by
+  # the test-suite refactor batch (commits ``2cc1a8e`` / ``953be80``
+  # / ``cbf27e0`` / ``f69cc53`` / ``dce24b2``). The gate keeps the
+  # duplication from reappearing in new test files. Rules live in
+  # ``scripts/check_test_conventions.sh`` rather than inline YAML so
+  # the bash bodies don't collide with YAML's mapping-colon parsing,
+  # and so new rules can be added without touching this file.
+  - repo: local
+    hooks:
+      - id: check-test-conventions
+        name: test-suite hygiene (forbid drift back to raw json.loads / …)
+        entry: scripts/check_test_conventions.sh
+        language: system
+        types: [python]
+        files: ^tests/test_.*\.py$
+
   # Docstring coverage threshold. The project's ruff config selects
   # the ``D`` rules (missing-docstring per-file enforce/ignore), so
   # individual files are gated. ``interrogate`` measures the overall
