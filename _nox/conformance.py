@@ -33,6 +33,17 @@ def conformance(session: nox.Session) -> None:
         uv run nox -s conformance -- --plan oidcc-basic-certification-test-plan
         uv run nox -s conformance -- --strict-warnings
 
+    ``conformance_basic`` is a convenience session that wraps this
+    one with the Basic Certification plan pre-selected (~35 modules,
+    20-30 min wall-clock). FAPI profiles (``fapi1-advanced-final``,
+    ``fapi2-baseline``) are intentionally NOT exposed: they require
+    mTLS client auth, Pushed Authorization Requests (PAR), and JARM
+    response signing, none of which the upstream django-oauth-toolkit
+    stack implements; running the suite against them would surface
+    ~80% spurious failures with no actionable signal. Track FAPI
+    support in the README roadmap once DOT or a shim layer
+    provides the missing pieces.
+
     Excluded from default sessions because it pulls Docker images and
     takes 10-15 minutes; see tests/conformance/README.md for context.
     """
@@ -92,6 +103,37 @@ def conformance(session: nox.Session) -> None:
             "-v",
             external=True,
         )
+
+
+@nox.session
+def conformance_basic(session: nox.Session) -> None:
+    """
+    Convenience wrapper around the Basic Certification test plan.
+
+    Equivalent to::
+
+        conformance -- --plan oidcc-basic-certification-test-plan
+
+    The Basic Certification profile (~35 modules) is the standard
+    "is this a working OIDC provider" target — covers code flow,
+    discovery, JWKS, scope handling, the standard claims. Default
+    ``conformance`` session runs the much smaller Config plan (1
+    module) for quick smoke checks; this shortcut is for the deeper
+    pre-release pass.
+
+    Posargs after ``--`` are appended to the underlying call, so
+    flags like ``--strict-warnings`` or ``--include <pattern>`` still
+    work::
+
+        uv run nox -s conformance_basic
+        uv run nox -s conformance_basic -- --strict-warnings
+    """
+    session.posargs[:] = [
+        "--plan",
+        "oidcc-basic-certification-test-plan",
+        *session.posargs,
+    ]
+    conformance(session)
 
 
 def _generate_tls_certs(session: nox.Session, tls_dir: pathlib.Path) -> None:
