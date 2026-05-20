@@ -298,12 +298,24 @@ def actions_lint(session: nox.Session) -> None:
         )
 
     if shutil.which("zizmor"):
-        # ``--persona=regular`` is the default; spell it out so a future
-        # bump to ``pedantic`` (more aggressive findings) is an explicit
-        # choice rather than a silent regression.
+        # ``--persona=pedantic`` surfaces extra findings beyond the
+        # default ``regular`` set: ``unpinned-uses`` outside composite
+        # actions, ``bot-conditions`` (workflows gated on ``actor``
+        # without an allow-list), broader ``excessive-permissions``,
+        # and template-injection at lower severity. The release flow
+        # publishes signed wheels — a workflow-injection finding there
+        # is a supply-chain incident, so the aggressive persona is
+        # worth its extra noise.
+        #
+        # ``--min-severity=low`` suppresses *informational* findings
+        # (cosmetic, e.g. ``anonymous-definition`` for jobs without a
+        # ``name:`` field) so the gate fails only on real security
+        # signal. Lift to ``informational`` once workflows carry
+        # explicit job names if the noise is acceptable.
         session.run(
             "zizmor",
-            "--persona=regular",
+            "--persona=pedantic",
+            "--min-severity=low",
             *workflows,
             external=True,
         )
