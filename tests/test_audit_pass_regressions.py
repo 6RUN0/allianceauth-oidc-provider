@@ -64,7 +64,7 @@ from allianceauth_oidc.security import (
 )
 
 from ._factories import make_app
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase, OIDCTestCase
 
 # ---------- M-4 + AT-only revocation ----------
 
@@ -281,7 +281,7 @@ class TestAccessPolicyEnforce(SimpleTestCase):
 # ---------- Debug-mode STATE/GROUP diagnostics ----------
 
 
-class TestAccessPolicyDebugDiagnostics(OIDCTestCase):
+class TestAccessPolicyDebugDiagnostics(GrantedOIDCTestCase):
     """
     ``AccessPolicy._log_state_diag`` / ``_log_group_diag`` fire only
     when ``app.debug_mode`` is True AND the logger is at INFO. Covers
@@ -292,7 +292,6 @@ class TestAccessPolicyDebugDiagnostics(OIDCTestCase):
         from django.contrib.auth.models import Group
         from django.core.exceptions import PermissionDenied
 
-        self.grant_oidc_access(self.user1)
         app = make_app(owner=self.user1, debug_mode=True).app
         app.states.set(app.states.model.objects.filter(name="Blue"))
         group = Group.objects.create(name="debug-mode-test-group")

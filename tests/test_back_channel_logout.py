@@ -36,7 +36,7 @@ from allianceauth_oidc.constants import DEFAULT_LOGOUT_DISPATCH_UID
 from allianceauth_oidc.models import AllianceAuthApplication
 
 from ._factories import make_app
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase, OIDCTestCase
 
 # A genuinely public address used as the default "resolves OK" stub.
 # RFC 5737 documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24)
@@ -1237,7 +1237,7 @@ class TestAppsWithActiveTokensFilter(OIDCTestCase):
         self.assertEqual(apps_with_active_tokens(user), [])
 
 
-class TestBackChannelLogoutTriggers(OIDCTestCase):
+class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
     """
     AC-12 / AC-13 / AC-14 / AC-15 / AC-16 — the five v1 trigger
     sites emit ``oidc_logout_required`` exactly when the plan says
@@ -1569,7 +1569,6 @@ class TestBackChannelLogoutTriggers(OIDCTestCase):
         """
         from django.contrib.auth.models import Group
 
-        self.grant_oidc_access(self.user1)
         grp = Group.objects.create(name="bcl-scoping-x")
         self.user1.groups.add(grp)
         gated = make_app(
