@@ -98,13 +98,17 @@ repos:
   - repo: local
     hooks:
       - id: tach
-        name: tach (architectural layers)
+        name: tach (architectural layers + interfaces)
         entry: uvx
         language: system
         pass_filenames: false
         types: [python]
         files: ^(allianceauth_oidc/.*\.py|tach\.toml)$
-        args: ["tach", "check"]
+        # Bare ``tach check`` validates layer membership only.
+        # Without ``--interfaces`` the declarative export contracts
+        # in ``tach.toml`` are inert. Explicit both flags so the
+        # gate enforces ``[[interfaces]]`` ``expose`` lists too.
+        args: ["tach", "check", "--dependencies", "--interfaces"]
 
   # OIDC-specific Semgrep rules (five patterns). Rules live in
   # ``.semgrep/oidc-security.yaml`` rather than coming from

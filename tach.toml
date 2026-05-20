@@ -23,12 +23,7 @@
 # intentional. The ``management/`` and ``migrations/`` subtrees are
 # excluded: management commands cross all layers by design (they
 # are CLI orchestrators), and migrations are auto-generated.
-interfaces = []
-layers = [
-    "api",
-    "service",
-    "core",
-]
+layers = ["api", "service", "core"]
 exclude = [
     "**/*__pycache__",
     ".nox",
@@ -41,9 +36,7 @@ exclude = [
     "noxfile\\.py",
     "tests",
 ]
-source_roots = [
-    ".",
-]
+source_roots = ["."]
 modules = [
     { path = "allianceauth_oidc", depends_on = [] },
     { path = "allianceauth_oidc._dns_safety", layer = "core" },
@@ -71,4 +64,56 @@ modules = [
     { path = "allianceauth_oidc.views_introspect", layer = "api" },
     { path = "allianceauth_oidc.views_token", layer = "api" },
     { path = "allianceauth_oidc.views_userinfo", layer = "api" },
+]
+
+# Declarative export contracts for load-bearing modules.
+# ``tach check --interfaces`` enforces that downstream importers only
+# touch symbols listed under ``expose``; reaching for any other
+# top-level name (including leading-underscore privates) is a
+# violation. The pattern matches the leading-underscore convention
+# already used for private helpers inside each module, but tach
+# makes the convention enforceable — a copy-paste that grabs an
+# unmarked private symbol now fails the gate.
+[[interfaces]]
+from = ["allianceauth_oidc.security"]
+expose = [
+    "AccessDecision",
+    "AccessPolicy",
+    "AllowedDecision",
+    "AppDeny",
+    "AppLike",
+    "ClaimsUser",
+    "DEFAULT_POLICY",
+    "DjangoModelField",
+    "GlobalDeny",
+    "OAuthRequestLike",
+    "UserLike",
+    "check_user_global_oidc_access",
+    "check_user_state_and_groups",
+    "resolve_per_app_setting",
+]
+
+[[interfaces]]
+from = ["allianceauth_oidc.claims"]
+expose = [
+    "ClaimsBuilder",
+    "build_oidc_claim_scope",
+]
+
+[[interfaces]]
+from = ["allianceauth_oidc.logout"]
+expose = [
+    "SigningKeyRetiredError",
+    "apps_with_active_tokens",
+    "build_logout_token",
+    "dispatch_backchannel_logout",
+]
+
+[[interfaces]]
+from = ["allianceauth_oidc.utils"]
+expose = [
+    "app_log",
+    "build_logout_debug_meta",
+    "build_oidc_debug_meta",
+    "redact_secret",
 ]
