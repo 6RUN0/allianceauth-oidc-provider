@@ -46,8 +46,10 @@ The diagram source is `assets/diagrams/policy-flow.d2`; re-render with `make dia
 | `django-oauth-toolkit`| `>=3.2,<4`                                      |
 
 CI exercises the AA 5.x stack on every supported Python version and AA 4.x
-backward compatibility on Python 3.12. Both stacks share the same code path —
-no version-specific shims live in the package itself.
+backward compatibility on Python 3.10–3.12 (AA 4.13.x declares
+`requires-python <3.13`, so Python 3.13 is excluded from the AA 4.x dimension).
+Both stacks share the same code path — no version-specific shims live in the
+package itself.
 
 ## Install
 
@@ -174,6 +176,25 @@ edits below to those.
 
 Greenfield installs follow [Install](#install) — the ordering caveats below do not apply. This
 section is for operators carrying live OAuth applications across an upgrade.
+
+### RP-Initiated Logout default-on (0.3.0)
+
+`OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` now defaults to `True` via the AppConfig —
+the `/o/logout/` route and the `end_session_endpoint` field in
+`.well-known/openid-configuration` become live without operator opt-in. DOT's upstream default
+is `False`; the override is applied through `setdefault`, so an explicit `False` in your
+settings is preserved.
+
+If your deployment relies on the previous behaviour (`/o/logout/` 404, no `end_session_endpoint`
+in discovery), set the key explicitly:
+
+```python
+OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ENABLED"] = False
+```
+
+Disabling RP-init logout while back-channel logout RPs are registered breaks the Single-Logout
+chain at the first hop — `manage.py check` emits `allianceauth_oidc.W003` to surface the
+configuration smell. See [System checks](#system-checks-managepy-check) for the warning text.
 
 ### Per-app PKCE field (`pkce_required`)
 
@@ -493,7 +514,7 @@ admin visit; the default is `True`.
 ### JWT access tokens (RFC 9068)
 
 Access tokens are opaque random strings by default — operators can opt in to
-[RFC 9068](https://www.rfc-editor.org/rfc/rfc9068) JWT tokens per-application or
+[RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068) JWT tokens per-application or
 globally when downstream RPs (oauth2-proxy, mod_auth_openidc, WikiJS, custom
 services) prefer to validate tokens locally without an introspection round-trip.
 JWT mode is **opt-in** and **stateful**: the JWT lives in

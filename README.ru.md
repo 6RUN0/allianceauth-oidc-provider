@@ -44,8 +44,9 @@ Source диаграммы — `assets/diagrams/policy-flow.d2`; перерисо
 | `django-oauth-toolkit`| `>=3.2,<4`                                         |
 
 CI прогоняет стек AA 5.x на каждой поддерживаемой версии Python и
-backward-совместимость с AA 4.x на Python 3.12. Оба стека используют один и
-тот же код — версионных shim'ов в пакете нет.
+backward-совместимость с AA 4.x на Python 3.10–3.12 (AA 4.13.x объявляет
+`requires-python <3.13`, поэтому Python 3.13 в AA 4.x-измерении не идёт).
+Оба стека используют один и тот же код — версионных shim'ов в пакете нет.
 
 ## Установка
 
@@ -172,6 +173,26 @@ myauth/
 Свежие установки идут по [инструкции «Установка»](#установка) — оговорки про порядок шагов
 ниже к ним не относятся. Этот раздел — для операторов с живыми OAuth-приложениями, которые
 переезжают на новую версию.
+
+### RP-Initiated Logout по умолчанию on (0.3.0)
+
+`OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` теперь по умолчанию `True` через
+AppConfig — маршрут `/o/logout/` и поле `end_session_endpoint` в
+`.well-known/openid-configuration` становятся живыми без явного opt-in оператора. Upstream
+DOT по умолчанию `False`; override применяется через `setdefault`, поэтому явный `False` в
+ваших настройках сохраняется.
+
+Если деплой опирается на прежнее поведение (`/o/logout/` отдаёт 404, `end_session_endpoint`
+отсутствует в discovery), пропишите ключ явно:
+
+```python
+OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ENABLED"] = False
+```
+
+Отключение RP-init logout при наличии приложений с `backchannel_logout_uri` ломает
+Single-Logout chain на первом hop'е — `manage.py check` тогда выдаёт
+`allianceauth_oidc.W003`, делая конфигурационную проблему видимой. Текст warning'а — в
+[System checks](#system-checks-managepy-check).
 
 ### Поле per-app PKCE (`pkce_required`)
 
@@ -498,7 +519,7 @@ AllianceAuthApplication.objects.filter(
 ### JWT-токены доступа (RFC 9068)
 
 Access-токены по умолчанию — непрозрачные случайные строки. Оператор может
-включить токены формата [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068)
+включить токены формата [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068)
 глобально или для отдельных приложений, когда нижестоящие RP (oauth2-proxy,
 mod_auth_openidc, WikiJS, кастомные сервисы) предпочитают валидировать токен
 локально без round-trip'a в /o/introspect/. JWT-режим **opt-in** и
