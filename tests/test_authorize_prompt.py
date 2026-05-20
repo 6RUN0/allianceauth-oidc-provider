@@ -15,11 +15,12 @@ from ._jwt_helpers import forge_unsigned_jwt, split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_OPENID,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
 
-class TestAuthorizePromptNoneAuthenticated(OIDCTestCase):
+class TestAuthorizePromptNoneAuthenticated(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1: with ``prompt=none``, the AS MUST NOT
     display authentication or consent UI. For an authenticated user
@@ -41,7 +42,6 @@ class TestAuthorizePromptNoneAuthenticated(OIDCTestCase):
     """
 
     def test_prompt_none_skip_authorization_redirects_with_code(self):
-        self.grant_oidc_access(self.user1)
         skip_app = make_app(
             owner=self.user1,
             skip_authorization=True,
@@ -77,7 +77,6 @@ class TestAuthorizePromptNoneAuthenticated(OIDCTestCase):
         DOT translates that into a 302 to ``redirect_uri`` carrying
         the error code and the supplied ``state``.
         """
-        self.grant_oidc_access(self.user1)
         creds = make_app(
             owner=self.user1,
             skip_authorization=False,
@@ -174,7 +173,7 @@ class TestValidateSilentAuthorizationTrustedClient(OIDCTestCase):
         self.assertTrue(validator.validate_silent_authorization(request))
 
 
-class TestPromptLoginEnforcement(OIDCTestCase):
+class TestPromptLoginEnforcement(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1 ``prompt=login`` — when an authenticated
     user reaches the authorize endpoint with ``prompt=login`` in the
@@ -188,7 +187,6 @@ class TestPromptLoginEnforcement(OIDCTestCase):
     def test_authenticated_user_with_prompt_login_redirects_to_login(
         self,
     ) -> None:
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -218,7 +216,6 @@ class TestPromptLoginEnforcement(OIDCTestCase):
         Stripping the ``login`` token from ``prompt`` (and preserving
         any other prompt values) breaks that loop.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -243,7 +240,6 @@ class TestPromptLoginEnforcement(OIDCTestCase):
         otherwise the post-login authorize replay fails with
         ``invalid_request``.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -273,7 +269,6 @@ class TestPromptLoginEnforcement(OIDCTestCase):
         correctness and so a future ``prompt=consent`` handler can
         rely on the value surviving the redirect.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -294,7 +289,7 @@ class TestPromptLoginEnforcement(OIDCTestCase):
         self.assertNotIn("login%20consent", next_url)
 
 
-class TestMaxAgeEnforcement(OIDCTestCase):
+class TestMaxAgeEnforcement(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1 ``max_age`` — the AS MUST force
     re-authentication when the elapsed time since the End-User's
@@ -311,7 +306,6 @@ class TestMaxAgeEnforcement(OIDCTestCase):
         page) or 302 to the RP redirect_uri; what matters here is
         that the response is NOT a redirect to ``LOGIN_URL``.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -346,7 +340,6 @@ class TestMaxAgeEnforcement(OIDCTestCase):
 
         from django.utils import timezone
 
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         # ``force_login`` sets ``last_login=now``; backdate it after
         # the fact so the request looks like "user authenticated an
@@ -380,7 +373,6 @@ class TestMaxAgeEnforcement(OIDCTestCase):
         sentinel — even a user who logged in this very second
         must re-authenticate before the AS can issue a token.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -406,7 +398,6 @@ class TestMaxAgeEnforcement(OIDCTestCase):
         bouncing a user to login based on an unparseable input
         attacker-controlled value.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
         resp = self.client.get(
@@ -431,7 +422,7 @@ class TestMaxAgeEnforcement(OIDCTestCase):
             )
 
 
-class TestPromptConsentEnforcement(OIDCTestCase):
+class TestPromptConsentEnforcement(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1 ``prompt=consent`` enforcement.
 
@@ -459,7 +450,6 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         creds = make_app(
             owner=self.user1, skip_authorization=True, pkce_required=False
         )
-        self.grant_oidc_access(self.user1)
 
         resp = self.authorize_get_default(
             self.user1,
@@ -484,7 +474,6 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         from django.utils import timezone
         from oauth2_provider.models import get_access_token_model
 
-        self.grant_oidc_access(self.user1)
         AccessToken = get_access_token_model()
         AccessToken.objects.create(
             user=self.user1,
@@ -510,7 +499,6 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         sentinel and must issue a code redirect. Sentinel fires
         only on GET; the consent-form submit is POST.
         """
-        self.grant_oidc_access(self.user1)
         data = {
             "response_type": "code",
             "client_id": self.oauth_id,
@@ -539,7 +527,6 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         creds = make_app(
             owner=self.user1, skip_authorization=True, pkce_required=False
         )
-        self.grant_oidc_access(self.user1)
 
         resp = self.authorize_get_default(
             self.user1,
@@ -553,7 +540,7 @@ class TestPromptConsentEnforcement(OIDCTestCase):
         self.assertIn("code", qs)
 
 
-class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
+class TestIdTokenHintAuthorizeBinding(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.6 — when ``id_token_hint`` identifies an
     end-user different from the one authenticated in the current
@@ -593,7 +580,6 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
         the expected outcome is a ``login_required`` error redirect;
         flip the assertion below at that point.
         """
-        self.grant_oidc_access(self.user1)
         hint = self._forge_unsigned_hint_for_user(self.user2.pk)
         skip_app = make_app(
             owner=self.user1, skip_authorization=True, pkce_required=False
@@ -631,7 +617,6 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
         let an attacker who steals a logged-in cookie + crafts a
         hint silently impersonate the hinted user.
         """
-        self.grant_oidc_access(self.user1)
         self.grant_oidc_access(self.user2)
         skip_app = make_app(
             owner=self.user1, skip_authorization=True, pkce_required=False
@@ -678,7 +663,7 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
         self.assertNotEqual(str(self.user2.pk), claims.get("sub"))
 
 
-class TestOfflineAccessScopeSemantics(OIDCTestCase):
+class TestOfflineAccessScopeSemantics(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §11 — ``offline_access`` scope semantics.
 
@@ -752,8 +737,6 @@ class TestOfflineAccessScopeSemantics(OIDCTestCase):
         NOT include ``offline_access`` (it's filtered out as
         unsupported).
         """
-        self.grant_oidc_access(self.user1)
-
         # 1) Baseline — no offline_access in request.
         body = self.run_code_flow(
             self.user1, scope=SCOPE_OPENID, state="oa-baseline"
