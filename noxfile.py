@@ -173,8 +173,18 @@ def audit(session: nox.Session) -> None:
     ``.github/workflows/audit.yml`` to request a JSON report
     (``-- --format=json --output=audit.json``) that gets archived as
     a workflow artefact.
+
+    Suppressed advisories:
+
+    * PYSEC-2025-185 — ``python-jose`` algorithm-confusion bug. The
+      library is unmaintained upstream (no 3.6.x line) and reaches us
+      transitively via ``django-esi`` (AA's ESI client). We do not
+      import ``python-jose`` directly anywhere in the package; AA's
+      ESI flow is the only consumer. Revisit when django-esi migrates
+      off python-jose (tracked upstream).
     """
-    session.run("pip-audit", *session.posargs)
+    ignored = ["--ignore-vuln", "PYSEC-2025-185"]
+    session.run("pip-audit", *ignored, *session.posargs)
 
 
 @nox.session
