@@ -208,6 +208,16 @@ def mutation(session: nox.Session) -> None:
         success_codes=list(range(256)),
     )
     session.run("cr-report", session_file)
+    # Kill-rate gate via cr-rate's built-in --fail-over (cosmic-ray
+    # ships it specifically for this use case — no parsing needed).
+    # ``CR_FAIL_OVER`` is the survival-rate ceiling in percent; the
+    # default 30 means kill rate >= 70%, an intentionally lax floor
+    # for the first observed sweep. Tighten by exporting
+    # ``CR_FAIL_OVER=10`` (kill >= 90%, the test-engineer
+    # recommendation for security-adjacent code) once a baseline is
+    # established. Set to 100 to disable the gate entirely.
+    fail_over = session.env.get("CR_FAIL_OVER") or "30"
+    session.run("cr-rate", "--fail-over", fail_over, session_file)
 
 
 @nox.session
