@@ -127,6 +127,66 @@ class TestRevokeAndIntrospect(OIDCTestCase):
         self.assertFalse(body.get("active"))
 
 
+class TestIntrospectAndRevokeRequireClientAuth(OIDCTestCase):
+    """
+    RFC 7662 §2.1: the introspection endpoint MUST require client
+    authentication. RFC 7009 §2.1: the revocation endpoint MUST
+    authenticate the client for confidential clients. An unauth
+    introspect would be a token-existence oracle (enumeration of
+    valid tokens or client_ids); an unauth revoke would let an
+    attacker who somehow learnt a token kill it without proving
+    ownership.
+
+    The positive paths (with credentials) are in
+    :class:`TestRevokeAndIntrospect`. The negative paths live here
+    so a regression that removes the client-auth requirement (for
+    example, a DOT setting toggle to ``RESOURCE_SERVER_INTROSPECTION_URL``
+    that bypasses the local validator) fails an explicit test
+    instead of going unnoticed.
+    """
+
+    def test_introspect_without_credentials_is_unauthorized(self) -> None:
+        token = self._issue_access_token()
+        resp = self.client.post("/o/introspect/", data={"token": token})
+        self.assertIn(
+            resp.status_code,
+            (400, 401, 403),
+            "introspect without client_id/client_secret MUST be "
+            "rejected — RFC 7662 §2.1 requires client authentication. "
+            f"Got {resp.status_code}.",
+        )
+
+    def test_introspect_with_wrong_client_secret_is_unauthorized(
+        self,
+    ) -> None:
+        token = self._issue_access_token()
+        resp = self.client.post(
+            "/o/introspect/",
+            data={
+                "token": token,
+                "client_id": self.oauth_id,
+                "client_secret": "definitely-not-the-real-secret",  # pragma: allowlist secret
+            },
+        )
+        self.assertIn(resp.status_code, (400, 401, 403))
+
+    def test_revoke_without_credentials_is_rejected(self) -> None:
+        token = self._issue_access_token()
+        resp = self.client.post("/o/revoke_token/", data={"token": token})
+        self.assertIn(
+            resp.status_code,
+            (400, 401, 403),
+            "revoke without credentials MUST be rejected — confidential "
+            f"clients require auth (RFC 7009 §2.1). Got {resp.status_code}.",
+        )
+
+    def _issue_access_token(self) -> str:
+        self.grant_oidc_access(self.user1)
+        return self.run_code_flow(
+            self.user1, scope=SCOPE_OPENID, state="introspect-auth"
+        )["access_token"]
+
+
 class TestRevokeRefreshTokenChainBehaviour(OIDCTestCase):
     """
     RFC 7009 §2.1 SHOULD clause: revoking a refresh token MAY (and
