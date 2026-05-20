@@ -512,12 +512,12 @@ DEP001 = [
 DEP004 = ["requests"]
 
 [tool.interrogate]
-# Threshold reflects current baseline (84.1% as of 2026-05-11). The
-# 80 floor turns this hook into a no-regression gate while leaving
-# ~4% headroom so a single new helper without a docstring does not
+# Threshold reflects current baseline (~84% as of 2026-05-20). The
+# 82 floor turns this hook into a no-regression gate while leaving
+# ~2% headroom so a single new helper without a docstring does not
 # break the build. Lift it 5% at a time once a refactor pushes the
 # headroom up — mirrors the ``aa_discord_audit`` strategy.
-fail-under = 80
+fail-under = 82
 # Coverage scope: production code only. Tests, migrations (Django-
 # generated), and the per-package ``__init__.py`` carry their own
 # rules (or no rules) under ruff D-codes already.
