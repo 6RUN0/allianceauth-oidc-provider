@@ -14,11 +14,11 @@ from ._jwt_helpers import forge_unsigned_jwt, split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_OPENID,
-    OIDCTestCase,
+    GrantedOIDCTestCase,
 )
 
 
-class TestPkceInteractionWithOtherGates(OIDCTestCase):
+class TestPkceInteractionWithOtherGates(GrantedOIDCTestCase):
     """
     Pin the dispatch order between PKCE and the other authorize-gates.
 
@@ -40,7 +40,6 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         # App restricted to "Blue" state; user1 is "Member" → denied at
         # the policy stage, not at the PKCE stage.
         creds = make_app(owner=self.user1, pkce_required=True, states=["Blue"])
-        self.grant_oidc_access(self.user1)
         response = self.authorize_get_default(
             self.user1,
             scope=SCOPE_OPENID,
@@ -55,7 +54,6 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         from oauth2_provider.models import get_grant_model
 
         creds = make_app(owner=self.user1, pkce_required=True, active=False)
-        self.grant_oidc_access(self.user1)
         _, challenge = self.make_pkce_pair()
         # Send a perfectly valid PKCE challenge — the active=False gate
         # must still reject the request.
@@ -93,7 +91,6 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
             pkce_required=True,
             skip_authorization=True,
         )
-        self.grant_oidc_access(self.user1)
 
         verifier, challenge = self.make_pkce_pair()
 
@@ -127,7 +124,7 @@ class TestPkceInteractionWithOtherGates(OIDCTestCase):
         self.assertIn("access_token", body)
 
 
-class TestStateEchoOnError(OIDCTestCase):
+class TestStateEchoOnError(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.6 / RFC 6749 §4.1.2.1: when /authorize/
     fails after the AS has decided the redirect_uri is registered,
@@ -146,7 +143,6 @@ class TestStateEchoOnError(OIDCTestCase):
     """
 
     def _force_login_user1(self) -> None:
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
     def test_state_echoed_on_user_consent_denial(self) -> None:
@@ -256,7 +252,7 @@ class TestStateEchoOnError(OIDCTestCase):
         )
 
 
-class TestRequestObjectAndUriHandling(OIDCTestCase):
+class TestRequestObjectAndUriHandling(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §6 / RFC 9101 (JAR) — the ``request`` and
     ``request_uri`` parameters carry a signed JWT whose claims
@@ -298,7 +294,6 @@ class TestRequestObjectAndUriHandling(OIDCTestCase):
             }
         )
 
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.client.get(
             "/o/authorize/",
@@ -334,7 +329,6 @@ class TestRequestObjectAndUriHandling(OIDCTestCase):
         fetch would raise and surface as 5xx) and must not redirect
         to the attacker URL.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.client.get(
             "/o/authorize/",
@@ -390,7 +384,7 @@ class TestRequestObjectAndUriHandling(OIDCTestCase):
         )
 
 
-class TestAuthorizeInputBounds(OIDCTestCase):
+class TestAuthorizeInputBounds(GrantedOIDCTestCase):
     """
     DoS-resistance on /o/authorize/.
 
@@ -409,7 +403,6 @@ class TestAuthorizeInputBounds(OIDCTestCase):
     # pre-empt the test by rejecting the body.
 
     def _authorize(self, **extras):
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         data = {
             "response_type": "code",
@@ -461,7 +454,6 @@ class TestAuthorizeInputBounds(OIDCTestCase):
         """
         from urllib.parse import urlencode
 
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         qs = urlencode(
             [
@@ -477,7 +469,7 @@ class TestAuthorizeInputBounds(OIDCTestCase):
         self.assertLess(resp.status_code, 500)
 
 
-class TestResponseTypeRestriction(OIDCTestCase):
+class TestResponseTypeRestriction(GrantedOIDCTestCase):
     """
     The project is intentionally code-flow only.
 
@@ -498,7 +490,6 @@ class TestResponseTypeRestriction(OIDCTestCase):
     """
 
     def _authorize_with_response_type(self, response_type: str, state: str):
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         return self.client.get(
             "/o/authorize/",
@@ -611,7 +602,6 @@ class TestResponseTypeRestriction(OIDCTestCase):
         path — a unit test makes the diagnostic distinction between
         a server-side hang and a suite-side HtmlUnit upstream stall.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.client.get(
             "/o/authorize/",
@@ -636,7 +626,7 @@ class TestResponseTypeRestriction(OIDCTestCase):
             )
 
 
-class TestHostHeaderPoisoning(OIDCTestCase):
+class TestHostHeaderPoisoning(GrantedOIDCTestCase):
     """
     An attacker-controlled ``Host`` header MUST NOT alter the AS's
     canonical identifiers or selection logic.
@@ -681,7 +671,6 @@ class TestHostHeaderPoisoning(OIDCTestCase):
             "test settings must pin OIDC_ISS_ENDPOINT for this test",
         )
 
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(
             self.user1,
             state="host-iss-poison",
@@ -748,7 +737,6 @@ class TestHostHeaderPoisoning(OIDCTestCase):
         path rejects because the URI doesn't match the registered
         value.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         # POST with the registered URI; the Host header is the
         # attacker's value but redirect_uri is honest.
@@ -775,7 +763,7 @@ class TestHostHeaderPoisoning(OIDCTestCase):
         )
 
 
-class TestIssParamInAuthzResponse(OIDCTestCase):
+class TestIssParamInAuthzResponse(GrantedOIDCTestCase):
     """
     RFC 9207 — *OAuth 2.0 Authorization Server Issuer Identification*.
 
@@ -809,7 +797,6 @@ class TestIssParamInAuthzResponse(OIDCTestCase):
         follow-up assertion equates ``qs["iss"][0]`` with the
         discovery ``issuer`` URL.
         """
-        self.grant_oidc_access(self.user1)
         code, _, qs = self.authorize_post_and_extract_code(
             self.user1,
             data={
@@ -850,7 +837,7 @@ class TestIssParamInAuthzResponse(OIDCTestCase):
         )
 
 
-class TestAuthorizeClickjackingHeaders(OIDCTestCase):
+class TestAuthorizeClickjackingHeaders(GrantedOIDCTestCase):
     """
     OIDC Core §16.16 mandates clickjacking protection on the consent
     screen. ``AuthAuthorizationView.dispatch`` applies both legacy
@@ -882,7 +869,6 @@ class TestAuthorizeClickjackingHeaders(OIDCTestCase):
         the surface an attacker would frame to steal authorisation
         clicks. Headers MUST be present on the 200 render.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.authorize_get_default(self.user1)
         self.assertEqual(200, resp.status_code)
@@ -922,7 +908,6 @@ class TestAuthorizeClickjackingHeaders(OIDCTestCase):
             response["X-Frame-Options"] = "SAMEORIGIN"
             return response
 
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         with mock.patch.object(
             AuthAuthorizationView, "_dispatch_inner", patched
