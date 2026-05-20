@@ -229,6 +229,17 @@ repos:
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
         files: ^allianceauth_oidc/.*\.py$
+      # Bandit on test code at HIGH severity only — test fixtures
+      # (``_jwt_helpers.py``, ``alg=none`` builders) regularly use
+      # patterns bandit flags at lower severities by design. Scoping
+      # to high catches genuinely dangerous primitives that should
+      # never appear in test code; baseline is clean as of
+      # 2026-05-20, so the gate is enforced (not advisory).
+      - id: bandit
+        name: bandit (tests, high severity only)
+        args: ["-c", "pyproject.toml", "--severity-level=high"]
+        additional_dependencies: ["bandit[toml]"]
+        files: ^tests/.*\.py$
 
   # Conventional Commits gate on commit subjects. The project's
   # global rules require ``type(scope): description``; this hook
