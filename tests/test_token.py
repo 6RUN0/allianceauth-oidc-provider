@@ -391,7 +391,17 @@ class TestTokenPolicyGuards(OIDCTestCase):
             self.assertIn("error", qs)
             self.assertTrue(qs["error"][0])
         else:
-            self.assertNotEqual(302, resp.status_code)
+            # DOT may answer with 400 (validation reject) instead of
+            # the OAuth error-redirect; both are spec-compliant. What
+            # MUST NOT happen is a 200 consent page — that would mean
+            # ``active=False`` is silently ignored and the user is
+            # being asked to grant a deactivated app.
+            self.assertNotEqual(
+                200,
+                resp.status_code,
+                "inactive app must not render the consent page; "
+                f"got status={resp.status_code}",
+            )
 
 
 class TestPkceRequiredRefreshFlow(OIDCTestCase):
