@@ -5,9 +5,13 @@ References:
 * OpenID Connect Back-Channel Logout 1.0 §2.4 (logout token structure)
 * §2.6 (RP idempotency obligation on ``jti``)
 
-This module is the spec-side primitive: build a signed ``logout+jwt``
-for a given ``(user, application)`` pair. The dispatcher and Celery
-fan-out live in ``logout`` callers (US-BCL-005), not here.
+This module hosts the spec-side primitive
+(:func:`build_logout_token` — build a signed ``logout+jwt`` for a
+given ``(user, application)`` pair) and the default Celery fan-out
+dispatcher (:func:`dispatch_backchannel_logout`, which iterates RPs
+with a registered ``backchannel_logout_uri`` and queues one
+:func:`tasks.send_logout_token` per RP). The per-RP HTTP POST itself
+runs inside the Celery task, not here.
 
 Sub-only logout per plan v5 path-b: no ``sid`` claim is ever emitted.
 Spec §2.6 explicitly permits this and obliges RPs to terminate all

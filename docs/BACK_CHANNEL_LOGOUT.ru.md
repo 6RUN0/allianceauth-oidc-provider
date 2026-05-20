@@ -165,7 +165,7 @@ Celery task `allianceauth_oidc.send_logout_token` принимает скаля�
 пересобирает токен против зафиксированного `signing_kid` и
 закрепленных `(jti, iat)`, поэтому retry — байт-в-байт идентичны.
 Default расписание retry — exponential backoff (5s, 10s, 20s, 40s,
-80s, capped at 125s) с `max_retries=3`; кумулятивный wall-clock ≤
+80s, capped at 125s) с `max_retries=5`; кумулятивный wall-clock ≤
 155 s (≈ 2:35), внутри 3-минутного окна, рекомендованного spec для
 свежести `iat` на RP-стороне.
 
@@ -245,7 +245,7 @@ Back-Channel Logout attempts**.
 |-----------------|-----------------|----------------------------------------------------------|
 | `application`   | `application`   | FK на `AllianceAuthApplication`. `CASCADE` при удалении. |
 | `user_pk`       | `user_pk`       | Целое число; `NULL`, если строка пользователя уже удалена. |
-| `jti`           | `jti`           | 32-байтовый hex из `uuid4().hex`. Пустой для отказов до выдачи токена. |
+| `jti`           | `jti`           | 32-символьный hex из `uuid4().hex` (16 байт энтропии). Пустой для отказов до выдачи токена. |
 | `success`       | `success`       | `True` = HTTP 2xx; `False` = любой другой терминальный исход. |
 | `attempt_count` | `attempt_count` | Номер попытки Celery (1-based). `0` для отказов на стороне dispatcher. |
 | `reason`        | `reason`        | Trigger reason при успехе, failure mode при провале.     |

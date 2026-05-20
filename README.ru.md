@@ -18,6 +18,7 @@
 - [Обзор](#обзор)
 - [Требования](#требования)
 - [Установка](#установка)
+- [Обновление с предыдущей версии](#обновление-с-предыдущей-версии)
 - [Конфигурация](#конфигурация)
 - [Справочник](#справочник)
 - [Эксплуатация](#эксплуатация)
@@ -223,6 +224,8 @@ data-шаг видит non-boolean значение, переключается 
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Рекомендуется. Защита от replay'я по RFC 6819 §5.2.2.3 — refresh-токен, предъявленный дважды, отзывает всё семейство токенов. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Компромисс: чем короче срок жизни access-токена, тем чаще RP вынуждены ходить за refresh — быстрее реакция на отзыв, но больше запросов к token endpoint; чем длиннее — тем медленнее распространяется отзыв, зато трафик легче. **Не берите за основу тестовое `60`** — это значение из `tests/test_settingsAA4.py`, нужно лишь для того, чтобы expiry-сценарии в тестах гонялись без `sleep`-ов. В реальном логине RP токен должен прожить как минимум один запрос на `/userinfo` плюс запас на `clockTolerance` клиента (~5 секунд); `passport-openidconnect` (Wiki.js, Outline и им подобные) отвергает токены со сроком жизни меньше минуты сразу же. `3600` (1 час) — то же значение по умолчанию, что в Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | На вкус деплоя — какая толерантность к риску. |
+| `OIDC_ISS_ENDPOINT` | unset | **Обязателен, если хотя бы у одного приложения задан `backchannel_logout_uri`.** Абсолютный URL issuer'а (например, `"https://auth.example.org/o"`). Celery worker, который POST'ит `logout_token`'ы, не имеет HTTP request context, поэтому не может вывести `iss` в runtime — `oidc_issuer(None)` падает на эту настройку. Если back-channel logout сконфигурирован, а настройка не задана, system check (`allianceauth_oidc.E001`) падает на `manage.py check`; CI ломается громко, а не первый end-user logout. См. [OIDC Back-Channel Logout 1.0](docs/BACK_CHANNEL_LOGOUT.ru.md). |
+| `OIDC_RP_INITIATED_LOGOUT_ENABLED` | `True` (по умолчанию on) | OIDC RP-Initiated Logout 1.0 — `/o/logout/` + `end_session_endpoint` в discovery. Upstream DOT по умолчанию `False`; AppConfig `_apply_default_oauth2_provider_settings` переключает в `True`, только когда ключ отсутствует, поэтому явный `False` opt-out сохраняется. Пара к `OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT` (DOT default `True`) — DOT рендерит `oauth2_provider/logout_confirm.html` на logout-запросах; задайте `False`, чтобы пропустить confirm-шаг для headless flow'ов. |
 
 ### Свои настройки (ALLIANCEAUTH_OIDC_*)
 
@@ -238,6 +241,8 @@ data-шаг видит non-boolean значение, переключается 
 | `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` | `None` | Тройственный force-override для claim'а `email_verified`. `True` — всегда отдавать `true` (например, доверие приходит извне AA: пользователи импортированы из IdP, который сам верифицирует адреса). `False` — всегда `false`. `None` (по умолчанию) — auto-режим: синтетические плейсхолдер-адреса от опционального плагина `aa-skip-email` → `false`; иначе зеркалит настройку AA `REGISTRATION_VERIFY_EMAIL`. |
 | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` | `"opaque"` | Wire-формат, в котором выпускаются access-токены, когда у приложения поле `access_token_format` пустое. Установите `"jwt"`, чтобы включить RFC 9068 глобально; per-app `access_token_format` приоритетнее. Помимо этой настройки оператор должен прописать `ACCESS_TOKEN_GENERATOR` (см. выше) — иначе JWT-режим не активируется и стартовый лог пишет `WARNING` о неполной конфигурации. См. [JWT-токены доступа](#jwt-токены-доступа-rfc-9068). |
 | `ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES` | `4096` | Мягкий size-guard на длину выпущенных JWT-токенов. Генератор пишет `logger.warning`, если токен превысил порог (типичная причина — фикстура с пользователем в сотнях групп). Токен **не** мутируется и не отвергается — оператор сам решает, обрезать ли claim'ы, поднимать ли лимит `Authorization`-заголовка в апстримном прокси (Apache `LimitRequestFieldSize`, nginx `large_client_header_buffers`, HAProxy `tune.bufsize`) или сократить group-churn. Действует только в JWT-режиме. |
+| `ALLIANCEAUTH_OIDC_POLICY_URI` | unset | OIDC Discovery 1.0 §3 `op_policy_uri`. Абсолютный URL privacy policy Authorization Server'а; светится в `.well-known/openid-configuration`, когда задан. Несколько compliance-фреймворков (GDPR Art. 13, NIS2) требуют от RP линковать на AS-side privacy policy — публикация URL здесь позволяет RP-login-страницам auto-линковать без per-RP статической конфигурации. Пропустите ключ (или установите пустую строку), чтобы не публиковать его в discovery. |
+| `ALLIANCEAUTH_OIDC_TOS_URI` | unset | OIDC Discovery 1.0 §3 `op_tos_uri`. Абсолютный URL terms-of-service-страницы Authorization Server'а; светится в `.well-known/openid-configuration`, когда задан. Независим от `ALLIANCEAUTH_OIDC_POLICY_URI` — публикуйте один или оба. Пропустите ключ (или установите пустую строку), чтобы не публиковать его в discovery. |
 
 ### Периодическая чистка истёкших токенов (Celery Beat)
 
@@ -387,26 +392,29 @@ SIEM работает без polling'а таблицы. Подключите с�
 - `states` (M2M) и `groups` (M2M) — whitelist доступа; пусто = открыто для всех.
 - `active` — `is_usable()` возвращает это значение; деактивированное приложение не выдаёт коды.
 - `debug_mode` — per-app флаг повышенного уровня логов (см. *Debug-логи*).
+- `pkce_required` — per-app форсирование PKCE; читается через
+  `pkce.per_app_pkce_required` (делегирует в `AccessPolicy.pkce_required`).
 - `access_token_format` — per-app override wire-формата access-токена
   (`"opaque"` / `"jwt"` / пусто). Пустое значение наследует deployment-wide
   `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` (по умолчанию `"opaque"`).
   См. [JWT-токены доступа](#jwt-токены-доступа-rfc-9068).
-- `pkce_required` — per-app форсирование PKCE; читается через
-  `pkce.per_app_pkce_required` (делегирует в `AccessPolicy.pkce_required`).
 
 ## Эксплуатация
 
 ### Сервисные команды
 
-Четыре `manage.py`-команды закрывают повседневные задачи обслуживания — без необходимости
-лезть в admin-UI. Все понимают `--format=table|json|csv`, у деструктивных есть `--dry-run`.
+Шесть `manage.py`-команд закрывают повседневные задачи обслуживания — без необходимости
+лезть в admin-UI. Все, у которых вывод структурирован, понимают `--format=table|json|csv`;
+у деструктивных есть `--dry-run`.
 
 | Команда | Зачем | Деструктивная? | Ключевые флаги |
 |---|---|---|---|
 | `oidc_create_app` | Завести новое OIDC-приложение неинтерактивно (CI / Ansible). Печатает «сырой» `client_secret` один раз. | да | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--client-type`, `--grant-type`, `--debug-mode` |
 | `oidc_rotate_secret` | Перегенерировать `client_secret`. Уже выпущенные токены живут до своего истечения. | да | `--client-id`, `--dry-run` |
-| `oidc_revoke_user_tokens` | Отозвать все access + refresh у пользователя (offboarding, реакция на компрометацию). Идемпотентно. | да | `--username`, `--dry-run` |
+| `oidc_revoke_user_tokens` | Отозвать все access + refresh у пользователя (offboarding, реакция на компрометацию). Идемпотентно. | да | `--username`, `--reason`, `--dry-run` |
 | `oidc_audit_tokens` | Read-only список активных токенов. | нет | `--username`, `--client-id`, `--include-expired` |
+| `oidc_jwks_rotate` | Ротация JWKS signing key'а — генерирует свежий RSA-ключ, retire'ит текущий активный. Строки, закреплённые за старым `signing_kid`, продолжают выпускать байт-идентичные retry до истечения. | да | `--dry-run` |
+| `oidc_show_effective_policy` | Посмотреть per-app state/group whitelist в том виде, в котором он применяется к конкретному пользователю, включая глобальный gate. Полезно при триаже неожиданного `invalid_grant`. | нет | `--username`, `--client-id` |
 
 ```sh
 python manage.py oidc_create_app \
@@ -547,20 +555,23 @@ data-minimization, troubleshooting** — см.
 
 ### System checks (`manage.py check`)
 
-Провайдер регистрирует две ошибки и три предупреждения во фреймворке
-системных проверок Django. CI должен падать на ошибках и обращать
-внимание на предупреждения как на configuration smells.
+Провайдер регистрирует шесть ошибок и пять предупреждений во
+фреймворке системных проверок Django. CI должен падать на ошибках и
+обращать внимание на предупреждения как на configuration smells.
 
 | ID | Severity | Триггер | Действие оператора |
 |---|---|---|---|
 | `allianceauth_oidc.E001` | Error | У приложения задан `backchannel_logout_uri`, но `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` не выставлен. | Задайте `OIDC_ISS_ENDPOINT` абсолютный URL issuer'а. Celery worker, который POST'ит `logout_token`'ы, не имеет HTTP request context, поэтому не может вывести `iss` в runtime — без этой настройки первый же logout-диспатч упадёт. |
-| `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']` задан, но не разрешается в callable. | Проверьте dotted-путь на корректность и доступность для импорта. Поддерживаемое значение для JWT-режима: `"allianceauth_oidc.tokens.dispatching_access_token_generator"`. |
-| `allianceauth_oidc.W001` | Warning | Словарь `OAUTH2_PROVIDER` отсутствует в settings, хотя `allianceauth_oidc` установлен. | Добавьте словарь, пусть даже пустой. Провайдер опирается на него для opt-in настроек (`OIDC_ISS_ENDPOINT`, `ACCESS_TOKEN_GENERATOR`, `OIDC_RP_INITIATED_LOGOUT_ENABLED`); отсутствие означает, что любой operator knob невидим. |
-| `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching generator. JWT-режим молча деградирует до выпуска opaque-токенов. | Включите `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Обе настройки должны быть согласованы, иначе JWT не активен. |
+| `allianceauth_oidc.E002` | Error | `OAUTH2_PROVIDER_APPLICATION_MODEL` не разрешается в `AllianceAuthApplication` (или подкласс). | Установите `OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"`. Stock DOT-модель обходит трёхслойную policy-enforcement — любой залогиненный пользователь сможет аутентифицироваться против любого зарегистрированного приложения. |
+| `allianceauth_oidc.E003` | Error | `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS']` не разрешается в `AllianceAuthOAuth2Validator` (или подкласс). | Установите `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS'] = "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"`. Stock DOT-валидатор пропускает слои 2 и 3 policy-gate'а (`validate_code` / `validate_refresh_token` / `save_bearer_token`) — code-flow обмены и refresh-grant перестают перепроверять state/group membership. |
+| `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['SCOPES']` не содержит scope `openid`. | Добавьте `"openid"` в словарь `SCOPES`. Дефолтная DOT-карта `{"read": ..., "write": ...}` молча выключает выдачу id_token — discovery всё ещё резолвится и access-токены всё ещё минтятся, но OIDC RP'и падают на token endpoint'е с `invalid_scope` или получают token response без `id_token`. |
+| `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` не является (и не оборачивает) `allianceauth_oidc.pkce.per_app_pkce_required`. Без адаптера DOT использует собственный резолвер, и per-app override `pkce_required=False` молча no-op'ит. Public-клиенты, выпущенные через этот разрыв, уязвимы к перехвату auth-code (RFC 9700 PKCE BCP). | Поставьте `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (именно **объект функции**, не dotted-путь — DOT не импортирует эту настройку). |
+| `allianceauth_oidc.E006` | Error | Опасная комбинация со конкретной жертвой: `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` И `DEBUG=False` И хотя бы у одного `AllianceAuthApplication` непустой `backchannel_logout_uri`. Подписанные `logout_token` JWT уходили бы на private-IP-таргеты в production-shaped окружении. | Установите `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=False` в проде. Чтобы явно принять trade-off на изолированном лабе / air-gapped staging'е, дополнительно установите `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True` — оба переключателя должны быть выставлены, чтобы опасный путь работал без ошибки. |
+| `allianceauth_oidc.W001` | Warning | `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True` при `DEBUG=False`. Логирование маскированных фрагментов (`he…il`) — development aid; в production-shaped окружении это утекает в log-stream идентифицируемые префиксы/суффиксы access/refresh-токенов и клиентских secret'ов. | Установите флаг `False` (или удалите) в проде. Оставляйте `True` только на изолированных staging-хостах, где trade-off осознанный. |
+| `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching generator (JWT-режим молча неактивен), ЛИБО dispatcher подключён, но default format не выставлен в `'jwt'` (per-app override работает, но глобальный default — нет). | Включите `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Обе половины должны быть согласованы, чтобы JWT был глобальным дефолтом. |
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` явно `False`, при том что у одного или нескольких приложений выставлен `backchannel_logout_uri`. Single-Logout chain рвётся на первом hop'е, потому что RP-initiated logout — точка входа, которая триггерит back-channel fan-out. | Либо снимите `backchannel_logout_uri` с затронутых приложений (перечислены в тексте warning'а), либо включите RP-initiated logout обратно (по умолчанию он on — задайте `True` или уберите явный `False`). |
 | `allianceauth_oidc.W004` | Warning | У одного или нескольких **активных** приложений `backchannel_logout_uri` использует `http://` при `DEBUG=False`. Admin-форма блокирует новые `http://` URI в проде, но legacy-строки, сохранённые при `DEBUG=True`, переживают переключение. Воркер re-checks DNS, но не схему — `logout_token` JWT (с `iss`/`aud`/`sub`/`jti`) продолжает уходить cleartext'ом. | Замените URI на `https://` либо деактивируйте строку, если RP уже выведен из эксплуатации. |
-| `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` при `DEBUG=False`. SSRF-гейт на back-channel logout target'ы отключён — воркер POST'ит подписанные `logout_token`'ы на `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IP, на которые резолвится зарегистрированный URI. Симметричен `W001`. | Поставьте флаг `False` (или удалите) в проде. Оставляйте `True` только на dev / staging хостах, которые осознанно указывают на private RP. |
-| `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` не является (и не оборачивает) `allianceauth_oidc.pkce.per_app_pkce_required`. Без адаптера DOT использует собственный резолвер, и per-app override `pkce_required=False` молча no-op'ит. Public-клиенты, выпущенные через этот разрыв, уязвимы к перехвату auth-code per RFC 9700 §2.1.1. | Поставьте `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (именно **объект функции**, не dotted-путь — DOT не импортирует эту настройку). |
+| `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` при `DEBUG=False` (но без зарегистрированного `backchannel_logout_uri`, который триггерит E006). SSRF-гейт на back-channel logout target'ы отключён — если private-IP URI будет зарегистрирован позже, воркер POST'нет подписанные `logout_token`'ы на `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IP. | Поставьте флаг `False` (или удалите) в проде. Оставляйте `True` только на dev / staging хостах, которые осознанно указывают на private RP. |
 
 ID проверок стабильны между релизами; mute через
 `SILENCED_SYSTEM_CHECKS` поддерживается, но не рекомендуется — лучше

@@ -165,7 +165,7 @@ so the broker NEVER stores a JWT. On each attempt the worker rebuilds
 the token against the captured `signing_kid` and the pinned
 `(jti, iat)`, so retries are byte-identical. Default retry schedule
 is exponential backoff (5s, 10s, 20s, 40s, 80s capped at 125s) with
-`max_retries=3`; cumulative wall-clock ≤ 155 s (≈ 2:35), inside the
+`max_retries=5`; cumulative wall-clock ≤ 155 s (≈ 2:35), inside the
 3-minute window the spec recommends for RP `iat` freshness.
 
 Status-code routing:

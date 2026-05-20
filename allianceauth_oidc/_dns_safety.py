@@ -12,8 +12,11 @@ The two callsites — :meth:`AllianceAuthApplication._validate_uri_target_safety
 (admin save) and :func:`tasks._request_time_ssrf_gate_passes` (worker
 dispatch) — run on different ``getaddrinfo`` calls, so the live
 answer may have rotated between the two. Both must run for the DNS
-rebinding TOCTOU defence to be complete; see ``CLAUDE.md`` "Three-
-layer policy enforcement" for the architectural rationale.
+rebinding TOCTOU defence to be complete: the admin-save gate blocks
+the initial registration of an unsafe host, and the worker-dispatch
+gate re-resolves immediately before ``requests.post`` so a malicious
+DNS response delivered between save and fan-out cannot smuggle a
+private IP through.
 """
 
 from __future__ import annotations

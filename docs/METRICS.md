@@ -117,7 +117,7 @@ before inventing a new one.
 | `grant_type` | `authorization_code` / `refresh_token` / `client_credentials` / `password` (DOT-supported subset; RFC 6749 also defines `implicit`, RFC 8628 adds `urn:ietf:params:oauth:grant-type:device_code`) | Mirror RFC 6749 names exactly. |
 | `outcome`    | Module-specific, drawn from a `constants.py` `frozenset`              | Histograms use a per-attempt vocabulary; terminal counters use a richer set. Never invent values inline. |
 | `reason`     | Module-specific, drawn from a `constants.py` `frozenset`              | Used on denial / outcome-classification counters. Values must come from a documented closed set; never user-controlled strings. |
-| `kid`        | A JWK thumbprint                                                      | Active signing key identifier. Cardinality bounded by rotation policy (typically 1-3 active). |
+| `kid`        | A JWK thumbprint                                                      | Active signing key identifier. Cardinality bounded by rotation policy (typically 1-3 active). **Reserved** for a forthcoming JWKS-rotation metric — not currently emitted by any metric in the inventory. |
 
 ### Forbidden labels
 
@@ -404,7 +404,7 @@ canonical failure subset (`BCL_DEAD_LETTER_OUTCOMES`):
 ```promql
 sum(rate(
   aa_oidc_bcl_dispatches_total{
-    outcome=~"retries_exhausted|signing_kid_retired|signing_kid_resolve_failed|broker_unavailable|redirect_blocked|rp_client_error"
+    outcome=~"retries_exhausted|retries_exhausted_network|signing_kid_retired|signing_kid_resolve_failed|broker_unavailable|redirect_blocked|rp_client_error|dns_resolve_failed|unsafe_target_ip"
   }[5m]
 ))
 ```

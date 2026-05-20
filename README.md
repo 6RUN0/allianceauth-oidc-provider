@@ -16,6 +16,7 @@ OAuth2 provider.
 - [Overview](#overview)
 - [Requirements](#requirements)
 - [Install](#install)
+- [Upgrading from a previous release](#upgrading-from-a-previous-release)
 - [Configuration](#configuration)
 - [Reference](#reference)
 - [Operations](#operations)
@@ -401,15 +402,18 @@ Beyond DOT's `AbstractApplication` schema, `AllianceAuthApplication` adds:
 
 ### Operator commands
 
-Four `manage.py` commands cover the day-2 operational tasks without opening the admin UI. All
-accept `--format=table|json|csv`; destructive commands honour `--dry-run`.
+Six `manage.py` commands cover the day-2 operational tasks without opening the admin UI. All
+accept `--format=table|json|csv` where output is structured; destructive commands honour
+`--dry-run`.
 
 | Command | Purpose | Destructive? | Key flags |
 |---|---|---|---|
 | `oidc_create_app` | Bootstrap a new OIDC application (CI / Ansible-friendly). Prints the raw `client_secret` once. | yes | `--name`, `--user-id`, `--redirect-uri`, `--state`, `--group`, `--client-type`, `--grant-type`, `--debug-mode` |
 | `oidc_rotate_secret` | Rotate `client_secret` on an existing app. Existing tokens stay valid until expiry. | yes | `--client-id`, `--dry-run` |
-| `oidc_revoke_user_tokens` | Revoke every active access + refresh token for a user (off-boarding, compromise response). Idempotent. | yes | `--username`, `--dry-run` |
+| `oidc_revoke_user_tokens` | Revoke every active access + refresh token for a user (off-boarding, compromise response). Idempotent. | yes | `--username`, `--reason`, `--dry-run` |
 | `oidc_audit_tokens` | Read-only listing of active tokens. | no | `--username`, `--client-id`, `--include-expired` |
+| `oidc_jwks_rotate` | Rotate the JWKS signing key — generate a fresh RSA key, retire the current active one. Rows pinned to the old `signing_kid` keep producing byte-identical retries until they expire. | yes | `--dry-run` |
+| `oidc_show_effective_policy` | Inspect the per-app state / group whitelist as it evaluates against a given user, including the global gate. Useful when triaging an unexpected `invalid_grant`. | no | `--username`, `--client-id` |
 
 ```sh
 python manage.py oidc_create_app \
@@ -561,20 +565,23 @@ at deploy time if the setting is missing.
 
 ### System checks (`manage.py check`)
 
-The provider registers two errors and three warnings against Django's
+The provider registers six errors and five warnings against Django's
 system-check framework. CI should fail on errors and surface warnings
 as configuration smells worth investigating.
 
 | ID | Severity | Trigger | Operator action |
 |---|---|---|---|
 | `allianceauth_oidc.E001` | Error | Application has `backchannel_logout_uri` set but `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` is unset. | Set `OIDC_ISS_ENDPOINT` to the absolute issuer URL. The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime; without this setting the very first logout dispatch crashes. |
-| `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']` is set but does not resolve to a callable. | Confirm the dotted-path is correct and importable. The supported value for JWT mode is `"allianceauth_oidc.tokens.dispatching_access_token_generator"`. |
-| `allianceauth_oidc.W001` | Warning | `OAUTH2_PROVIDER` dict missing from settings while `allianceauth_oidc` is installed. | Add the dict, even if empty. The provider relies on it for opt-in knobs (`OIDC_ISS_ENDPOINT`, `ACCESS_TOKEN_GENERATOR`, `OIDC_RP_INITIATED_LOGOUT_ENABLED`); absence means every operator knob is invisible. |
-| `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'` but `ACCESS_TOKEN_GENERATOR` is not the dispatching generator. JWT mode silently degrades to opaque token issuance. | Wire `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Both keys must agree for JWT to be active. |
+| `allianceauth_oidc.E002` | Error | `OAUTH2_PROVIDER_APPLICATION_MODEL` does not resolve to `AllianceAuthApplication` (or a subclass). | Set `OAUTH2_PROVIDER_APPLICATION_MODEL = "allianceauth_oidc.AllianceAuthApplication"`. The stock DOT model bypasses the three-layer policy enforcement — every authenticated user would be able to authenticate any registered app. |
+| `allianceauth_oidc.E003` | Error | `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS']` does not resolve to `AllianceAuthOAuth2Validator` (or a subclass). | Set `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS'] = "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"`. The stock DOT validator drops layers 2 and 3 of the policy gate (`validate_code` / `validate_refresh_token` / `save_bearer_token`) — code-flow exchanges and refresh grants stop re-checking state/group membership. |
+| `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['SCOPES']` does not contain the `openid` scope. | Add `"openid"` to the `SCOPES` dict. DOT's default `{"read": ..., "write": ...}` silently disables id_token issuance — discovery still resolves and access tokens still mint, but OIDC RPs fail at the token endpoint with `invalid_scope` or receive a token response without an `id_token`. |
+| `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` is not (or does not wrap) `allianceauth_oidc.pkce.per_app_pkce_required`. Without the adapter, DOT falls back to its own resolver and the per-app `pkce_required=False` override silently no-ops. Public clients shipped under this gap are vulnerable to auth-code interception per the RFC 9700 PKCE BCP. | Set `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (pass the **function object**, not a dotted-path — DOT does not import this key). |
+| `allianceauth_oidc.E006` | Error | The dangerous combination has a concrete victim: `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` AND `DEBUG=False` AND at least one `AllianceAuthApplication` row carries a non-empty `backchannel_logout_uri`. Signed `logout_token` JWTs would be POSTed to private-IP targets in a production-shaped deployment. | Set `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=False` in production. To explicitly accept the trade-off on an isolated lab/air-gapped staging, also set `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True` — both knobs must be set for the dangerous path to engage without an error. |
+| `allianceauth_oidc.W001` | Warning | `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True` while `DEBUG=False`. Masked-fragment logging (`he…il`) is a development aid; enabling it in a production-shaped environment leaks identifiable prefixes/suffixes of access tokens, refresh tokens, and client secrets into the log stream. | Set the flag to `False` (or remove it) in production. Keep it `True` only on isolated staging hosts where the trade-off is intentional. |
+| `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'` but `ACCESS_TOKEN_GENERATOR` is not the dispatching generator (JWT mode silently inactive), OR the dispatcher wired without the default format set to `'jwt'` (per-app override still works but the global default does not). | Wire `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Both halves must agree for JWT to be the global default. |
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` is explicitly `False` while one or more applications carry a `backchannel_logout_uri`. The Single-Logout chain breaks at the first hop because RP-initiated logout is the entry-point that triggers back-channel fan-out. | Either remove `backchannel_logout_uri` from the affected applications (listed in the warning text), or re-enable RP-initiated logout (it is on by default — set the key to `True` or remove the explicit `False`). |
 | `allianceauth_oidc.W004` | Warning | One or more **active** applications have a `backchannel_logout_uri` using `http://` while `DEBUG=False`. The admin form rejects new `http://` URIs in production, but legacy rows persisted under `DEBUG=True` survive a flip. The worker re-checks DNS but not scheme, so `logout_token` JWTs (carrying `iss`/`aud`/`sub`/`jti`) keep flowing in cleartext. | Edit each affected application to use `https://`, or deactivate the row if the RP has been retired. |
-| `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` while `DEBUG=False`. The SSRF gate on back-channel logout targets is disabled — the worker will POST signed `logout_token`s to `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IPs that a registered URI resolves to. Symmetric posture to `W001`. | Set the flag to `False` (or remove it) in production. Keep it `True` only on dev / staging hosts that intentionally point at private RPs. |
-| `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` is not (or does not wrap) `allianceauth_oidc.pkce.per_app_pkce_required`. Without the adapter, DOT falls back to its own resolver and the per-app `pkce_required=False` override silently no-ops. Public clients shipped under this gap are vulnerable to RFC 9700 §2.1.1 auth-code interception. | Set `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (pass the **function object**, not a dotted-path — DOT does not import this key). |
+| `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` while `DEBUG=False` (without a registered `backchannel_logout_uri` to trigger E006). The SSRF gate on back-channel logout targets is disabled — if a private-IP URI is later registered, the worker will POST signed `logout_token`s to `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IPs. | Set the flag to `False` (or remove it) in production. Keep it `True` only on dev / staging hosts that intentionally point at private RPs. |
 
 The check ids are stable across releases; muting via Django's
 `SILENCED_SYSTEM_CHECKS` is supported but discouraged — fix the

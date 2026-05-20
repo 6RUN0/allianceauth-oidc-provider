@@ -120,7 +120,7 @@ hardcoded string-литерал ушёл из набора.
 | `grant_type` | `authorization_code` / `refresh_token` / `client_credentials` / `password` (DOT-supported subset; RFC 6749 также определяет `implicit`, RFC 8628 добавляет `urn:ietf:params:oauth:grant-type:device_code`) | Имена RFC 6749 — буква в букву. |
 | `outcome`    | Module-specific, из `Final[frozenset]` в `constants.py`               | Histograms используют per-attempt-словарь; терминальные counter'ы — расширенный набор. Никогда не выдумывайте значения inline. |
 | `reason`     | Module-specific, из `Final[frozenset]` в `constants.py`               | Лейбл denial- / outcome-classification-counter'ов. Значения — из задокументированного замкнутого множества; никаких user-controlled строк. |
-| `kid`        | JWK thumbprint                                                        | Идентификатор активного signing-ключа. Cardinality ограничен политикой ротации (обычно 1-3 активных). |
+| `kid`        | JWK thumbprint                                                        | Идентификатор активного signing-ключа. Cardinality ограничен политикой ротации (обычно 1-3 активных). **Зарезервирован** для будущей JWKS-rotation метрики — ни одной метрикой из inventory сейчас не эмиттится. |
 
 ### Запрещённые лейблы
 
@@ -361,18 +361,35 @@ delta-pattern-фикстур и плановый smoke-тест, patch'ащий
 |----------------------------------------|-----------|---------------------------|-----------------------|-----------------------------------------|
 | `aa_oidc_tokens_issued_total`          | Counter   | `grant_type`, `client_id` | `_metrics.py`         | Receiver сигнала `oidc_token_issued`.   |
 | `aa_oidc_tokens_cleaned_total`         | Counter   | (нет)                     | `tasks.py`            | Celery-задача `clear_expired_tokens` — инкрементируется по per-run cleanup-дельте. |
-| `aa_oidc_authorize_denied_total`       | Counter   | `reason` (`global`/`app`) | `views.py`            | `AuthAuthorizationView.dispatch`.       |
+| `aa_oidc_authorize_denied_total`       | Counter   | `reason` (`global`/`app`) | `views_authorize.py`  | `AuthAuthorizationView.dispatch` — только authorize-endpoint. Сохраняется ради backward compatibility; новые дашборды должны предпочитать `aa_oidc_policy_rejections_total`. |
+| `aa_oidc_policy_rejections_total`      | Counter   | `stage`, `reason`         | `_metrics.py`         | Cross-stage представление policy-rejection'ов: `stage` ∈ {`authorize`, `validate_code`, `validate_refresh`, `validate_bearer`, `save_bearer`}, `reason` ∈ {`global`, `app`, `app_unusable`, `unknown`}. Эмиттится параллельно с `authorize_denied` на стадии `authorize`, чтобы дашборды могли мигрировать без flag-day cutover'а. |
 | `aa_oidc_bcl_delivery_seconds`         | Histogram | `client_id`, `outcome`    | `tasks.py`            | `send_logout_token` — observed вокруг `requests.post`. |
-| `aa_oidc_bcl_dispatches_total`         | Counter   | `client_id`, `outcome`    | `_metrics.py`         | Receiver сигнала `oidc_logout_dispatched` — фireет на каждом terminal-событии. |
+| `aa_oidc_bcl_dispatches_total`         | Counter   | `client_id`, `outcome`    | `_metrics.py`         | Receiver сигнала `oidc_logout_dispatched` — срабатывает на каждом terminal-событии. |
 | `aa_oidc_code_reuse_audit_misses_total`| Counter   | `client_id`               | `auth_provider.py`    | `_handle_potential_code_reuse` инкрементирует когда для предъявленного `code` нет строки в `IssuedCodeAudit`. После N-3 (atomic-wrap `save_bearer_token` + `_record_code_issuance`) race-window-источник закрыт; счётчик теперь срабатывает исключительно на never-issued кодах (fuzzers / replay на чужой провайдер). Коррелировать с сигналом `oidc_code_reuse_detected` — метрики должны быть непересекающимися. |
 | `aa_oidc_audit_receiver_failures_total`| Counter   | `signal`, `receiver_dispatch_uid` | `_metrics.py`         | `signals.dispatch_audit_signal` инкрементирует на каждый receiver, упавший внутри `send_robust`. Один счётчик покрывает все 4 audit-сигнала (`oidc_token_issued`, `oidc_code_reuse_detected`, `oidc_token_introspected`, `oidc_logout_dispatched`). Ненулевой rate = audit-пайплайн молча теряет события для хотя бы одного downstream-consumer (SIEM-forwarder, кастомный hook). Лейбл `receiver_dispatch_uid` восстанавливает Django `dispatch_uid` под которым receiver зарегистрирован (project-internal constants в `constants.py`); fallback на `__qualname__` receiver'а если uid не задан. |
 
 Анонимные authorize-запросы не вносят вклад в
-`aa_oidc_authorize_denied_total` — они редиректятся на
-`LOGIN_URL`, а не отклоняются. Операторам, отслеживающим
-login-required-кейс, нужен `django_http_responses_total_by_status`
-(предоставляется middleware `django-prometheus`) по
-authorize-view.
+`aa_oidc_authorize_denied_total` (и в
+`aa_oidc_policy_rejections_total{stage="authorize"}` тоже) — они
+редиректятся на `LOGIN_URL`, а не отклоняются. Операторам,
+отслеживающим login-required-кейс, нужен
+`django_http_responses_total_by_status` (предоставляется
+middleware `django-prometheus`) по authorize-view.
+
+`aa_oidc_policy_rejections_total` отвечает на вопрос
+*«как часто ранее выпущенный токен отклоняется потому, что
+пользователь потерял требуемый state/group между authorize и
+следующей token-операцией?»* — сигнал, который legacy-счётчик
+`authorize_denied` не покрывает (он видит только
+authorize-endpoint). Стадии `validate_refresh` и `validate_bearer`
+взлетают при group/state-churn'е, инвалидирующем активные сессии;
+`save_bearer` срабатывает на редкой гонке, когда policy
+переключается между authorize-time и persistence. Dead-letter
+alerting recipe:
+
+```promql
+sum by (stage) (rate(aa_oidc_policy_rejections_total[5m])) > 0.1
+```
 
 Никакого `aa_oidc_active_tokens` Gauge нет. Approximation
 active-токенов — operator-задача через PromQL:
@@ -394,7 +411,7 @@ Dead-letter alerting recipe — sum dispatch-counter'а по
 ```promql
 sum(rate(
   aa_oidc_bcl_dispatches_total{
-    outcome=~"retries_exhausted|signing_kid_retired|signing_kid_resolve_failed|broker_unavailable|redirect_blocked|rp_client_error"
+    outcome=~"retries_exhausted|retries_exhausted_network|signing_kid_retired|signing_kid_resolve_failed|broker_unavailable|redirect_blocked|rp_client_error|dns_resolve_failed|unsafe_target_ip"
   }[5m]
 ))
 ```

@@ -114,23 +114,48 @@ is preserved in `git log`; this file documents fork-specific changes only.
   — `setdefault` semantics preserve any explicit value (including
   `False` for opt-out).
 
-- Four new Django system checks at `manage.py check`:
-  - `allianceauth_oidc.E001` (Error) — `backchannel_logout_uri`
-    registered without `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']`
-    (Celery worker has no HTTP request to derive `iss`).
-  - `allianceauth_oidc.E004` (Error) — `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']`
-    set to a non-callable / unresolvable dotted-path.
-  - `allianceauth_oidc.W001` (Warning) — `OAUTH2_PROVIDER` dict
-    missing entirely while `allianceauth_oidc` is installed.
-  - `allianceauth_oidc.W002` (Warning) —
-    `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'` but the
-    `ACCESS_TOKEN_GENERATOR` is not our dispatching generator. JWT
-    mode would silently degrade to opaque.
-  - `allianceauth_oidc.W003` (Warning) —
-    `OIDC_RP_INITIATED_LOGOUT_ENABLED=False` while applications carry
-    `backchannel_logout_uri`. The Single-Logout chain breaks at the
-    first hop because the RP-init logout endpoint is the entry-point
-    that triggers BCL fan-out.
+- Eleven new Django system checks at `manage.py check` — six errors,
+  five warnings, all under the `allianceauth_oidc.*` namespace:
+  - `E001` (Error) — `backchannel_logout_uri` registered without
+    `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` (Celery worker has no
+    HTTP request to derive `iss`).
+  - `E002` (Error) — `OAUTH2_PROVIDER_APPLICATION_MODEL` does not
+    resolve to `AllianceAuthApplication`. Stock DOT model bypasses
+    the three-layer policy enforcement.
+  - `E003` (Error) — `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS']`
+    does not resolve to `AllianceAuthOAuth2Validator`. Stock DOT
+    validator drops layers 2 and 3 of the policy gate.
+  - `E004` (Error) — `OAUTH2_PROVIDER['SCOPES']` does not contain
+    the `openid` scope. DOT's default `{"read": ..., "write": ...}`
+    silently disables id_token issuance.
+  - `E005` (Error) — `OAUTH2_PROVIDER['PKCE_REQUIRED']` is not (or
+    does not wrap) `allianceauth_oidc.pkce.per_app_pkce_required`.
+    Without the adapter the per-app override silently no-ops, leaving
+    public clients vulnerable to auth-code interception per RFC 9700.
+  - `E006` (Error) — the dangerous triple-combination has a concrete
+    victim: `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` AND
+    `DEBUG=False` AND at least one registered `backchannel_logout_uri`.
+    Silenced by the explicit
+    `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True` opt-in.
+  - `W001` (Warning) — `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True`
+    while `DEBUG=False`. Masked-fragment logging is a development aid;
+    enabling it in production leaks identifiable token/secret
+    fragments into log storage.
+  - `W002` (Warning) — half-wired JWT mode: default format set to
+    `jwt` without the dispatching `ACCESS_TOKEN_GENERATOR`, or the
+    generator wired without the default format set to `jwt`. Both
+    halves must agree for JWT to be the global default.
+  - `W003` (Warning) — `OIDC_RP_INITIATED_LOGOUT_ENABLED=False`
+    while applications carry `backchannel_logout_uri`. The Single-
+    Logout chain breaks at the first hop because the RP-init logout
+    endpoint is the entry-point that triggers BCL fan-out.
+  - `W004` (Warning) — an active application carries a
+    `backchannel_logout_uri` using `http://` while `DEBUG=False`.
+    Legacy rows persisted under `DEBUG=True` survive a flip; the
+    worker re-checks DNS but not scheme.
+  - `W005` (Warning) — `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True`
+    while `DEBUG=False` without a registered `backchannel_logout_uri`
+    (else `E006` fires). The SSRF gate on BCL targets is disabled.
 
 - `oidc_token_introspected` audit signal (RFC 7662 introspection
   endpoint). Fires on every `/o/introspect/` call with the
@@ -157,6 +182,13 @@ is preserved in `git log`; this file documents fork-specific changes only.
   free-form audit string threaded into the `oidc_token_issued`
   revoke audit body and the BCL fan-out trigger.
 
+- `manage.py oidc_jwks_rotate` — operator command to rotate the
+  JWKS signing key. Generates a fresh RSA key, retires the current
+  active key (rows pinned to the old `signing_kid` keep producing
+  byte-identical retries until they expire), and refreshes the
+  JWKS endpoint. Honours `--dry-run` to preview the rotation
+  without persistence.
+
 - Admin: bulk-action "Send test back-channel logout" on
   `AllianceAuthApplication` changelist. Fires
   `oidc_logout_required` with `reason="admin_test"` on a no-op
@@ -175,6 +207,24 @@ is preserved in `git log`; this file documents fork-specific changes only.
   / `inactive_app`). Cross-cuts the three-layer policy enforcement
   so dashboards can answer "which gate fires the most at which
   stage" with a single counter.
+
+- `aa_oidc_code_reuse_audit_misses_total` Prometheus counter,
+  labelled by `client_id`. `_handle_potential_code_reuse`
+  increments when the reuse path is hit for a code with no
+  matching `IssuedCodeAudit` row. After the atomic-wrap of
+  `save_bearer_token` + audit insert the race-window source is
+  closed, so the counter now exclusively fires on never-issued
+  codes (fuzzers / wrong-provider replays). Operators correlate
+  against the `oidc_code_reuse_detected` signal — the two should
+  be disjoint.
+
+- `aa_oidc_audit_receiver_failures_total` Prometheus counter,
+  labelled by `signal` and `receiver_dispatch_uid`. Increments
+  per receiver that raised during `send_robust` dispatch of any
+  audit signal (`oidc_token_issued`, `oidc_code_reuse_detected`,
+  `oidc_token_introspected`, `oidc_logout_dispatched`). Non-zero
+  rate means the audit pipeline is silently dropping events for
+  at least one downstream consumer.
 
 - Discovery (`/o/.well-known/openid-configuration/`) advertises
   nine additional fields per OIDC Discovery 1.0 §3 / RFC 8414 §2:
@@ -549,9 +599,15 @@ latter to mitigate cache-poisoning across release runs).
 
 - `uv.lock` refreshed against upstream (`uv sync --all-groups --upgrade`); three new transitive
   packages pulled in (`ijson`, `jsonseq`, `python-discovery`); no removals.
+- Supported Python versions widened to `>=3.10,<3.14` (following allianceauth). CI matrix now covers
+  four versions: 3.10 / 3.11 / 3.12 / 3.13.
 
 ### Project
 
+- GitHub Actions rewritten under a modern uv pipeline: separate `test`, `lint`, `typecheck`,
+  `package` jobs, `concurrency` keyed on the ref, updated action versions. The auto-publish
+  workflow to PyPI has not been restored — the fork's release stays manual
+  (`uv build && twine upload dist/*`); see below regarding the new distribution name.
 - URLs in `pyproject.toml` switched to point at the
   [6RUN0 fork](https://github.com/6RUN0/allianceauth-oidc-provider); `urls.Upstream` retains the
   original [Solar-Helix](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider)

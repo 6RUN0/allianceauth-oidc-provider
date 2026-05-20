@@ -1,9 +1,9 @@
 """
 Django signal receivers that emit ``oidc_logout_required``.
 
-Plan v5 §6 Step 4 — five trigger sites in addition to the
-``oidc_revoke_user_tokens`` management command (which emits the
-signal directly from its handler):
+Five trigger sites in addition to the ``oidc_revoke_user_tokens``
+management command (which emits the signal directly from its
+handler):
 
 1. ``User.is_active`` flip True→False — :func:`on_user_pre_save` /
    :func:`on_user_post_save` use a pre-save snapshot stored on the
@@ -17,6 +17,10 @@ signal directly from its handler):
    ``application_id`` list into a module-level
    :class:`weakref.WeakKeyDictionary`; :func:`on_user_post_delete`
    reads + pops it and emits one signal per RP.
+5. Admin bulk action "Send test back-channel logout" in
+   :mod:`admin` — operator-triggered emission with
+   ``reason="admin_test"``; used to verify BCL wiring against a
+   live RP without waiting for a real lifecycle event.
 
 Wiring lives in ``apps.py:ready()``; the helpers here only define
 the receivers + the per-receiver ``dispatch_uid`` strings so the

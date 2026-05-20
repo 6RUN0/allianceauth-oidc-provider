@@ -17,9 +17,9 @@ AA 4.x compatibility is exercised via the off-lock `tests_aa4` nox session and C
 
 ## Common commands
 
-The project uses `tox` (per-Python-version envs against Django 4.2) plus a Makefile shim. Test data is
-loaded from Alliance Auth migrations, and Redis is replaced by `fakeredis` so no external services are
-required.
+The project uses `nox` (per-Python-version sessions against Django 4.2 and 5.2) plus a Makefile shim.
+Test data is loaded from Alliance Auth migrations, and Redis is replaced by `fakeredis` so no external
+services are required.
 
 ```sh
 # install dev environment (uv-managed venv + pre-commit)
