@@ -606,6 +606,12 @@ skip_covered = false
 # Stale per-line tracebacks from the matrix-test harness shouldn't
 # turn coverage red; the data file is authoritative.
 ignore_errors = true
+# Enforced floor: ``coverage report`` exits non-zero below this. Set
+# 1pp under the observed baseline (~96% as of 2026-05-20) so a stray
+# defensive branch addition does not break the gate, but a real
+# coverage regression does. Lift in lockstep with [tool.interrogate]
+# fail-under whenever a refactor pushes headroom up.
+fail_under = 95
 # ``exclude_also`` (vs the historical ``exclude_lines``) lets us layer on
 # top of coverage's built-in defaults without redeclaring them.
 exclude_also = [
