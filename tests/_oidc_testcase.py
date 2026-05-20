@@ -1,7 +1,9 @@
 import hashlib
 import json
 import os
+import uuid
 from base64 import b64encode, urlsafe_b64encode
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any, ClassVar, Final
 from urllib.parse import parse_qs, urlparse
@@ -12,6 +14,7 @@ from allianceauth.authentication.models import (
     EveCorporationInfo,
 )
 from django.contrib.auth.models import Group, Permission, User
+from django.dispatch import Signal
 from django.test import RequestFactory, TestCase
 from oauth2_provider.settings import oauth2_settings
 
@@ -151,6 +154,43 @@ class OIDCTestCase(TestCase):
         path = parsed.path
         qs = parse_qs(parsed.query)
         return (loc, path, qs)
+
+    def signal_capture(
+        self,
+        signal: Signal,
+        sink: Callable[..., Any],
+        *,
+        dispatch_uid: str | None = None,
+    ) -> str:
+        """
+        Connect ``sink`` to ``signal`` with an addCleanup-guarded disconnect.
+
+        Closes two issues at once:
+
+        * The cascade-failure window where an exception raised between
+          ``signal.connect(...)`` and the corresponding ``try:`` block
+          leaves ``sink`` permanently bound to a production signal
+          (``oidc_token_issued``, ``oidc_logout_required``, …) for the
+          rest of the test session.
+        * The ``dispatch_uid="test.sink"`` collision risk: when two tests
+          register against the same Signal with the same UID, Django's
+          ``Signal.connect`` is append-only on UID and the second
+          registration silently replaces the first.
+
+        ``dispatch_uid`` is auto-generated from ``uuid4().hex`` if not
+        provided, so concurrent parallel test workers (``--parallel=auto``)
+        cannot collide. Pass an explicit value only when a test
+        specifically targets dispatch-uid semantics.
+
+        Returns the resolved ``dispatch_uid`` so a caller can introspect
+        it (e.g. to assert it appears in a log line). Callers retain
+        full control over the sink's shape — no opinion is imposed on
+        what the recording payload looks like.
+        """
+        uid = dispatch_uid or f"test.capture.{uuid.uuid4().hex}"
+        signal.connect(sink, dispatch_uid=uid)
+        self.addCleanup(signal.disconnect, dispatch_uid=uid)
+        return uid
 
     def json_body(
         self, response: Any, *, expected_status: int | None = 200
