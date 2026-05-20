@@ -63,6 +63,18 @@ repos:
       - id: validate-pyproject
         additional_dependencies: ["validate-pyproject-schema-store[all]"]
 
+  # Typo lint for code, docstrings, comments, log messages, and
+  # Markdown. Complements ``vale`` (prose linter for *.md only) and
+  # ruff D-codes (docstring *shape*, not spelling). Reads its config
+  # from ``[tool.codespell]`` in pyproject.toml via the bundled
+  # ``tomli`` dependency. Skips and ignore-words live there so they
+  # apply both to pre-commit and to manual ``codespell .`` runs.
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        additional_dependencies: ["tomli"]
+
   # docformatter (1.7.x) hard-codes D212-style normalization and conflicts
   # with our chosen D213 (summary on second line). Docstring shape is now
   # owned by ruff (`extend-select = ["D213"]` in pyproject.toml).

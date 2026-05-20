@@ -464,6 +464,30 @@ exclude_dirs = [ "tests", "allianceauth_oidc/migrations" ]
 # Adding a function with complexity > 30 or letting a module's average
 # drift past 10 is a regression that pre-commit will catch.
 
+[tool.codespell]
+# Skip artefacts and binary/locale files. ``mutation.sqlite`` plus
+# its timestamped backups can grow large and contain mutated source
+# fragments that look like typos out of context.
+skip = ".git,.venv,.nox,uv.lock,.secrets.baseline,tests/oidc-test.key,htmlcov,build,dist,*.po,*.mo,*.pyc,*/__pycache__/*,mutation.sqlite*"
+# Words intentionally kept in their current form despite codespell's
+# canonicalisation:
+# * ``applicaiton`` — the typo lives in security.py:33 as a docstring
+#   example that demonstrates the Protocol typo-catching contract; it
+#   MUST stay misspelt or the example loses meaning.
+# * ``debuging`` — present in a help_text inside an already-applied
+#   Django migration (0003_..._logo_and_more.py); editing migration
+#   history is destructive (would break downstream operators).
+# * ``re-using`` / ``re-used`` / ``re-use`` / ``re-uses`` /
+#   ``by-passing`` / ``pre-empt`` — RFC-style hyphenation deliberately
+#   used in CHANGELOG and security commentary; the solid forms read
+#   wrong in OAuth / OIDC technical prose.
+# * ``unparseable`` — accepted English spelling; Python's own tokenize
+#   docs use it alongside the codespell-preferred ``unparsable``.
+# * ``assertin`` — codespell tokenises ``assertIn`` (Django/unittest
+#   method) and proposes ``asserting`` / ``assert in`` / ``assertion``.
+#   The unittest API spelling is fixed; the token must stay verbatim.
+ignore-words-list = "applicaiton,debuging,re-using,re-used,re-use,re-uses,by-passing,unparseable,pre-empt,assertin"
+
 [tool.deptry]
 # Tests + nox + migrations import dev / framework things that production
 # code does not — exclude them from the production-import scan.
