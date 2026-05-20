@@ -16,13 +16,13 @@ from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
     SCOPE_OPENID,
-    OIDCTestCase,
+    GrantedOIDCTestCase,
 )
 
 TOKEN_VIEW_LOGGER = "extensions.allianceauth_oidc.views_token"
 
 
-class TestDebugLogging(OIDCTestCase):
+class TestDebugLogging(GrantedOIDCTestCase):
     def _capture_views_log_during_exchange(
         self, code: str
     ) -> tuple[list[logging.LogRecord], str]:
@@ -64,7 +64,6 @@ class TestDebugLogging(OIDCTestCase):
         self.oauth_app.debug_mode = True
         self.oauth_app.save()
         self.oauth_app.refresh_from_db()
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="log-leak")
 
         records, log_text = self._capture_views_log_during_exchange(code)
@@ -95,7 +94,6 @@ class TestDebugLogging(OIDCTestCase):
         self.oauth_app.debug_mode = False
         self.oauth_app.save()
         self.oauth_app.refresh_from_db()
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="log-noinfo")
 
         records, log_text = self._capture_views_log_during_exchange(code)
@@ -119,7 +117,6 @@ class TestDebugLogging(OIDCTestCase):
         self.oauth_app.debug_mode = False
         self.oauth_app.save()
         self.oauth_app.refresh_from_db()
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1, scope=SCOPE_OPENID, state="toggle-on"
         )
@@ -143,7 +140,6 @@ class TestDebugLogging(OIDCTestCase):
         self.oauth_app.debug_mode = True
         self.oauth_app.save()
         self.oauth_app.refresh_from_db()
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1, scope=SCOPE_OPENID, state="toggle-off"
         )
@@ -163,7 +159,7 @@ class TestDebugLogging(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestDebugLoggingJWTMode(OIDCTestCase):
+class TestDebugLoggingJWTMode(GrantedOIDCTestCase):
     """
     Same no-leak contract as :class:`TestDebugLogging`, but exercised
     against a JWT-mode AT.
@@ -196,7 +192,6 @@ class TestDebugLoggingJWTMode(OIDCTestCase):
         self.oauth_app.debug_mode = True
         self.oauth_app.save()
         self.oauth_app.refresh_from_db()
-        self.grant_oidc_access(self.user1)
         # SCOPE_FULL = "openid profile email" → identity claims will
         # be present in the JWT payload, maximising the leak surface.
         code = self.authorize_to_code(

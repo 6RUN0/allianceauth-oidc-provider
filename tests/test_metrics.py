@@ -25,7 +25,7 @@ import textwrap
 from django.test import SimpleTestCase
 from prometheus_client import REGISTRY
 
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase, OIDCTestCase
 
 
 def _sample_value(name: str, **labels: str) -> float:
@@ -43,7 +43,7 @@ def _sample_value(name: str, **labels: str) -> float:
     return 0.0
 
 
-class TestTokensIssuedCounter(OIDCTestCase):
+class TestTokensIssuedCounter(GrantedOIDCTestCase):
     """``aa_oidc_tokens_issued_total`` increments per issued token."""
 
     def test_counter_increments_on_successful_code_flow(self) -> None:
@@ -52,7 +52,6 @@ class TestTokensIssuedCounter(OIDCTestCase):
         ``aa_oidc_tokens_issued_total{grant_type="authorization_code",
         client_id=<test_app>}`` by one.
         """
-        self.grant_oidc_access(self.user1)
         labels = {
             "grant_type": "authorization_code",
             "client_id": self.oauth_id,

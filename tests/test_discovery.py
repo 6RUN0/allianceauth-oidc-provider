@@ -26,6 +26,7 @@ from django.test import override_settings
 from jwcrypto import jwk, jwt
 
 from ._oidc_testcase import (
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
@@ -88,7 +89,7 @@ def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-class TestDiscoveryAndJWKS(OIDCTestCase):
+class TestDiscoveryAndJWKS(GrantedOIDCTestCase):
     def test_discovery_document_shape_is_pinned(self):
         """
         Snapshot guard on the full set of discovery top-level keys.
@@ -274,7 +275,6 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         Catches silent regressions where DOT swaps the algorithm or stops
         publishing it on the JWKS.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-verify")
         id_token = tokens["id_token"]
 
@@ -304,7 +304,6 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         Mitigates replay attacks where a stolen id_token is re-used in a
         different authentication context.
         """
-        self.grant_oidc_access(self.user1)
         nonce = "n-0S6_WzA2Mj"  # arbitrary fixed value
         tokens = self.run_code_flow(
             self.user1,
