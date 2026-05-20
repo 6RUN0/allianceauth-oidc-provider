@@ -42,6 +42,40 @@ REQUIRED_DISCOVERY_KEYS = frozenset(
     }
 )
 
+# Pinned full discovery document key set as of 2026-05-20. Snapshot
+# guard: a DOT version bump that adds a key (e.g. ``mtls_endpoint_aliases``)
+# or our own provider gains a new field MUST update this set
+# consciously. Strict-parser RPs cache the discovery doc and may
+# reject unrecognised fields — a deliberate update is the right
+# friction here.
+PINNED_DISCOVERY_KEYS = frozenset(
+    {
+        "access_token_signing_alg_values_supported",
+        "acr_values_supported",
+        "authorization_endpoint",
+        "backchannel_logout_supported",
+        "claim_types_supported",
+        "claims_parameter_supported",
+        "claims_supported",
+        "code_challenge_methods_supported",
+        "end_session_endpoint",
+        "grant_types_supported",
+        "id_token_signing_alg_values_supported",
+        "issuer",
+        "jwks_uri",
+        "prompt_values_supported",
+        "request_parameter_supported",
+        "request_uri_parameter_supported",
+        "response_modes_supported",
+        "response_types_supported",
+        "scopes_supported",
+        "subject_types_supported",
+        "token_endpoint",
+        "token_endpoint_auth_methods_supported",
+        "userinfo_endpoint",
+    }
+)
+
 ABSOLUTE_URL_DISCOVERY_KEYS = (
     "authorization_endpoint",
     "token_endpoint",
@@ -55,6 +89,28 @@ def _b64url(raw: bytes) -> str:
 
 
 class TestDiscoveryAndJWKS(OIDCTestCase):
+    def test_discovery_document_shape_is_pinned(self):
+        """
+        Snapshot guard on the full set of discovery top-level keys.
+
+        Pins the exact 23-key shape observed on 2026-05-20. A DOT
+        version bump that adds a key (or our own provider gaining a
+        field) must update :data:`PINNED_DISCOVERY_KEYS` consciously
+        — silent additions can break strict-parser RPs that cache
+        the document.
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = json.loads(resp.content.decode("utf-8"))
+        actual = frozenset(doc.keys())
+        added = actual - PINNED_DISCOVERY_KEYS
+        removed = PINNED_DISCOVERY_KEYS - actual
+        self.assertFalse(
+            added or removed,
+            f"discovery shape drift: added={sorted(added)}, "
+            f"removed={sorted(removed)}",
+        )
+
     def test_openid_configuration_advertises_required_endpoints(self):
         """
         OIDC discovery document must list the standard endpoints and the
