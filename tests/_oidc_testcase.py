@@ -665,3 +665,33 @@ class OIDCTestCase(TestCase):
             u.refresh_from_db()
         self.oauth_app.refresh_from_db()
         self.client.logout()
+
+
+class GrantedOIDCTestCase(OIDCTestCase):
+    """
+    OIDC test case with ``user1`` pre-granted the global access perm.
+
+    95% of OAuth/OIDC flow tests need exactly one ceremony in
+    ``setUp``: ``self.grant_oidc_access(self.user1)``. That single
+    line was open-coded ~166 times across the test tree.
+
+    Inherit this class instead of :class:`OIDCTestCase` when the test
+    body drives the authorize / token endpoints as ``user1``. The
+    grant is applied AFTER ``OIDCTestCase.setUp`` so the user is
+    refreshed first, matching the original ordering.
+
+    When to NOT use it:
+
+    * The test drives the flow as ``user2`` / ``user3`` / ``user4``
+      (~8 sites). Stay on :class:`OIDCTestCase` and call
+      ``self.grant_oidc_access(self.userN)`` explicitly — the grant
+      is a no-op for ``user1`` and a wasted permission lookup if
+      ``user1`` is never used.
+    * The test specifically asserts the denial path when the
+      permission is absent (``test_security``, deny-page tests). The
+      grant would mask the assertion.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.grant_oidc_access(self.user1)
