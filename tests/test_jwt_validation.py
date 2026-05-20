@@ -20,7 +20,7 @@ from django.test import TestCase, override_settings
 from ._jwt_helpers import (
     _jwt_mode_oauth2_provider,
 )
-from ._oidc_testcase import REDIRECT_URI, OIDCTestCase
+from ._oidc_testcase import REDIRECT_URI, GrantedOIDCTestCase
 
 
 class TestStartupWiringCheck(TestCase):
@@ -134,7 +134,7 @@ class TestStartupWiringCheck(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestHS256JWTRejection(OIDCTestCase):
+class TestHS256JWTRejection(GrantedOIDCTestCase):
     """
     Operators can configure ``algorithm`` per app (DOT's
     ``AbstractApplication`` field). Combining ``algorithm="HS256"`` with
@@ -198,7 +198,7 @@ class TestHS256JWTRejection(OIDCTestCase):
         creds.app.full_clean()
 
 
-class TestMissingPrivateKey(OIDCTestCase):
+class TestMissingPrivateKey(GrantedOIDCTestCase):
     """
     JWT mode without ``OIDC_RSA_PRIVATE_KEY`` is an operator
     misconfiguration. The dispatcher must fail-closed (no token
@@ -214,7 +214,6 @@ class TestMissingPrivateKey(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_jwt_mode_without_private_key_does_not_issue_a_token(
         self,

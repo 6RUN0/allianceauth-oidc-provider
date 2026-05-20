@@ -21,16 +21,15 @@ from ._jwt_helpers import (
     _opaque_mode_oauth2_provider,
     split_jwt,
 )
-from ._oidc_testcase import SCOPE_FULL, OIDCTestCase
+from ._oidc_testcase import SCOPE_FULL, GrantedOIDCTestCase
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestJWTAccessTokenShape(OIDCTestCase):
+class TestJWTAccessTokenShape(GrantedOIDCTestCase):
     """RFC 9068 §2.1 / §2.2 shape conformance for issued AT."""
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def _issue_at(self) -> str:
         body = self.run_code_flow(self.user1)
@@ -87,7 +86,7 @@ class TestJWTAccessTokenShape(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestJWTClaimMatrix(OIDCTestCase):
+class TestJWTClaimMatrix(GrantedOIDCTestCase):
     """
     Spec line 85 enforcement: AT and id_token claim sets are
     byte-equivalent for the same scope set on the identity-claim axis.
@@ -95,7 +94,6 @@ class TestJWTClaimMatrix(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_jwt_access_token_claims_byte_equivalent_to_id_token(self) -> None:
         body = self.run_code_flow(self.user1, scope=SCOPE_FULL)
@@ -132,7 +130,7 @@ class TestJWTClaimMatrix(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestSignatureVerification(OIDCTestCase):
+class TestSignatureVerification(GrantedOIDCTestCase):
     """
     End-to-end signature verification using ``jwcrypto`` against the
     JWKS published at ``/o/.well-known/jwks.json``. ``jwcrypto`` is
@@ -142,7 +140,6 @@ class TestSignatureVerification(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_jwt_signature_verifies_against_published_jwks(self) -> None:
         body = self.run_code_flow(self.user1)
@@ -202,7 +199,7 @@ class TestSplitJWTHelper(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestForwardCompat(OIDCTestCase):
+class TestForwardCompat(GrantedOIDCTestCase):
     """
     Existing deployments upgrading to this module: the migration adds
     ``access_token_format`` with ``default=None``, so legacy rows
@@ -227,7 +224,7 @@ class TestForwardCompat(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestSizeGuard(OIDCTestCase):
+class TestSizeGuard(GrantedOIDCTestCase):
     """
     The size-guard threshold is operator-configurable via
     ``OAUTH2_PROVIDER['ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES']`` and
@@ -237,7 +234,6 @@ class TestSizeGuard(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_default_threshold_no_warning_for_small_token(self) -> None:
         # Default 4096 is well above a typical AA JWT (~600-1500 bytes
@@ -285,7 +281,7 @@ class TestSizeGuard(OIDCTestCase):
             )
 
 
-class TestKeyRotationOverlap(OIDCTestCase):
+class TestKeyRotationOverlap(GrantedOIDCTestCase):
     """
     RFC 7517 / DOT key-rotation idiom: during the overlap window,
     ``OIDC_RSA_PRIVATE_KEYS_INACTIVE`` lists keys that JWKS continues
@@ -318,7 +314,6 @@ class TestKeyRotationOverlap(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
         # Pre-generate the rotated-out key once per test (cheap on
         # 2048; ~50ms). Tests that need the original key read it
         # from the active settings.

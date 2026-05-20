@@ -20,11 +20,11 @@ from ._jwt_helpers import (
     _opaque_mode_oauth2_provider,
     split_jwt,
 )
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestAuditSignal(OIDCTestCase):
+class TestAuditSignal(GrantedOIDCTestCase):
     """
     Verify ``oidc_token_issued`` payload includes ``format="jwt"`` so
     SIEM receivers can route on issued format. Default receiver
@@ -34,7 +34,6 @@ class TestAuditSignal(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
         self.captured: list[dict[str, Any]] = []
 
         def capture(sender: Any, **kwargs: Any) -> None:
@@ -55,12 +54,11 @@ class TestAuditSignal(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_opaque_mode_oauth2_provider())
-class TestAuditSignalOpaque(OIDCTestCase):
+class TestAuditSignalOpaque(GrantedOIDCTestCase):
     """Companion: opaque mode emits ``format="opaque"``."""
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
         self.captured: list[dict[str, Any]] = []
 
         def capture(sender: Any, **kwargs: Any) -> None:
@@ -80,7 +78,7 @@ class TestAuditSignalOpaque(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestClientCredentials(OIDCTestCase):
+class TestClientCredentials(GrantedOIDCTestCase):
     """
     RFC 9068 §3 + OAuth 2.0 §4.4 fallback: ``sub=client_id`` for
     client_credentials grants because there is no end user.
@@ -94,7 +92,6 @@ class TestClientCredentials(OIDCTestCase):
 
         from ._factories import make_app
 
-        self.grant_oidc_access(self.user1)
         cc_app, cc_id, cc_secret = make_app(
             owner=self.user1,
             authorization_grant_type=(
@@ -167,7 +164,7 @@ class TestClientCredentials(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestPasswordGrant(OIDCTestCase):
+class TestPasswordGrant(GrantedOIDCTestCase):
     """
     Password grant under JWT mode: should produce a JWT with
     ``sub=user.pk`` (an authenticated user is involved), unlike
@@ -180,7 +177,6 @@ class TestPasswordGrant(OIDCTestCase):
 
         from ._factories import make_app
 
-        self.grant_oidc_access(self.user1)
         # Password grant requires a known cleartext password on the
         # user; AA's ``AuthUtils.create_user`` does not expose one
         # convenient for tests, so set one explicitly.
@@ -218,7 +214,7 @@ class TestPasswordGrant(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestRefreshRotation(OIDCTestCase):
+class TestRefreshRotation(GrantedOIDCTestCase):
     """
     Refresh-token rotation under JWT mode: the rotated AT must also
     be a JWT (signed with the current ``kid``).
@@ -226,7 +222,6 @@ class TestRefreshRotation(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_jwt_refresh_token_rotation_yields_jwt(self) -> None:
         body = self.run_code_flow(self.user1)
@@ -241,7 +236,7 @@ class TestRefreshRotation(OIDCTestCase):
         self.assertEqual("RS256", header.get("alg"))
 
 
-class TestRefreshFormatFlip(OIDCTestCase):
+class TestRefreshFormatFlip(GrantedOIDCTestCase):
     """
     Format-flip-on-refresh: tokens are issued anew per request, so
     flipping the global default between issuance and refresh changes
@@ -250,7 +245,6 @@ class TestRefreshFormatFlip(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_jwt_refresh_with_format_flip_yields_new_format(self) -> None:
         # Step 1: issue under JWT mode → AT is a JWT.
@@ -273,7 +267,7 @@ class TestRefreshFormatFlip(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestBackcompatLifecycle(OIDCTestCase):
+class TestBackcompatLifecycle(GrantedOIDCTestCase):
     """
     Existing AT rows from a deployment that ran under opaque mode
     must remain introspectable and revocable after a flip to JWT.
@@ -283,7 +277,6 @@ class TestBackcompatLifecycle(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def test_existing_opaque_tokens_remain_valid_after_global_flip(
         self,
@@ -307,7 +300,7 @@ class TestBackcompatLifecycle(OIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
-class TestJWTRevocation(OIDCTestCase):
+class TestJWTRevocation(GrantedOIDCTestCase):
     """
     RFC 7009 ``/o/revoke_token/`` works on the persisted ``AccessToken``
     row, not on the wire format. Revocation must succeed for a JWT
@@ -319,7 +312,6 @@ class TestJWTRevocation(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
 
     def _revoke(self, token: str) -> int:
         resp = self.client.post(
