@@ -1,3 +1,4 @@
+# pyright: strict
 """Per-user / per-application OIDC access policy checks."""
 
 from __future__ import annotations
