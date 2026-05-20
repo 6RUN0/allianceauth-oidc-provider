@@ -29,7 +29,7 @@ AUDIT_DISPATCH_UID: Final[str] = "allianceauth_oidc.audit_oidc_token_issued"
 # ``oidc_token_introspected``. RFC 7662 introspection is the
 # resource-server side of the trust boundary — every check is a
 # probe by an RS for a token's validity, valuable signal for SIEM
-# correlations ("RS X is enumerating tokens against AS"). Same
+# correlations ("RS X is enumerating tokens against AS"). Same  # noqa: ERA001
 # disconnect / re-connect contract as :data:`AUDIT_DISPATCH_UID`.
 INTROSPECT_AUDIT_DISPATCH_UID: Final[str] = (
     "allianceauth_oidc.audit_oidc_token_introspected"

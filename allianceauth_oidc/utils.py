@@ -249,7 +249,7 @@ def build_oidc_debug_meta(
     payload_dict: Mapping[str, Any] = payload or {}
 
     return {
-        # request-side (safe)
+        # request-side (safe)  # noqa: ERA001
         "grant_type": post_get("grant_type"),
         "scope": post_get("scope"),
         "client_id": post_get("client_id"),

@@ -173,6 +173,10 @@ select = [
     "PLW",  # pylint warnings (suspect patterns)
     "PLC",  # pylint conventions
     "PLR",  # pylint refactors (complexity / too-many-X)
+    # Layer 5 — eradicate: forbids commented-out code (rotates into
+    # stale comment debt). Global rule in ~/.claude/CLAUDE.md
+    # explicitly forbids the pattern — this rule makes it enforceable.
+    "ERA",
 ]
 # D213 (multi-line summary on second line) is the project's chosen
 # docstring shape. It is mutually exclusive with D212 (summary on the

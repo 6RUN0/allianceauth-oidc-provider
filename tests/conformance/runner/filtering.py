@@ -100,7 +100,7 @@ def load_expected_failures(path: pathlib.Path) -> dict[str, str]:
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
         # Type assertion on the deserialised JSON shape — TypeError per
-        # TRY004 ("if you check the type, raise TypeError"). The
+        # TRY004 ("if you check the type, raise TypeError"). The  # noqa: ERA001
         # caller (run_plan.py CLI bootstrap) prints the message
         # verbatim, so keep it descriptive.
         raise TypeError(

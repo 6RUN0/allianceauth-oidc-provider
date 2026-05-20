@@ -1716,7 +1716,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
             )
         args = captured["args"]
         self.assertEqual(len(args), 5)
-        # (user_pk, application_pk, jti, signing_kid, iat)
+        # (user_pk, application_pk, jti, signing_kid, iat)  # noqa: ERA001
         self.assertIsInstance(args[0], int)
         self.assertIsInstance(args[1], int)
         self.assertIsInstance(args[2], str)

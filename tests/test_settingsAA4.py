@@ -36,18 +36,11 @@ INSTALLED_APPS += ["allianceauth_oidc", "oauth2_provider"]  # type: ignore[name-
 
 ROOT_URLCONF = "tests.urls"
 
-NOSE_ARGS: list[str] = [
-    # '--with-coverage',
-    # '--cover-package=',
-    # '--exe',  # If your tests need this to be found/run, check they py files are not chmodded +x
-]
-
-
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
 
-# LOGGING = None  # Comment out to enable logging for debugging
+# LOGGING = None  # Comment out to enable logging for debugging  # noqa: ERA001
 
 # Register an application at https://developers.eveonline.com for Authentication
 # & API Access and fill out these settings. Be sure to set the callback URL

@@ -422,7 +422,7 @@ class TestAuditReceiverErrorPath(SimpleTestCase):
     def test_unrelated_exception_propagates(self) -> None:
         # MemoryError / RecursionError / KeyboardInterrupt are explicitly
         # NOT caught. Neither is RuntimeError. If someone widens the
-        # except to ``Exception:`` this test fails — that's the point.
+        # except to ``Exception:`` this test fails — that's the point.  # noqa: ERA001
         class BoomToken:
             @property
             def application(self) -> object:
