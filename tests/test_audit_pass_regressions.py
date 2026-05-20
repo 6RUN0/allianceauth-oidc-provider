@@ -97,21 +97,14 @@ class TestCodeReuseRevokeSucceededFlag(OIDCTestCase):
         )
         return code_hash
 
-    def _capture_signal(self):
+    def _capture_signal(self) -> list[dict[str, Any]]:
         captured: list[dict[str, Any]] = []
 
         def receiver(sender, **kwargs):
             captured.append(kwargs)
 
-        oidc_signals.oidc_code_reuse_detected.connect(
-            receiver, dispatch_uid="test-revoke-succeeded-flag"
-        )
-        return captured, receiver
-
-    def _disconnect(self, receiver):
-        oidc_signals.oidc_code_reuse_detected.disconnect(
-            receiver, dispatch_uid="test-revoke-succeeded-flag"
-        )
+        self.signal_capture(oidc_signals.oidc_code_reuse_detected, receiver)
+        return captured
 
     def test_signal_carries_revoke_succeeded_true_on_normal_path(self) -> None:
         """Successful revocation passes ``revoke_succeeded=True``."""
@@ -138,14 +131,9 @@ class TestCodeReuseRevokeSucceededFlag(OIDCTestCase):
         )
         self._make_audit_row("code-rev-true", at.pk, rt.pk)
 
-        captured, receiver = self._capture_signal()
-        try:
-            validator = AllianceAuthOAuth2Validator()
-            validator._handle_potential_code_reuse(
-                "code-rev-true", self.oauth_app
-            )
-        finally:
-            self._disconnect(receiver)
+        captured = self._capture_signal()
+        validator = AllianceAuthOAuth2Validator()
+        validator._handle_potential_code_reuse("code-rev-true", self.oauth_app)
 
         self.assertEqual(len(captured), 1)
         self.assertTrue(captured[0].get("revoke_succeeded"))
@@ -177,19 +165,16 @@ class TestCodeReuseRevokeSucceededFlag(OIDCTestCase):
         )
         self._make_audit_row("code-rev-false", at.pk, rt.pk)
 
-        captured, receiver = self._capture_signal()
-        try:
-            with mock.patch.object(
-                RefreshToken,
-                "revoke",
-                side_effect=DatabaseError("simulated transient DB hiccup"),
-            ):
-                validator = AllianceAuthOAuth2Validator()
-                validator._handle_potential_code_reuse(
-                    "code-rev-false", self.oauth_app
-                )
-        finally:
-            self._disconnect(receiver)
+        captured = self._capture_signal()
+        with mock.patch.object(
+            RefreshToken,
+            "revoke",
+            side_effect=DatabaseError("simulated transient DB hiccup"),
+        ):
+            validator = AllianceAuthOAuth2Validator()
+            validator._handle_potential_code_reuse(
+                "code-rev-false", self.oauth_app
+            )
 
         self.assertEqual(len(captured), 1)
         self.assertFalse(captured[0].get("revoke_succeeded"))
@@ -421,29 +406,22 @@ class TestDispatchSigningKeyFailure(OIDCTestCase):
         def receiver(sender, **kwargs):
             captured.append(kwargs)
 
-        oidc_signals.oidc_logout_dispatched.connect(
-            receiver, dispatch_uid="test-signing-kid-resolve-failed"
-        )
-        try:
-            with (
-                mock.patch(
-                    "allianceauth_oidc.logout._active_signing_kid",
-                    side_effect=ValueError("corrupt PEM bytes"),
-                ),
-                self.assertLogs(
-                    "extensions.allianceauth_oidc.logout",
-                    level=logging.WARNING,
-                ) as cm,
-            ):
-                dispatch_backchannel_logout(
-                    sender=None,
-                    user=self.user1,
-                    application=app,
-                    reason="user_revoked",
-                )
-        finally:
-            oidc_signals.oidc_logout_dispatched.disconnect(
-                receiver, dispatch_uid="test-signing-kid-resolve-failed"
+        self.signal_capture(oidc_signals.oidc_logout_dispatched, receiver)
+        with (
+            mock.patch(
+                "allianceauth_oidc.logout._active_signing_kid",
+                side_effect=ValueError("corrupt PEM bytes"),
+            ),
+            self.assertLogs(
+                "extensions.allianceauth_oidc.logout",
+                level=logging.WARNING,
+            ) as cm,
+        ):
+            dispatch_backchannel_logout(
+                sender=None,
+                user=self.user1,
+                application=app,
+                reason="user_revoked",
             )
 
         self.assertEqual(len(captured), 1)
