@@ -1,0 +1,91 @@
+# OIDC / OAuth2 provider-specific Semgrep rules.
+#
+# Why local rules instead of the registry: semgrep.dev's community
+# rulesets (``p/python``, ``p/django``, ``p/jwt``) now require a
+# logged-in token to fetch (HTTP 401 anonymously), which would force
+# every contributor and CI runner to wire up a SEMGREP_APP_TOKEN.
+# These five rules cover the OIDC-specific attack patterns that bandit
+# + ruff ``S`` do NOT catch: JWT misuse, outbound SSRF without
+# timeout, redirect-target injection, raw-secret logging, and ``alg=
+# none`` bypass attempts. Generic OWASP / Django coverage stays with
+# the existing bandit + ruff S setup.
+#
+# Run manually: ``semgrep --config .semgrep/oidc-security.yaml``
+# allianceauth_oidc/.
+rules:
+  - id: jwt-decode-without-algorithms
+    message: |
+      ``jwt.decode`` without an explicit ``algorithms=`` argument
+      accepts ``alg=none`` and key-confusion attacks. Pass the
+      whitelist of algorithms the caller expects (e.g.
+      ``algorithms=["RS256"]``).
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: jwt.decode($TOK, $KEY)
+          - pattern: jose.jwt.decode($TOK, $KEY)
+      - pattern-not: jwt.decode($TOK, $KEY, algorithms=...)
+      - pattern-not: jose.jwt.decode($TOK, $KEY, algorithms=...)
+
+  - id: jwt-decode-verify-false
+    message: |
+      ``jwt.decode(..., verify=False)`` disables signature
+      verification — only ever acceptable in test fixtures, never in
+      production code. Use ``options={"verify_signature": False}``
+      with a per-call justification comment if absolutely required.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: jwt.decode(..., verify=False, ...)
+      - pattern: jose.jwt.decode(..., verify=False, ...)
+
+  - id: requests-without-timeout
+    message: |
+      Outbound HTTP call without ``timeout=``. For the back-channel
+      logout / introspection / token-validation paths this blocks the
+      worker thread indefinitely on a slow RP — set a bounded timeout
+      (current project convention is 5-10 seconds).
+    severity: WARNING
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(...)
+          - pattern: requests.post(...)
+          - pattern: requests.put(...)
+          - pattern: requests.delete(...)
+          - pattern: requests.patch(...)
+          - pattern: requests.request(...)
+      - pattern-not: requests.$METHOD(..., timeout=..., ...)
+
+  - id: redirect-from-untrusted-input
+    message: |
+      ``HttpResponseRedirect`` built directly from ``request.GET`` /
+      ``request.POST`` is an open-redirect primitive. OIDC requires
+      strict matching of ``redirect_uri`` against the registered
+      application — validate the URI through DOT's
+      ``Application.redirect_uris`` allow-list before redirecting.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: HttpResponseRedirect(request.GET[...])
+      - pattern: HttpResponseRedirect(request.POST[...])
+      - pattern: redirect(request.GET[...])
+      - pattern: redirect(request.POST[...])
+
+  - id: token-or-secret-in-log-message
+    message: |
+      Logger call appears to receive a raw token / secret as a
+      format argument. All secret values must round-trip through
+      ``utils.redact_secret`` and the surrounding dict must come from
+      ``utils.build_oidc_debug_meta``; per the project's CLAUDE.md,
+      that helper is the only sanctioned path that produces a
+      log-safe payload.
+    severity: WARNING
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: logger.$LEVEL(..., $TOKEN, ...)
+      - metavariable-regex:
+          metavariable: $TOKEN
+          regex: ^(access_token|refresh_token|id_token|client_secret|authorization_code|code_verifier)$

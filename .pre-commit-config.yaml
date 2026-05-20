@@ -75,6 +75,34 @@ repos:
       - id: codespell
         additional_dependencies: ["tomli"]
 
+  # OIDC-specific Semgrep rules (five patterns). Rules live in
+  # ``.semgrep/oidc-security.yaml`` rather than coming from
+  # ``semgrep.dev/r/...`` because the community rulesets switched to
+  # token-gated downloads (HTTP 401 anonymously); a local config
+  # keeps the hook self-contained and avoids adding
+  # ``SEMGREP_APP_TOKEN`` plumbing for every contributor.
+  # ``--jobs=1`` works around an io_uring resource-allocation crash
+  # observed under the eio_linux backend on hosts with constrained
+  # io_uring limits.
+  - repo: local
+    hooks:
+      - id: semgrep-oidc
+        name: semgrep (OIDC / OAuth2 patterns)
+        entry: uvx
+        language: system
+        pass_filenames: false
+        types: [python]
+        files: ^allianceauth_oidc/.*\.py$
+        args:
+          - semgrep
+          - --config
+          - .semgrep/oidc-security.yaml
+          - --metrics=off
+          - --error
+          - --jobs=1
+          - --quiet
+          - allianceauth_oidc/
+
   # docformatter (1.7.x) hard-codes D212-style normalization and conflicts
   # with our chosen D213 (summary on second line). Docstring shape is now
   # owned by ruff (`extend-select = ["D213"]` in pyproject.toml).
