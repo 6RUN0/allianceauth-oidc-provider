@@ -1,4 +1,4 @@
-.PHONY: help clean dev test test-all test-aa4 integration preflight lint lint-md lint-actions typecheck coverage audit messages compilemessages makemigrations migrations-check diagrams mutation mutation-parallel mutation-html package deploy
+.PHONY: help clean dev test test-all test-aa4 test-compat integration preflight lint lint-md lint-actions typecheck coverage audit messages compilemessages makemigrations migrations-check diagrams mutation mutation-parallel mutation-html mutation-check package verify-wheel deploy
 
 help:
 	@echo "Available targets (all run via uv):"
@@ -6,6 +6,7 @@ help:
 	@echo "  test             run Django test suite (nox -s tests)"
 	@echo "  test-all         run tests on every supported Python (nox -s tests_matrix)"
 	@echo "  test-aa4         run AA 4.x compatibility matrix (nox -s tests_aa4; 3.10/3.11/3.12, off-lock)"
+	@echo "  test-compat      run tests against AA_PIN='<PEP 508 spec>' (nox -s tests_compat; ad-hoc probe)"
 	@echo "  integration      run wire-level mock-RP integration tests (nox -s integration; LiveServerTestCase)"
 	@echo "  preflight        run lint + typecheck + tests + migrations_check (nox -s preflight)"
 	@echo "  lint             run pre-commit on all files (nox -s lint)"
@@ -22,8 +23,10 @@ help:
 	@echo "  mutation         mutation testing via cosmic-ray (nox -s mutation; multi-hour pre-release gate)"
 	@echo "  mutation-parallel  parallel cosmic-ray sweep via N isolated workers (N=4 default; resumes mutation.sqlite)"
 	@echo "  mutation-html    render cosmic-ray HTML report under html/ (nox -s mutation_html)"
+	@echo "  mutation-check   gate on mutation survival rate (nox -s mutation_check; MUTATION_MAX_SURVIVAL=35.0 default)"
 	@echo "  clean            remove build artifacts"
 	@echo "  package          build distributions (uv build)"
+	@echo "  verify-wheel     audit wheel inventory for required + forbidden patterns (nox -s verify_wheel)"
 	@echo "  deploy           upload distributions to PyPI (uv publish)"
 
 dev:
@@ -38,6 +41,17 @@ test-all:
 
 test-aa4:
 	uv run nox -s tests_aa4
+
+# ``tests_compat`` is parametrised across every supported Python and
+# requires ``AA_PIN`` to be set to a PEP 508 requirement. Typical
+# invocations:
+#   make test-compat AA_PIN='allianceauth==5.1rc1'
+#   AA_PIN='allianceauth>=5.0,<5.1' make test-compat
+# Pass ``-- --python=3.12`` (or run nox directly) to narrow the
+# matrix to a single interpreter when probing an interpreter-specific
+# upstream behaviour.
+test-compat:
+	AA_PIN='$(AA_PIN)' uv run nox -s tests_compat
 
 integration:
 	uv run nox -s integration
@@ -92,11 +106,22 @@ mutation-parallel:
 mutation-html:
 	uv run nox -s mutation_html
 
+# ``mutation-check`` reads the existing ``mutation.sqlite`` and fails
+# when the cosmic-ray survival rate exceeds ``MUTATION_MAX_SURVIVAL``
+# (default ``35.0`` — i.e. require ≥ 65 % killed). Override:
+#   MUTATION_MAX_SURVIVAL=25.0 make mutation-check    # tighter
+#   MUTATION_MAX_SURVIVAL=50.0 make mutation-check    # looser
+mutation-check:
+	uv run nox -s mutation_check
+
 clean:
 	rm -rf dist/* mutation.sqlite mutation.sqlite-* html/
 
 package:
 	uv build
+
+verify-wheel:
+	uv run nox -s verify_wheel
 
 deploy:
 	uv publish dist/*

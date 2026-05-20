@@ -1,21 +1,27 @@
 """
 Cross-version test-matrix sessions.
 
-Two off-default sessions that exercise the test suite against
+Three off-default sessions that exercise the test suite against
 Python/AA version combinations the dev environment does not pin:
 
 * ``tests_matrix`` — every supported Python interpreter against the
   locked AA 5.x / Django 5.x stack.
 * ``tests_aa4`` — Alliance Auth 4.x / Django 4.x stack, off-lock,
   across the AA-4-compatible Python subset.
+* ``tests_compat`` — ad-hoc compatibility probe against an arbitrary
+  ``allianceauth`` pin supplied via the ``AA_PIN`` env var (e.g. a
+  beta / RC release, a point release between the two pinned matrices,
+  or a downgrade test).
 
-Both use ``venv_backend="uv"`` so nox provisions a per-interpreter
+All three use ``venv_backend="uv"`` so nox provisions a per-interpreter
 isolated venv (vs the default ``none`` backend that re-uses the
 active venv). Imported from ``noxfile.py`` for session registration
 side effects — ``@nox.session`` registers globally at import time.
 """
 
 from __future__ import annotations
+
+import os
 
 import nox
 
@@ -120,6 +126,72 @@ def tests_aa4(session: nox.Session) -> None:
     # ``cannot serialise 'traceback' object`` error rather than the
     # actual diagnostics. Forcing single-process here makes failures
     # legible across the whole AA4 Python matrix.
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "test",
+        *TEST_ARGS_BASE,
+        "--parallel=1",
+        *resolve_test_labels(tuple(session.posargs)),
+        env=test_env(session),
+    )
+
+
+@nox.session(python=PYTHON_VERSIONS, venv_backend="uv")
+def tests_compat(session: nox.Session) -> None:
+    """
+    Run the test suite against an arbitrary ``allianceauth`` pin.
+
+    The pin is taken from the ``AA_PIN`` env var (a PEP 508
+    requirement string), e.g. ``AA_PIN='allianceauth==5.1rc1'`` or
+    ``AA_PIN='allianceauth>=5.0,<5.1'``. ``--with`` injects the pin
+    into an off-lock venv built around the ``dev`` group; the AA
+    major-version groups (``aa4`` / ``aa5``) are intentionally not
+    selected so the override is the sole AA pin.
+
+    Use this for one-off probes the standard ``tests`` (lock-driven)
+    and ``tests_aa4`` (PEP 735 ``aa4`` group) matrices cannot reach:
+    AA beta / RC builds, downgrade tests against an older point
+    release, or compatibility checks between the two pinned matrices
+    (e.g. an AA 5.0.x → 5.1.x bridge).
+
+    Failure mode: if ``AA_PIN`` is unset the session errors out with
+    a hint rather than silently degrading into the default ``tests``
+    behaviour. The pattern is borrowed from ``aa_discord_audit``'s
+    ``tests_compat``.
+    """
+    aa_pin = os.environ.get("AA_PIN", "").strip()
+    if not aa_pin:
+        session.error(
+            "tests_compat requires AA_PIN to be set to a PEP 508 "
+            "requirement string for ``allianceauth``. Examples:\n"
+            "  AA_PIN='allianceauth==5.1rc1' uv run nox -s tests_compat\n"
+            "  AA_PIN='allianceauth>=5.0,<5.1' uv run nox -s tests_compat"
+        )
+
+    session.run_install(
+        "uv",
+        "pip",
+        "install",
+        "-e",
+        ".",
+        "--group",
+        "dev",
+        "--with",
+        aa_pin,
+        *TEST_RUNTIME_DEPS,
+        env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
+    )
+    session.run(
+        "python",
+        "_nox/_canary_imports.py",
+        env=test_env(session),
+    )
+    # ``--parallel=1`` for the same Django-multiprocessing-pool
+    # rationale documented above (the parallel runner cannot
+    # serialise traceback objects across forks). Failure clarity
+    # outweighs the per-CPU speedup on compatibility probes.
     session.run(
         "python",
         "-m",

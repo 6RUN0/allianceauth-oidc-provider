@@ -42,6 +42,7 @@ import nox
 # readable while domain-specific orchestrations (mutation testing,
 # conformance suite, cross-version matrices) live in their own files.
 import _nox.conformance
+import _nox.dist
 import _nox.matrix
 import _nox.mutation  # noqa: F401
 from _nox.shared import (

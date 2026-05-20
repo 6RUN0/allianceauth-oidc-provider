@@ -604,3 +604,72 @@ def mutation_html(session: nox.Session) -> None:
         staging.unlink(missing_ok=True)
         session.error(f"cr-html exited with rc={rc}")
     staging.replace(final)
+
+
+# Default ceiling on the mutation survival rate. Cosmic-ray reports
+# survival (lower = better); ``cr-rate --fail-over X`` exits non-zero
+# when survival > X. 35.0 corresponds to a kill rate of at least 65 %,
+# matching the conservative-but-realistic floor used by sibling
+# Python projects in the user's tree. Override via the
+# ``MUTATION_MAX_SURVIVAL`` env var.
+_MUTATION_MAX_SURVIVAL_DEFAULT = "35.0"
+
+# Inclusive bounds for percentage inputs. Named so the threshold-
+# validation line in ``mutation_check`` does not trip Ruff's
+# ``PLR2004`` (magic-value in comparison) on literal 100.0.
+_PERCENT_MIN = 0.0
+_PERCENT_MAX = 100.0
+
+
+@nox.session
+def mutation_check(session: nox.Session) -> None:
+    """
+    Gate CI on the mutation survival rate of ``mutation.sqlite``.
+
+    Run ``nox -s mutation`` (or ``mutation_parallel``) first to
+    populate the session file; this session reads it and fails when
+    the survival rate exceeds ``MUTATION_MAX_SURVIVAL`` (default
+    ``35.0`` — i.e. require ≥ 65 % of mutants to be killed).
+
+    Survival, not kill rate, is the unit cosmic-ray reports natively
+    via ``cr-rate``; ``--fail-over X`` is how cosmic-ray itself
+    expresses the threshold. Using its built-in flag instead of
+    reinventing JSON-parsing keeps the implementation a one-liner and
+    inherits cosmic-ray's percentage semantics directly. Tighten the
+    threshold by setting a smaller env value (e.g.
+    ``MUTATION_MAX_SURVIVAL=25.0`` ≡ ≥ 75 % killed); loosen it for a
+    work-in-progress sweep with a higher value.
+
+    Pre-flights the sqlite session file's existence so the operator
+    gets a clear error instead of cosmic-ray's own opaque message
+    about a missing file.
+    """
+    session_file = pathlib.Path("mutation.sqlite")
+    if not session_file.is_file():
+        session.error(
+            f"{session_file} missing — run "
+            "``make mutation`` (or ``make mutation-parallel``) first"
+        )
+
+    raw = os.getenv("MUTATION_MAX_SURVIVAL", _MUTATION_MAX_SURVIVAL_DEFAULT)
+    try:
+        threshold = float(raw)
+    except ValueError as exc:
+        session.error(
+            "MUTATION_MAX_SURVIVAL must be a float in [0, 100], "
+            f"got {raw!r}: {exc}"
+        )
+    if not _PERCENT_MIN <= threshold <= _PERCENT_MAX:
+        session.error(
+            f"MUTATION_MAX_SURVIVAL must be in [0, 100], got {threshold}"
+        )
+
+    session.log(
+        "Checking mutation survival rate (max %.2f%%, i.e. ≥ %.2f%% killed)",
+        threshold,
+        _PERCENT_MAX - threshold,
+    )
+    # ``cr-rate --fail-over X`` returns non-zero when survival > X.
+    # nox bubbles the non-zero exit up as session failure; the
+    # printed survival rate stays in the session log either way.
+    session.run("cr-rate", "--fail-over", str(threshold), str(session_file))
