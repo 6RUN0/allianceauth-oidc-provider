@@ -75,6 +75,26 @@ repos:
       - id: codespell
         additional_dependencies: ["tomli"]
 
+  # Architectural import-graph enforcement. ``tach.toml`` declares
+  # three layers (api -> service -> core) and assigns every module
+  # in ``allianceauth_oidc/`` to one of them; ``tach check`` fails
+  # the commit if a layer imports from a layer above it (e.g.
+  # ``security.py`` reaching for ``auth_provider``, which would
+  # weaken the 3-layer policy enforcement documented in CLAUDE.md).
+  # New modules MUST be added to ``tach.toml`` with an explicit
+  # layer — unlisted modules are unconstrained, defeating the
+  # purpose of the gate.
+  - repo: local
+    hooks:
+      - id: tach
+        name: tach (architectural layers)
+        entry: uvx
+        language: system
+        pass_filenames: false
+        types: [python]
+        files: ^(allianceauth_oidc/.*\.py|tach\.toml)$
+        args: ["tach", "check"]
+
   # OIDC-specific Semgrep rules (five patterns). Rules live in
   # ``.semgrep/oidc-security.yaml`` rather than coming from
   # ``semgrep.dev/r/...`` because the community rulesets switched to

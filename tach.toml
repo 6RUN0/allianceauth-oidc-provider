@@ -1,0 +1,74 @@
+# Architectural layers for ``allianceauth_oidc``.
+#
+# Encodes a checkable version of the 3-layer policy described in
+# CLAUDE.md:
+#
+# * ``api``     — HTTP entry points (views_*, admin, urls). May
+#                 import service + core.
+# * ``service`` — business logic and orchestration: DOT validator
+#                 (auth_provider), claim builder, token dispatcher,
+#                 PKCE checks, BCL logout, plus the wiring modules
+#                 (apps, checks, receivers, tasks) that connect
+#                 lower-level helpers across the codebase. May
+#                 import core.
+# * ``core``    — pure helpers and data: utils, security, DNS-safety,
+#                 settings snapshot, constants, models, signal
+#                 definitions, metrics counters. May NOT import
+#                 service or api — a layer crossing here would weaken
+#                 the policy spine that the OIDC provider depends on.
+#
+# Run via ``uvx tach check`` (and the pre-commit hook). Modules not
+# listed default to unconstrained — every file under
+# ``allianceauth_oidc/`` should appear so layer membership stays
+# intentional. The ``management/`` and ``migrations/`` subtrees are
+# excluded: management commands cross all layers by design (they
+# are CLI orchestrators), and migrations are auto-generated.
+interfaces = []
+layers = [
+    "api",
+    "service",
+    "core",
+]
+exclude = [
+    "**/*__pycache__",
+    ".nox",
+    ".venv",
+    "_nox",
+    "allianceauth_oidc/management",
+    "allianceauth_oidc/migrations",
+    "build",
+    "dist",
+    "noxfile\\.py",
+    "tests",
+]
+source_roots = [
+    ".",
+]
+modules = [
+    { path = "allianceauth_oidc", depends_on = [] },
+    { path = "allianceauth_oidc._dns_safety", layer = "core" },
+    { path = "allianceauth_oidc._metrics", layer = "core" },
+    { path = "allianceauth_oidc.admin", layer = "api" },
+    { path = "allianceauth_oidc.app_settings", layer = "core" },
+    { path = "allianceauth_oidc.apps", layer = "service" },
+    { path = "allianceauth_oidc.auth_provider", layer = "service" },
+    { path = "allianceauth_oidc.checks", layer = "service" },
+    { path = "allianceauth_oidc.claims", layer = "service" },
+    { path = "allianceauth_oidc.constants", layer = "core" },
+    { path = "allianceauth_oidc.logout", layer = "service" },
+    { path = "allianceauth_oidc.models", layer = "core" },
+    { path = "allianceauth_oidc.pkce", layer = "service" },
+    { path = "allianceauth_oidc.receivers", layer = "service" },
+    { path = "allianceauth_oidc.security", layer = "core" },
+    { path = "allianceauth_oidc.signals", layer = "core" },
+    { path = "allianceauth_oidc.tasks", layer = "service" },
+    { path = "allianceauth_oidc.tokens", layer = "service" },
+    { path = "allianceauth_oidc.urls", layer = "api" },
+    { path = "allianceauth_oidc.utils", layer = "core" },
+    { path = "allianceauth_oidc.views", layer = "api" },
+    { path = "allianceauth_oidc.views_authorize", layer = "api" },
+    { path = "allianceauth_oidc.views_discovery", layer = "api" },
+    { path = "allianceauth_oidc.views_introspect", layer = "api" },
+    { path = "allianceauth_oidc.views_token", layer = "api" },
+    { path = "allianceauth_oidc.views_userinfo", layer = "api" },
+]
