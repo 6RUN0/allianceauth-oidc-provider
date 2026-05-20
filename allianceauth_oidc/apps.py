@@ -1,6 +1,7 @@
 """Django AppConfig for the OIDC provider."""
 
 import logging
+from typing import Any
 
 from django.apps import AppConfig
 from django.utils.text import format_lazy
@@ -106,9 +107,9 @@ def _connect_bcl_pre_save_gate() -> None:
         weak=False,
     )
     def _enforce(  # pyright: ignore[reportUnusedFunction]
-        sender,  # noqa: ARG001
-        instance,
-        **kwargs,  # noqa: ARG001
+        sender: Any,  # noqa: ARG001
+        instance: Any,
+        **kwargs: Any,  # noqa: ARG001
     ) -> None:
         if getattr(instance, "backchannel_logout_uri", ""):
             instance._validate_uri_target_safety()  # noqa: SLF001
@@ -219,7 +220,7 @@ class AllianceAuthOIDC(AppConfig):
     )
 
     @override
-    def ready(self):
+    def ready(self) -> None:
         """Wire OIDC signals + cache invalidators on app load."""
         # Explicit connect calls — see ``signals.connect_default_receiver``
         # and ``app_settings.connect_invalidator`` for why these are

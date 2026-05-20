@@ -329,6 +329,21 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 extra_checks = true
+# 2026-05 strict-mode step: closes the four ``disallow_*`` gaps that
+# remained after the initial ramp. Each one rejects a class of
+# silent ``Any`` ingress:
+# * ``disallow_untyped_defs`` — function with no signature annotations
+#   (returns ``Any`` implicitly).
+# * ``disallow_incomplete_defs`` — partial annotations (some args
+#   typed, others not).
+# * ``disallow_untyped_decorators`` — a decorator whose return type
+#   is unknown silently strips signatures from wrapped functions.
+# * ``disallow_any_generics`` — bare ``list`` / ``dict`` / ``set``
+#   without type parameters (each leaks ``Any`` into call sites).
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
 enable_error_code = [
     "redundant-expr",
     "possibly-undefined",
@@ -394,6 +409,34 @@ module = [
     "allianceauth_oidc.views_userinfo",
 ]
 disable_error_code = [ "no-any-return" ]
+
+# Framework-bound modules where ``disallow_untyped_defs`` would
+# require annotating signatures whose shape is dictated by an
+# upstream untyped class:
+# * ``auth_provider`` — every ``validate_*`` / ``save_*`` /
+#   ``get_*`` method overrides an oauthlib ``RequestValidator``
+#   method whose parameters are typed as bare ``Any`` (the class
+#   ships no ``py.typed`` marker and no third-party stub package
+#   covers it).
+# * ``tasks`` — Celery's ``@shared_task`` decorator returns an
+#   untyped callable in celery 5.x; annotating around it requires
+#   ``cast`` gymnastics that obscure the task body.
+# * ``admin`` — Django's ``ModelAdmin`` callbacks
+#   (``list_display`` callables, ``get_readonly_fields``, etc.)
+#   are typed loosely by django-stubs (``Any``-leaky) and the
+#   generic type parameter (``ModelAdmin[Model]``) leaks into the
+#   admin module without buying real safety.
+[[tool.mypy.overrides]]
+module = [
+    "allianceauth_oidc.auth_provider",
+    "allianceauth_oidc.tasks",
+    "allianceauth_oidc.admin",
+]
+disable_error_code = [
+    "no-untyped-def",
+    "untyped-decorator",
+    "type-arg",
+]
 
 [tool.basedpyright]
 venv = ".venv"

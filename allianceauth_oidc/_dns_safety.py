@@ -24,6 +24,7 @@ from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import socket
+from typing import Any
 
 # Per plan v5 §4.5: ``socket.setdefaulttimeout`` does NOT bound
 # ``getaddrinfo`` (a libc resolver call, not a Python socket
@@ -45,7 +46,7 @@ _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 def resolve_host_bounded(
     host: str, deadline_seconds: int = DNS_BOUND_SECONDS
-) -> list[tuple]:
+) -> list[tuple[Any, ...]]:
     """
     Resolve ``host`` with a real wall-clock bound.
 
@@ -119,7 +120,7 @@ def is_unsafe_address(addr_str: str) -> bool:
     )
 
 
-def addresses_have_unsafe(infos: list[tuple]) -> bool:
+def addresses_have_unsafe(infos: list[tuple[Any, ...]]) -> bool:
     """
     Return True if any address in a ``getaddrinfo`` result tuple list
     is unsafe per :func:`is_unsafe_address`.

@@ -67,7 +67,9 @@ UID_USER_POST_DELETE = "allianceauth_oidc.user_post_delete"
 # survives long enough to be popped in post_delete. The weakref
 # backstop ensures any error-path leak is GC'd rather than retained
 # indefinitely.
-_PENDING_LOGOUTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_PENDING_LOGOUTS: weakref.WeakKeyDictionary[Any, Any] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 # ---------- Trigger 2: User.is_active flip ----------

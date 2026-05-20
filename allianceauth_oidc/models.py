@@ -157,7 +157,9 @@ class AllianceAuthApplication(AbstractApplication):
     )
 
     @override
-    def is_usable(self, request):
+    def is_usable(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, request: Any
+    ) -> bool:
         """
         Return whether the application is usable.
 
