@@ -20,7 +20,12 @@ are exercised here:
 
 Hypothesis caches failing examples under ``.hypothesis/`` (gitignored)
 so a regression replays the exact verifier that broke without
-re-rolling.
+re-rolling. ``derandomize=True`` on every ``@settings`` block fixes
+the example stream — same examples on CI and locally — so a failure
+reported on one machine reproduces on another without exchanging the
+``.hypothesis/`` cache. The trade-off (lost example diversity across
+runs) is acceptable here: the search spaces are small and the goal
+is a regression net, not exploratory fuzzing.
 """
 
 from __future__ import annotations
@@ -53,7 +58,7 @@ class TestPkceChallengeInvariants(SimpleTestCase):
             max_size=128,
         )
     )
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=200, deadline=None, derandomize=True)
     def test_s256_challenge_is_43_chars_for_any_valid_verifier(
         self, verifier: str
     ) -> None:
@@ -84,7 +89,7 @@ class TestClaimScopeMapShape(SimpleTestCase):
         ),
         eve_scope=st.sampled_from(["profile", "openid", "email"]),
     )
-    @settings(max_examples=50, deadline=None)
+    @settings(max_examples=50, deadline=None, derandomize=True)
     def test_every_claim_maps_to_a_non_empty_scope(
         self, eve_prefix: str, eve_scope: str
     ) -> None:
@@ -123,7 +128,7 @@ class TestSecretRedactorNoLeakage(SimpleTestCase):
         head=st.integers(min_value=1, max_value=8),
         tail=st.integers(min_value=1, max_value=8),
     )
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=200, deadline=None, derandomize=True)
     def test_middle_characters_never_appear_in_masked_output(
         self, secret: str, head: int, tail: int
     ) -> None:
@@ -160,7 +165,7 @@ class TestSecretRedactorNoLeakage(SimpleTestCase):
             max_size=200,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=100, deadline=None, derandomize=True)
     def test_disabled_redactor_always_returns_redacted_marker(
         self, secret: str
     ) -> None:
