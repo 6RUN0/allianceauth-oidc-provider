@@ -11,7 +11,12 @@ from django.test import override_settings
 from oauth2_provider.settings import oauth2_settings
 
 from ._jwt_helpers import _b64url_encode_nopad, forge_unsigned_jwt
-from ._oidc_testcase import REDIRECT_STATUSES, SCOPE_PROFILE, OIDCTestCase
+from ._oidc_testcase import (
+    REDIRECT_STATUSES,
+    SCOPE_PROFILE,
+    GrantedOIDCTestCase,
+    OIDCTestCase,
+)
 
 
 def _forged_hs256_id_token_hint() -> str:
@@ -42,7 +47,7 @@ def _enable_rp_logout():
     return cfg
 
 
-class TestRPInitiatedLogout(OIDCTestCase):
+class TestRPInitiatedLogout(GrantedOIDCTestCase):
     def setUp(self) -> None:
         super().setUp()
         # Every test in this class flips OIDC_RP_INITIATED_LOGOUT_ENABLED via
@@ -55,7 +60,6 @@ class TestRPInitiatedLogout(OIDCTestCase):
         Run the auth-code flow to get an id_token for use as
         id_token_hint.
         """
-        self.grant_oidc_access(self.user1)
         return self.run_code_flow(
             self.user1, scope=SCOPE_PROFILE, state="logout-issue"
         )["id_token"]
@@ -252,7 +256,7 @@ class TestRPLogoutIdTokenHintValidation(OIDCTestCase):
                     )
 
 
-class TestLogoutCSRF(OIDCTestCase):
+class TestLogoutCSRF(GrantedOIDCTestCase):
     """
     OIDC RP-Initiated Logout 1.0 §2 — GET on /o/logout/ renders a
     confirmation UI (no CSRF token needed; it's a navigation). POST
@@ -280,7 +284,6 @@ class TestLogoutCSRF(OIDCTestCase):
         with override_settings(OAUTH2_PROVIDER=_enable_rp_logout()):
             oauth2_settings.reload()
             client = self.client_class(enforce_csrf_checks=True)
-            self.grant_oidc_access(self.user1)
             client.force_login(self.user1)
             resp = client.post(
                 "/o/logout/",
@@ -303,7 +306,6 @@ class TestLogoutCSRF(OIDCTestCase):
         with override_settings(OAUTH2_PROVIDER=_enable_rp_logout()):
             oauth2_settings.reload()
             client = self.client_class(enforce_csrf_checks=True)
-            self.grant_oidc_access(self.user1)
             client.force_login(self.user1)
             resp = client.get("/o/logout/")
             self.assertNotEqual(403, resp.status_code)

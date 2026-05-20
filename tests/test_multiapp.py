@@ -26,10 +26,10 @@ upgrades that change it are caught:
 """
 
 from ._factories import make_app
-from ._oidc_testcase import OIDCTestCase
+from ._oidc_testcase import GrantedOIDCTestCase
 
 
-class TestMultiAppIsolation(OIDCTestCase):
+class TestMultiAppIsolation(GrantedOIDCTestCase):
     def setUp(self) -> None:
         super().setUp()
         # Second app belonging to the same owner. Different client_id /
@@ -40,7 +40,6 @@ class TestMultiAppIsolation(OIDCTestCase):
 
     def _issue_token_for_app1(self) -> dict:
         """Run the code-flow against the default app and return tokens."""
-        self.grant_oidc_access(self.user1)
         return self.run_code_flow(self.user1, state="multiapp-issue")
 
     def test_refresh_token_with_wrong_client_id_is_rejected(self):
@@ -130,7 +129,7 @@ class TestMultiAppIsolation(OIDCTestCase):
         self.assertIn(post_revoke.status_code, (401, 403))
 
 
-class TestCrossClientCodeAbuse(OIDCTestCase):
+class TestCrossClientCodeAbuse(GrantedOIDCTestCase):
     """
     Authorization-code grant: a code issued to app A must NOT be
     exchangeable by app B, even when B presents perfectly valid
@@ -164,7 +163,6 @@ class TestCrossClientCodeAbuse(OIDCTestCase):
         client_id, client_secret, and app B's registered redirect_uri.
         DOT must reject — the code's binding is to app A.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="cross-client-code")
 
         resp = self.exchange_code_for_token(
@@ -194,7 +192,6 @@ class TestCrossClientCodeAbuse(OIDCTestCase):
         """
         from ._oidc_testcase import REDIRECT_URI
 
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1, state="cross-client-code-redir-a"
         )

@@ -20,14 +20,14 @@ regressions in DOT integration, not to replace a formal OIDC test suite.
 
 from ._oidc_testcase import (
     SCOPE_OPENID,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
 
-class TestRevokeAndIntrospect(OIDCTestCase):
+class TestRevokeAndIntrospect(GrantedOIDCTestCase):
     def _issue_access_token(self, *, scope: str = SCOPE_OPENID) -> str:
         """Run the authorization-code flow and return a fresh access_token."""
-        self.grant_oidc_access(self.user1)
         return self.run_code_flow(
             self.user1, scope=scope, state="issue-token"
         )["access_token"]
@@ -125,7 +125,7 @@ class TestRevokeAndIntrospect(OIDCTestCase):
         self.assertFalse(body.get("active"))
 
 
-class TestIntrospectAndRevokeRequireClientAuth(OIDCTestCase):
+class TestIntrospectAndRevokeRequireClientAuth(GrantedOIDCTestCase):
     """
     RFC 7662 §2.1: the introspection endpoint MUST require client
     authentication. RFC 7009 §2.1: the revocation endpoint MUST
@@ -179,13 +179,12 @@ class TestIntrospectAndRevokeRequireClientAuth(OIDCTestCase):
         )
 
     def _issue_access_token(self) -> str:
-        self.grant_oidc_access(self.user1)
         return self.run_code_flow(
             self.user1, scope=SCOPE_OPENID, state="introspect-auth"
         )["access_token"]
 
 
-class TestRevokeRefreshTokenChainBehaviour(OIDCTestCase):
+class TestRevokeRefreshTokenChainBehaviour(GrantedOIDCTestCase):
     """
     RFC 7009 §2.1 SHOULD clause: revoking a refresh token MAY (and
     typically should) revoke the linked access tokens.
@@ -199,7 +198,6 @@ class TestRevokeRefreshTokenChainBehaviour(OIDCTestCase):
     """
 
     def _issue_tokens(self) -> dict:
-        self.grant_oidc_access(self.user1)
         return self.run_code_flow(self.user1, state="rt-chain")
 
     def _userinfo(self, access_token: str):
