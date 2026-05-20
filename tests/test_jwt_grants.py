@@ -306,8 +306,6 @@ class TestJWTRevocation(GrantedOIDCTestCase):
     row, not on the wire format. Revocation must succeed for a JWT
     that was just issued, AND for an opaque token issued *before*
     flipping the global default to JWT.
-
-    Closes from the follow-up review.
     """
 
     def setUp(self) -> None:

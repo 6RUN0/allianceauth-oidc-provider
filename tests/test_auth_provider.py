@@ -534,8 +534,8 @@ class TestValidateSilentAuthorization(OIDCTestCase):
     """
     Pin the short-circuit branches of ``validate_silent_authorization``.
 
-    Post-refactor removal the function has exactly two positive surface
-    bits and one is-usable kill-switch — no scope coverage, no
+    After the dead-code removal the function has exactly two positive
+    surface bits and one is-usable kill-switch — no scope coverage, no
     per-user policy check at this layer (oauthlib does not propagate
     ``request.user`` to the validate-authorization-request callsite,
     so any per-user branch here is dead in production). The tests

@@ -419,10 +419,22 @@ class AuthAuthorizationView(AuthorizationView):
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponseBase:
         """
-        Run the access policy gate on every request, GET or POST.
+        Pre-dispatch pipeline for the authorize endpoint.
 
-        Centralising the check here closes the POST-bypass that arises if the
-        gate lives in ``get()``/``post()`` separately.
+        Runs in this order, GET or POST:
+
+        1. Promote POST form fields to the query string so DOT's
+           ``AuthorizationView`` sees them. OIDC Core 1.0 §3.1.2.1
+           mandates POST support; DOT only reads ``request.GET``.
+        2. Anonymous short-circuit — fall through to
+           ``LoginRequiredMixin`` so an unauthenticated request lands
+           on ``LOGIN_URL`` instead of the policy-denied page.
+        3. ``enforce_reauth`` — OIDC Core 1.0 §3.1.2.1
+           ``prompt=login`` / ``max_age`` handling.
+        4. Access policy gate (``AccessPolicy.decide``) on every
+           authenticated request, GET or POST. Centralising the gate
+           here closes the POST-bypass that arises if the check lives
+           in ``get()``/``post()`` separately.
         """
         # OIDC Core 1.0 §3.1.2.1 mandates POST support at the
         # authorize endpoint. The promotion logic is extracted to a

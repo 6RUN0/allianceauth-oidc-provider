@@ -1,13 +1,12 @@
 """
 Tests for OIDC Back-Channel Logout 1.0 (sub-only v1).
 
-Covers acceptance criteria .. from internal design notes
-.
+Coverage is grouped by surface:
 
- lives in ``TestBackChannelLogoutModel`` — model field,
-``clean()`` SSRF guard, DNS-failure non-blocking policy, and migration
-shape.  lives in ``TestBackChannelLogoutSignals`` — the
-trigger/audit signal pair and ``LogoutAuditBody`` TypedDict.
+* ``TestBackChannelLogoutModel`` — model field, ``clean()`` SSRF
+  guard, DNS-failure non-blocking policy, and migration shape.
+* ``TestBackChannelLogoutSignals`` — the trigger/audit signal pair
+  and ``LogoutAuditBody`` TypedDict.
 """
 
 from __future__ import annotations
@@ -765,8 +764,8 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
         self.assertEqual(len(msgs), 1)
         msg = msgs[0]
         self.assertEqual(msg.id, E001_ID)
-        # internal design notes severity is Error, not Warning. Verify
-        # via the ``level`` attribute set by ``Error()``.
+        # Severity must be Error, not Warning — verify via the
+        # ``level`` attribute set by ``Error()``.
         self.assertEqual(msg.level, checks.ERROR)
 
     # ---------- manage.py check raises SystemCheckError ----------
@@ -2423,13 +2422,12 @@ def _active_kid() -> str:
 
 
 # ----------------------------------------------------------------------
-# US-OROF — backchannel_logout_on_revoke_only per-app flag
-# Plan: see project-internal design notes
+# backchannel_logout_on_revoke_only — per-app flag
 # ----------------------------------------------------------------------
 
 
 class TestBackChannelLogoutOnRevokeOnlyModel(OIDCTestCase):
-    """— model field shape ()."""
+    """Model-field shape for the per-app `backchannel_logout_on_revoke_only` flag."""
 
     def test_field_exists_default_false_with_help_text(self) -> None:
         field = AllianceAuthApplication._meta.get_field(

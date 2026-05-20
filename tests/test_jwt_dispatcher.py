@@ -29,8 +29,7 @@ class TestDOTContract(TestCase):
     """
     Invariant test that locks DOT's ``AccessToken.token`` field shape
     so a future DOT release cannot silently break our wide-token
-    assumption (see the internal design notes
-    Decision D and Risk R1').
+    assumption.
     """
 
     def test_dot_access_token_field_is_textfield(self) -> None:
@@ -42,8 +41,7 @@ class TestDOTContract(TestCase):
             field,
             TextField,
             "DOT regression: AccessToken.token narrowed; widening the "
-            "field is now this module's responsibility — see internal design notes "
-            "Decision D for the rationale and the migration recipe.",
+            "field is now this module's responsibility.",
         )
 
 
