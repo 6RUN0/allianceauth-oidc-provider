@@ -89,6 +89,14 @@ dev = [
     "django-stubs>=5.2.9",
     "docformatter>=1.7",
     "fakeredis>=2.33",
+    # Property-based testing for cryptographic invariants:
+    # PKCE code_verifier -> code_challenge round-trip, scope -> claim
+    # mapping monotonicity, state/nonce passthrough. Hypothesis
+    # generates structured random inputs from a strategy and shrinks
+    # to a minimal failing case. Failing examples are cached under
+    # ``.hypothesis/`` (gitignored) so a regression replays the exact
+    # input that broke without re-rolling.
+    "hypothesis>=6.118",
     "mypy>=1.19",
     "nox>=2026.2.9",
     "parameterized>=0.9",
