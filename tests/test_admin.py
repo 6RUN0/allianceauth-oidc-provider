@@ -303,7 +303,7 @@ class TestApplicationAdminSendTestBackchannelLogout(OIDCTestCase):
 
     def test_c1_action_skips_revoke_only_apps_with_warning(self) -> None:
         """
-        C-1 regression: an app configured with
+        regression: an app configured with
         ``backchannel_logout_on_revoke_only=True`` must NOT receive
         the synthetic ``admin_test`` signal — the dispatcher would
         silently no-op on it, so the admin button looked successful

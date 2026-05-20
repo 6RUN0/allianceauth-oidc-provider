@@ -193,9 +193,14 @@ Outbound HTTP discipline:
   bounded `concurrent.futures.ThreadPoolExecutor` (3 s wall-clock),
   not `socket.setdefaulttimeout` — the latter is a process-global
   mutable and does NOT bound `getaddrinfo` (a libc resolver call).
-  Private / loopback / link-local / multicast / reserved IPs are
-  rejected unless the dev-only escape hatch
+  Private / loopback / link-local / multicast / reserved /
+  unspecified (`0.0.0.0` / `::`) IPs are rejected unless the
+  dev-only escape hatch
   `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` is set.
+  IPv4-mapped IPv6 (`::ffff:a.b.c.d`) and 6to4 (`2002:…`) addresses
+  are unmapped to their embedded IPv4 before predicate checks, so a
+  resolver returning a v6-encoded private address cannot bypass the
+  gate.
 
 - **DNS-failure policy is non-blocking.** Transient resolver failures
   (`gaierror`, `socket.timeout`, `OSError`,

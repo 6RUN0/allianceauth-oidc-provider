@@ -10,9 +10,10 @@ This module ships with two access-token wire formats:
   configuration changes.
 - **JWT (RFC 9068)** — JSON Web Tokens with `typ="at+jwt"`, signed with
   `RS256` against the same `OIDC_RSA_PRIVATE_KEY` that signs id_tokens.
-  Off-the-shelf reverse-proxy auth tools (oauth2-proxy, mod_auth_openidc,
-  HAProxy `oauth2-bouncer`, Envoy `oauth2_proxy`) validate locally
-  against the published JWKS — zero round-trips on the hot path.
+  Off-the-shelf reverse-proxy auth tools (oauth2-proxy,
+  mod_auth_openidc, and similar JWKS-aware validators) validate
+  locally against the published JWKS — zero round-trips on the hot
+  path.
 
 JWT mode is **opt-in** (default `"opaque"`) and **stateful**: each issued
 JWT lives in `oauth2_provider_accesstoken.token` exactly like the opaque
@@ -289,6 +290,7 @@ machine-to-machine tokens.
 
 **Symptom: I rotated the key and every active session broke.**
 
-You skipped the overlap step (§5.2). Restore the previous key as
+You skipped the overlap step (the "Key rotation" recipe in §5).
+Restore the previous key as
 `OIDC_RSA_PRIVATE_KEY` and add the new key to
 `OIDC_RSA_PRIVATE_KEYS_INACTIVE`, then redo the rotation correctly.

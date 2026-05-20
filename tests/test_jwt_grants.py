@@ -295,7 +295,7 @@ class TestBackcompatLifecycle(GrantedOIDCTestCase):
 
 
 # ---------------------------------------------------------------------------
-# Follow-up coverage from second-pass review (, , , )
+# Follow-up coverage
 # ---------------------------------------------------------------------------
 
 

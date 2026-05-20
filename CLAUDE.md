@@ -254,5 +254,5 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
   (which decays whenever a field is added). DOT periodically alters its `AbstractApplication`,
   so new migrations may be needed when bumping the DOT version. Beyond the original
   state/group/active/debug_mode set, the schema now also carries `pkce_required`,
-  `access_token_format`, `back_channel_logout_uri`, `back_channel_logout_on_revoke_only`,
+  `access_token_format`, `backchannel_logout_uri`, `backchannel_logout_on_revoke_only`,
   `logo_url`, `allowed_origins`, plus the `IssuedCodeAudit` and `BackChannelLogoutAttempt` tables.

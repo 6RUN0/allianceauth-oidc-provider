@@ -134,8 +134,6 @@ class TestDebugLogging(GrantedOIDCTestCase):
         """
         Symmetric negative case: ``True → False`` between authorize and
         exchange must suppress the INFO line on exchange.
-
-        Closes the symmetry gap surfaced by the second-pass review.
         """
         self.oauth_app.debug_mode = True
         self.oauth_app.save()

@@ -36,7 +36,11 @@ def install_if_enabled() -> None:
     """
     Activate the patch unless ``AA_USE_FAKE_REDIS=0``.
 
-    Idempotent — calling twice keeps the same fake server.
+    Re-callable safely — the module-level ``_server`` is reused so the
+    fake-data layer stays consistent; each call does push another
+    ``patch().start()`` onto the patcher stack, but in practice the
+    test settings module imports once per process so this does not
+    accumulate in real use.
 
     The patch is started without a matching ``stop()`` because this runs
     at module-import time of the test settings: there is no enclosing

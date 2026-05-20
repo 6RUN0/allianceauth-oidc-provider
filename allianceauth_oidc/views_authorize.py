@@ -463,11 +463,6 @@ class AuthAuthorizationView(AuthorizationView):
         if reauth_response is not None:
             return reauth_response
 
-        # IMPORTANT: must run for BOTH GET and POST to prevent POST-bypass.
-        # Why in dispatch():
-        # - Django OAuth Toolkit AuthorizationView may handle GET/POST
-        #   differently.
-        # - if checks are only in get()/post(), it's easy to miss a code path.
         app = self._get_app(request)
         decision = DEFAULT_POLICY.decide(user, app)
 

@@ -782,7 +782,7 @@ class TestCodeReuseTokenRevocation(GrantedOIDCTestCase):
 
     def test_c4_audit_row_survives_application_delete(self):
         """
-        C-4 regression: ``IssuedCodeAudit.application`` FK is
+        regression: ``IssuedCodeAudit.application`` FK is
         ``on_delete=SET_NULL`` so admin-driven RP deletion preserves
         ``reuse_count>=1`` forensic rows. The
         ``application_client_id_snapshot`` column lets the row
@@ -804,7 +804,7 @@ class TestCodeReuseTokenRevocation(GrantedOIDCTestCase):
         survivor = IssuedCodeAudit.objects.get(pk=row.pk)
         self.assertIsNone(
             survivor.application,
-            "C-4 FK must be SET_NULL on application delete",
+            "FK must be SET_NULL on application delete",
         )
         self.assertEqual(
             snapshot_client_id, survivor.application_client_id_snapshot

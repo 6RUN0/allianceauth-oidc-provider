@@ -1,43 +1,43 @@
 """
-Regression tests added during the audit pass.
+Regression tests for cross-cutting audit / observability gaps.
 
-The pass closed:
+The bugs the follow-up review closed:
 
-* H-1  — ``logout_token`` MUST carry an ``exp`` claim.
-*   — ``oidc_code_reuse_detected`` MUST carry
-  ``revoke_succeeded`` so SIEM can distinguish "reuse detected and
-  tokens recalled" from "reuse detected but revocation failed".
-* CR-HIGH-4 — ``_record_code_issuance`` silent skip on
-  ``application=None`` MUST emit ``aa_oidc_code_audit_skipped`` so the
-  degraded SHOULD-overlay path is operator-observable.
-* CR-HIGH-2 — ``dispatch_backchannel_logout`` broad ``except`` blocks
-  MUST log ``exc_info=True`` so corrupt-PEM / broker failures retain
-  their root-cause traceback in operator logs.
-* Coverage gaps surfaced by the audit pass:
-  - ``_handle_potential_code_reuse`` AT-only revocation branch
-    (``auth_provider.py:702-706``) when no refresh token was issued.
-  - ``policy_rejections`` ``stage`` label coverage for
-    ``validate_refresh`` / ``validate_bearer`` / ``save_bearer``.
-  - ``AccessPolicy.enforce()`` happy and denial paths
-    (``security.py:267-279``) — previously dead code.
-  - ``AccessChecker._log_state_diag`` / ``_log_group_diag`` debug-mode
-    diagnostics (``security.py:417-451``).
-  - ``_max_age_expired`` with ``last_login=None``
-    (``views_authorize.py:65-72``).
-  - ``send_logout_token`` user/application disappeared between
-    enqueue and dispatch (``tasks.py:261-267``).
-  - ``dispatch_backchannel_logout`` signing-key resolution failure
-    (``logout.py:274-289``).
-  - ``views_introspect`` defensive branches (lines 73-82, 118,
-    121-124, 153) — empty response, malformed JSON, non-dict JSON,
-    no-token request, audit emit failure.
-  - ``checks.py`` bootstrap exception paths for E002/E003.
+* ``logout_token`` MUST carry an ``exp`` claim.
+* ``oidc_code_reuse_detected`` MUST carry ``revoke_succeeded`` so
+  SIEM can distinguish "reuse detected and tokens recalled" from
+  "reuse detected but revocation failed".
+* ``_record_code_issuance`` silent skip on ``application=None`` MUST
+  emit ``aa_oidc_code_audit_skipped`` so the degraded SHOULD-overlay
+  path is operator-observable.
+* ``dispatch_backchannel_logout`` broad ``except`` blocks MUST log
+  ``exc_info=True`` so corrupt-PEM / broker failures retain their
+  root-cause traceback in operator logs.
+
+Coverage gaps covered by this module:
+
+* ``_handle_potential_code_reuse`` AT-only revocation branch when no
+  refresh token was issued.
+* ``policy_rejections`` ``stage`` label coverage for
+  ``validate_refresh`` / ``validate_bearer`` / ``save_bearer``.
+* ``AccessPolicy.enforce()`` happy and denial paths.
+* ``AccessChecker._log_state_diag`` / ``_log_group_diag`` debug-mode
+  diagnostics.
+* ``_max_age_expired`` with ``last_login=None``.
+* ``send_logout_token`` user/application disappeared between enqueue
+  and dispatch.
+* ``dispatch_backchannel_logout`` signing-key resolution failure.
+* ``views_introspect`` defensive branches — empty response,
+  malformed JSON, non-dict JSON, no-token request, audit emit
+  failure.
+* ``checks.py`` bootstrap exception paths for E002/E003.
 
 The tests live in one file because they were authored as a single
-audit-pass batch; their natural home is alongside the production fix
-they regression-test. Future moves to per-domain files (test_token,
-test_security, test_back_channel_logout) are fine — none of the
-fixtures here are shared with anything else in tests/.
+follow-up batch; their natural home is alongside the production fix
+they regression-test. Future moves to per-domain files
+(``test_token``, ``test_security``, ``test_back_channel_logout``)
+are fine — none of the fixtures here are shared with anything else
+in ``tests/``.
 """
 
 from __future__ import annotations
@@ -221,7 +221,7 @@ class TestCodeReuseATOnlyRevocation(OIDCTestCase):
         )
 
 
-# ---------- CR-HIGH-4 — code_audit_skipped counter ----------
+# ----------  — code_audit_skipped counter ----------
 
 
 class TestCodeAuditSkippedCounter(SimpleTestCase):
@@ -389,7 +389,7 @@ class TestDispatchSigningKeyFailure(OIDCTestCase):
     ``oidc_logout_dispatched(success=False, reason="signing_kid_resolve_failed")``
     when ``_active_signing_kid`` raises (corrupt PEM / missing
     setting). Covers ``logout.py:273-289``. Also pins the
-    ``exc_info=True`` requirement from CR-HIGH-2.
+    ``exc_info=True`` requirement from .
     """
 
     def test_corrupt_pem_triggers_resolve_failed_audit(self) -> None:
@@ -428,7 +428,7 @@ class TestDispatchSigningKeyFailure(OIDCTestCase):
         self.assertEqual(
             captured[0].get("reason"), "signing_kid_resolve_failed"
         )
-        # CR-HIGH-2: exc_info=True must surface the traceback in the
+        # exc_info=True must surface the traceback in the
         # log, not just the audit reason code.
         self.assertTrue(
             any(

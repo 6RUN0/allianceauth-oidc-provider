@@ -59,7 +59,7 @@ POST-ит подписанный `logout_token` каждому Relying Party, к
    `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` только для
    dev/compose-окружений.
 
-## 3. Triggers (T1)
+## 3. Триггерные точки (T1)
 
 Fan-out логаута запускается при срабатывании ЛЮБОГО из пяти
 сайтов:
@@ -195,8 +195,12 @@ RP-стороне. Потолок 125 s фактически достигает�
   НЕ `socket.setdefaulttimeout` — последний является процесс-
   глобальным mutable и НЕ ограничивает `getaddrinfo` (вызов libc
   resolver). Private / loopback / link-local / multicast /
-  reserved IP отвергаются, кроме случая dev-only escape hatch
-  `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True`.
+  reserved / unspecified (`0.0.0.0` / `::`) IP отвергаются, кроме
+  случая dev-only escape hatch
+  `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True`. IPv4-mapped
+  IPv6 (`::ffff:a.b.c.d`) и 6to4 (`2002:…`) адреса разворачиваются
+  до встроенного IPv4 перед проверкой предикатов, поэтому resolver,
+  отдавший v6-кодированный приватный адрес, не обходит gate.
 
 - **Политика DNS-сбоев — non-blocking.** Транзиентные сбои resolver
   (`gaierror`, `socket.timeout`, `OSError`,

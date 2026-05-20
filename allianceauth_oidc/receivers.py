@@ -72,7 +72,7 @@ _PENDING_LOGOUTS: weakref.WeakKeyDictionary[Any, Any] = (
 )
 
 
-# ---------- Trigger 2: User.is_active flip ----------
+# ---------- Trigger 1: User.is_active flip ----------
 
 
 def on_user_pre_save(sender: Any, instance: Any, **kwargs: Any) -> None:
@@ -120,7 +120,7 @@ def on_user_post_save(
         )
 
 
-# ---------- Trigger 3: User.groups m2m change ----------
+# ---------- Trigger 2: User.groups m2m change ----------
 
 
 def on_user_groups_changed(
@@ -160,7 +160,7 @@ def on_user_groups_changed(
             )
 
 
-# ---------- Trigger 4: AA state_changed ----------
+# ---------- Trigger 3: AA state_changed ----------
 
 
 def on_state_changed(
@@ -185,7 +185,7 @@ def on_state_changed(
             )
 
 
-# ---------- Trigger 5: User pre_delete + post_delete ----------
+# ---------- Trigger 4: User pre_delete + post_delete ----------
 
 
 def on_user_pre_delete(sender: Any, instance: Any, **kwargs: Any) -> None:

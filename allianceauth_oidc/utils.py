@@ -192,7 +192,13 @@ class SecretRedactor:
 
     @classmethod
     def from_django(cls) -> Self:
-        """Build a redactor from the cached Django settings snapshot."""
+        """
+        Build a redactor from the cached Django settings snapshot.
+
+        Cache lives in ``OIDCSettings.from_django`` /
+        ``app_settings._cached_snapshot`` and is invalidated by
+        Django's ``setting_changed`` signal in tests.
+        """
         return cls.from_settings(OIDCSettings.from_django())
 
 

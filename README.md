@@ -428,7 +428,7 @@ python manage.py oidc_revoke_user_tokens --username=alice
 python manage.py oidc_audit_tokens --client-id=abc123 --format=csv
 ```
 
-`create_app` writes a Django admin `LogEntry` on success so the action is visible in `/admin/`'s
+`oidc_create_app` writes a Django admin `LogEntry` on success so the action is visible in `/admin/`'s
 history without code changes; the destructive commands log at `INFO` / `WARNING`.
 
 ### Per-app PKCE

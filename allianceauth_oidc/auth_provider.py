@@ -678,16 +678,21 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 .first()
             )
             if audit is None:
-                # No audit row — either the code is genuinely unknown
-                # to this provider (not a replay; caller returns False
-                # / ``invalid_grant`` on its own) OR we hit the
-                # ``_record_code_issuance`` race window between
-                # ``super().save_bearer_token`` commit and audit
-                # insert. Increment the ``code_reuse_audit_misses``
-                # counter on either path so operators can correlate
-                # against the ``oidc_code_reuse_detected`` signal —
-                # the counter is an upper bound, the signal is the
-                # confirmed-hit signal.
+                # No audit row — the code is genuinely unknown to this
+                # provider (fuzzer probes / replays against an
+                # unrelated AS / clock-skewed Grant-expiry that DOT
+                # rejected before audit lookup). The
+                # ``_record_code_issuance`` race window used to be a
+                # second source here; the outer ``transaction.atomic``
+                # opened by :meth:`save_bearer_token` now binds the
+                # AT/RT writes and the audit insert together, so a
+                # code this provider actually issued never observes
+                # a missing audit row. The caller returns False /
+                # ``invalid_grant`` on its own; we just increment the
+                # ``code_reuse_audit_misses`` counter so operators can
+                # correlate the probe rate against the
+                # ``oidc_code_reuse_detected`` signal — the two are
+                # disjoint by construction.
                 code_reuse_audit_misses.labels(
                     client_id=getattr(client, "client_id", "unknown")
                     or "unknown"

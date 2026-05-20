@@ -36,7 +36,7 @@ confirm the new tests actually pin the new invariant.
 
 Full sweep (multi-hour):
 
-```bash
+```sh
 make mutation
 ```
 
@@ -61,7 +61,7 @@ Internally this:
 
 Render the HTML survivor browser:
 
-```bash
+```sh
 make mutation-html
 xdg-open html/mutation-report.html
 ```
@@ -95,7 +95,7 @@ isolated copies of the source tree under `mktemp`, sharing one
 `.venv` via symlink, and pointing the coordinator at the resulting
 worker URLs.
 
-```bash
+```sh
 make mutation-parallel              # N=4 workers (default)
 make mutation-parallel N=8          # N=8 workers
 uv run nox -s mutation_parallel -- 2          # direct invocation
@@ -144,7 +144,7 @@ Revert the edit before committing. For repeated narrow sweeps,
 maintain a per-scope variant of the config (e.g.
 `cosmic-ray-security.toml`) and invoke it explicitly:
 
-```bash
+```sh
 uv run cosmic-ray init cosmic-ray-security.toml mutation.sqlite
 uv run cosmic-ray exec cosmic-ray-security.toml mutation.sqlite
 uv run cr-report mutation.sqlite

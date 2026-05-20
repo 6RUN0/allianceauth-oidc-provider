@@ -223,8 +223,9 @@ policy_rejections = _counter(
 # Reuse-detection observability for the RFC 6749 §10.5 SHOULD
 # overlay. ``_handle_potential_code_reuse`` walks the
 # ``IssuedCodeAudit`` table to find the linked tokens to revoke on a
-# reuse hit. When no audit row exists for the presented code, this
-# counter fires.
+# reuse hit. When the audit row is absent — exclusively for
+# never-issued codes after the atomic wrap below closed the
+# race-window source — this counter fires.
 #
 # ``save_bearer_token`` wraps the parent call and the audit-row
 # insert in a single ``transaction.atomic``, so the prior race-window

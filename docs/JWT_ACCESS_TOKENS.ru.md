@@ -11,9 +11,9 @@
 - **JWT (RFC 9068)** — JSON Web Token с `typ="at+jwt"`, подпись
   `RS256` тем же ключом `OIDC_RSA_PRIVATE_KEY`, что и id_token.
   Готовые reverse-proxy auth-инструменты (oauth2-proxy,
-  mod_auth_openidc, HAProxy `oauth2-bouncer`, Envoy `oauth2_proxy`)
-  валидируют токен локально по опубликованному JWKS — без round-trip'a
-  на горячем пути.
+  mod_auth_openidc и аналогичные JWKS-валидаторы) валидируют токен
+  локально по опубликованному JWKS — без round-trip'a на горячем
+  пути.
 
 JWT-режим **opt-in** (по умолчанию `"opaque"`) и **stateful**: каждый
 выпущенный JWT хранится в `oauth2_provider_accesstoken.token` ровно
@@ -301,7 +301,8 @@ machine-to-machine токенов.
 
 **Симптом: я ротировал ключ и все активные сессии сломались.**
 
-Пропустили шаг overlap (§5.2). Восстановите предыдущий ключ как
+Пропустили шаг overlap (рецепт «Ротация ключей» в §5). Восстановите
+предыдущий ключ как
 `OIDC_RSA_PRIVATE_KEY`, добавьте новый в
 `OIDC_RSA_PRIVATE_KEYS_INACTIVE`, и проведите ротацию заново
 правильно.

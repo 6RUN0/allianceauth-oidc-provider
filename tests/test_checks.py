@@ -115,7 +115,7 @@ class TestApplicationModelCheck(TestCase):
     def test_manage_check_raises_with_e002(self) -> None:
         """
         Integration: ``manage.py check`` exits non-zero when E002
-        fires. Mirrors the ``test_ac19f_manage_check_raises_with_e001``
+        fires. Mirrors the ``test_manage_check_raises_with_e001``
         contract — without this assertion, a missing ``@register``
         decorator would leave the check importable but unreachable
         through the CLI surface operators actually use.

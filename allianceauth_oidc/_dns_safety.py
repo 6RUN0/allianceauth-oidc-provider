@@ -2,9 +2,9 @@
 SSRF DNS safety helpers shared between admin-form and worker paths.
 
 The helpers were previously tucked into :mod:`allianceauth_oidc.models`
-as ``_``-prefixed names; they are public by use (the Celery worker
-re-imports them through ``# pyright: ignore`` annotations), so this
-module lifts them into a clearly-named home and drops the leading
+as ``_``-prefixed names; they are public by use (both the admin-form
+``clean()`` path and the Celery worker import them), so this module
+lifts them into a clearly-named home and drops the leading
 underscores. Behaviour is unchanged: ``models.py`` and ``tasks.py``
 both delegate here.
 

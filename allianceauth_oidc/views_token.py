@@ -84,7 +84,7 @@ class TokenAudit:
     successful token response.
 
     Lives next to ``TokenView`` because that's the only consumer, but
-    splits the five distinct steps (size-cap → parse → DB lookup →
+    splits the audit pipeline (size-cap + parse → DB lookup →
     optional debug log → signal dispatch) into methods so each can be
     unit-tested in isolation. Each step is wrapped in its own narrow
     ``try`` so a misbehaving component (malformed body, hashed-token
