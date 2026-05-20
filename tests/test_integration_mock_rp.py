@@ -51,10 +51,9 @@ from ._factories import (
     make_corp,
     make_user,
 )
+from ._oidc_testcase import REDIRECT_URI, SCOPE_FULL
 
-REDIRECT_URI = "http://localhost/redir/"
 HTTP_TIMEOUT = 5
-SCOPE_FULL = "openid profile email"
 
 
 def _oauth2_provider_without_iss() -> dict:
