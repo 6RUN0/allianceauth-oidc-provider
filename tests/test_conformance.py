@@ -22,6 +22,7 @@ from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
     SCOPE_OPENID,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
@@ -141,7 +142,7 @@ class TestRequestedIdTokenClaimsSelector(OIDCTestCase):
         self.assertNotIn("acr", narrowed)
 
 
-class TestPKCEFlow(OIDCTestCase):
+class TestPKCEFlow(GrantedOIDCTestCase):
     def _authorize_with_pkce(self, *, challenge: str, state: str) -> str:
         """Issue an authorization code with a code_challenge attached."""
         return self.authorize_to_code(
@@ -173,7 +174,6 @@ class TestPKCEFlow(OIDCTestCase):
         authorize-time challenge is present.
         """
         verifier, challenge = self.make_pkce_pair()
-        self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-happy"
         )
@@ -191,7 +191,6 @@ class TestPKCEFlow(OIDCTestCase):
         """
         _, challenge = self.make_pkce_pair()
         wrong_verifier = _b64url(os.urandom(32))  # unrelated random bytes
-        self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-wrong-verifier"
         )
@@ -212,7 +211,6 @@ class TestPKCEFlow(OIDCTestCase):
         Omitting it must fail.
         """
         _, challenge = self.make_pkce_pair()
-        self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-missing-verifier"
         )
@@ -231,7 +229,6 @@ class TestPKCEFlow(OIDCTestCase):
         defeat PKCE entirely.
         """
         _, challenge = self.make_pkce_pair()
-        self.grant_oidc_access(self.user1)
         code = self._authorize_with_pkce(
             challenge=challenge, state="pkce-empty-verifier"
         )
@@ -243,7 +240,7 @@ class TestPKCEFlow(OIDCTestCase):
         )
 
 
-class TestPerAppPkceRequired(OIDCTestCase):
+class TestPerAppPkceRequired(GrantedOIDCTestCase):
     """
     Per-app ``pkce_required`` override exercised over the HTTP authorize
     surface.
@@ -267,7 +264,6 @@ class TestPerAppPkceRequired(OIDCTestCase):
         must fail (DOT redirects with ``error=invalid_request``).
         """
         creds = make_app(owner=self.user1, pkce_required=True)
-        self.grant_oidc_access(self.user1)
         resp = self._authorize_no_challenge(
             client_id=creds.client_id, state="pkce-strict"
         )
@@ -286,7 +282,6 @@ class TestPerAppPkceRequired(OIDCTestCase):
         creds = make_app(
             owner=self.user1, pkce_required=False, skip_authorization=True
         )
-        self.grant_oidc_access(self.user1)
         resp = self._authorize_no_challenge(
             client_id=creds.client_id, state="pkce-lenient"
         )
@@ -308,7 +303,6 @@ class TestPerAppPkceRequired(OIDCTestCase):
         creds = make_app(
             owner=self.user1, pkce_required=True, skip_authorization=True
         )
-        self.grant_oidc_access(self.user1)
         resp = self.authorize_get_default(
             self.user1,
             scope=SCOPE_OPENID,
@@ -347,7 +341,6 @@ class TestPerAppPkceRequired(OIDCTestCase):
         creds = make_app(
             owner=self.user1, pkce_required=True, skip_authorization=True
         )
-        self.grant_oidc_access(self.user1)
         _, challenge = self.make_pkce_pair()
         resp = self.authorize_get_default(
             self.user1,
@@ -375,7 +368,7 @@ class TestPerAppPkceRequired(OIDCTestCase):
         )
 
 
-class TestClaimsRequestParameterHTTP(OIDCTestCase):
+class TestClaimsRequestParameterHTTP(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §5.5 — the ``claims`` request parameter is JSON
     embedded in a query parameter. Mis-shaped input is an attractive
@@ -396,7 +389,6 @@ class TestClaimsRequestParameterHTTP(OIDCTestCase):
         spec-canonical example. Flow must complete and a code is
         issued.
         """
-        self.grant_oidc_access(self.user1)
         claims_json = '{"id_token":{"acr":{"essential":true}}}'
         code = self.authorize_to_code(
             self.user1,
@@ -415,7 +407,6 @@ class TestClaimsRequestParameterHTTP(OIDCTestCase):
         request and ignore the bad claim (the project's choice) or
         reject with an OAuth error redirect. A 5xx is forbidden.
         """
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.client.get(
             "/o/authorize/",
@@ -436,7 +427,6 @@ class TestClaimsRequestParameterHTTP(OIDCTestCase):
 
     def test_authorize_with_empty_claims_param_does_not_500(self) -> None:
         """An empty ``claims=`` query parameter must be tolerated."""
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
         resp = self.client.get(
             "/o/authorize/",
@@ -452,7 +442,7 @@ class TestClaimsRequestParameterHTTP(OIDCTestCase):
         self.assertLess(resp.status_code, 500)
 
 
-class TestLocaleNegotiation(OIDCTestCase):
+class TestLocaleNegotiation(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §5.2 + §3.1.2.1 — ``ui_locales`` and
     ``claims_locales`` are OPTIONAL request parameters. The
@@ -467,7 +457,6 @@ class TestLocaleNegotiation(OIDCTestCase):
 
     def test_ui_locales_does_not_break_authorize_flow(self) -> None:
         """``ui_locales=fr,en`` must be accepted and a code issued."""
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1,
             scope=SCOPE_OPENID,
@@ -479,7 +468,6 @@ class TestLocaleNegotiation(OIDCTestCase):
 
     def test_claims_locales_does_not_break_authorize_flow(self) -> None:
         """``claims_locales=de,en`` must be accepted and a code issued."""
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(
             self.user1,
             scope=SCOPE_OPENID,
@@ -501,7 +489,6 @@ class TestLocaleNegotiation(OIDCTestCase):
         self.user1.profile.language = "ru"
         self.user1.profile.save()
         self.user1.refresh_from_db()
-        self.grant_oidc_access(self.user1)
 
         tokens = self.run_code_flow(
             self.user1,
@@ -523,7 +510,7 @@ class TestLocaleNegotiation(OIDCTestCase):
         )
 
 
-class TestPublicClientPolicy(OIDCTestCase):
+class TestPublicClientPolicy(GrantedOIDCTestCase):
     """
     Public-client (``client_type=public``) contracts.
 
@@ -559,7 +546,6 @@ class TestPublicClientPolicy(OIDCTestCase):
         from urllib.parse import parse_qs, urlparse
 
         creds = self._public_app(pkce_required=True)
-        self.grant_oidc_access(self.user1)
 
         verifier, challenge = self.make_pkce_pair()
 
@@ -602,7 +588,6 @@ class TestPublicClientPolicy(OIDCTestCase):
         from urllib.parse import parse_qs, urlparse
 
         creds = self._public_app(pkce_required=True)
-        self.grant_oidc_access(self.user1)
         verifier, challenge = self.make_pkce_pair()
         resp = self.authorize_get_default(
             self.user1,
