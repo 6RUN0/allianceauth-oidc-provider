@@ -1,0 +1,41 @@
+# Codespell ignore-words. One word per line. Loaded via
+# ``[tool.codespell] ignore-words = ".codespell-ignore.txt"``.
+#
+# Two classes of entries:
+#
+# 1. Historical artefacts (cannot be edited safely):
+#    * ``applicaiton`` — intentional typo in security.py docstring
+#      demonstrating Protocol typo-catching.
+#    * ``debuging`` — in an already-applied migration's help_text.
+#    * ``assertin`` — codespell tokenises ``assertIn`` unittest API.
+#
+# 2. RFC-style hyphenated forms deliberately kept verbatim in OAuth/
+#    OIDC commentary, where the solid forms read wrong:
+#    * ``re-using``, ``re-used``, ``re-use``, ``re-uses``
+#    * ``by-passing``
+#    * ``pre-empt``
+#    * ``unparseable`` (Python tokenize docs precedent).
+#
+# OIDC-domain acronyms (FAPI, BCL, JWKS, PKCE, OP, RP, IdP) are not
+# in codespell's dictionary today, but listed here pre-emptively in
+# case a future dictionary update proposes a fix. Add new entries
+# at the bottom with a one-line reason in this file's header section.
+applicaiton
+debuging
+re-using
+re-used
+re-use
+re-uses
+by-passing
+unparseable
+pre-empt
+assertin
+
+# OIDC / OAuth2 acronyms — pre-emptive ignore.
+fapi
+bcl
+jwks
+pkce
+oidc
+oauth
+idp
