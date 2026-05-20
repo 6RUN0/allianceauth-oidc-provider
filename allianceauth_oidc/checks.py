@@ -32,9 +32,9 @@ the README references the migration path.
   ``invalid_scope`` or receives a token response without an
   ``id_token`` member.
 
-Severity is intentionally ``Error`` for all three (per plan v5
-m-V3-1): demoting any of them to ``Warning`` would let CI and
-startup succeed and crash much later in production.
+Severity is intentionally ``Error`` for all three: demoting any of
+them to ``Warning`` would let CI and startup succeed and crash much
+later in production.
 
 In addition, two ``Warning``-level checks surface misconfigurations
 that are not fatal but routinely cause incident-class confusion:
@@ -180,10 +180,10 @@ def check_oidc_iss_endpoint_when_bcl_enabled(
     Emit ``allianceauth_oidc.E001`` (Error) when any application has
     ``backchannel_logout_uri`` set and ``OIDC_ISS_ENDPOINT`` is not.
 
-    Severity is intentionally **Error** (not Warning) per plan v5
-    m-V3-1: a demotion to Warning would let CI/start-up succeed and
-    crash the first end-user logout. Fail-loud is the right posture
-    for a structurally-required setting.
+    Severity is intentionally **Error** (not Warning): a demotion to
+    Warning would let CI/start-up succeed and crash the first
+    end-user logout. Fail-loud is the right posture for a
+    structurally-required setting.
 
     Wrapped in a broad ``try/except`` so the check tolerates the
     bootstrap case where migrations have not yet run — ``manage.py
@@ -769,10 +769,10 @@ def check_logout_uri_allow_private_in_production(
         return []
     if getattr(settings, "DEBUG", False):
         return []
-    # Architect#7 / E006: when a BCL URI is actually registered the
-    # dangerous combination has a real victim — escalate to Error
-    # unless the operator has explicitly acknowledged the trade-off
-    # via the second opt-out setting.
+    # E006: when a BCL URI is actually registered the dangerous
+    # combination has a real victim — escalate to Error unless the
+    # operator has explicitly acknowledged the trade-off via the
+    # second opt-out setting.
     acked = getattr(
         settings,
         "ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION",

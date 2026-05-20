@@ -366,10 +366,12 @@ def forward_introspect_sampled(sender, *, request, introspector, body, **kwargs)
 ### Audit-таблица повторного использования кодов
 
 RFC 6749 §10.5 SHOULD-clause defence-in-depth: каждый успешный обмен authorization-code пишет
-строку в `IssuedCodeAudit` (`code_hash`, `application`, `access_token_pk`, `refresh_token_pk`,
-`reuse_count`, `last_reuse_at`, `created_at`). При повторной попытке предъявить тот же код
-`validate_code` отзывает связанные токены и кидает `oidc_code_reuse_detected` для корреляции
-в SIEM.
+строку в `IssuedCodeAudit` (`code_hash`, `application`, `application_client_id_snapshot`,
+`access_token_pk`, `refresh_token_pk`, `reuse_count`, `last_reuse_at`, `created_at`). При
+повторной попытке предъявить тот же код `validate_code` отзывает связанные токены и кидает
+`oidc_code_reuse_detected` для корреляции в SIEM. Колонка `application_client_id_snapshot`
+заполняется при вставке строки и переживает админ-удаление RP (FK `application` —
+`SET_NULL`), так что per-RP forensic-запросы по историческим строкам продолжают работать.
 
 **Retention**:
 
@@ -393,7 +395,7 @@ SIEM работает без polling'а таблицы. Подключите с�
 - `active` — `is_usable()` возвращает это значение; деактивированное приложение не выдаёт коды.
 - `debug_mode` — per-app флаг повышенного уровня логов (см. *Debug-логи*).
 - `pkce_required` — per-app форсирование PKCE; читается через
-  `pkce.per_app_pkce_required` (делегирует в `AccessPolicy.pkce_required`).
+  `pkce.per_app_pkce_required` (делегирует в `AccessPolicy.requires_pkce`).
 - `access_token_format` — per-app override wire-формата access-токена
   (`"opaque"` / `"jwt"` / пусто). Пустое значение наследует deployment-wide
   `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` (по умолчанию `"opaque"`).
@@ -552,6 +554,26 @@ data-minimization, troubleshooting** — см.
 глобал) и указывает на `manage.py oidc_audit_tokens --include-expired`,
 где колонка `format` позволяет проверить wire-формат каждого токена со
 стороны оператора.
+
+### Back-channel logout (OIDC BCL 1.0)
+
+Sub-only [back-channel logout](docs/BACK_CHANNEL_LOGOUT.ru.md)
+встроен. Задайте `backchannel_logout_uri` у приложения, чтобы
+включить per-RP fan-out; AS POST'ит подписанный `logout_token`
+каждый раз, когда сессия завершается (revoke / деактивация /
+смена группы или state / удаление аккаунта). Пять триггерных
+точек покрывают реальные операторские workflow'ы. SSRF-защиты
+(host DNS check с 3-секундным wall-clock'ом, scheme allow-list,
+`allow_redirects=False`), spec-compliant `events` URI и
+secret-pin регрессия на каждой log-строке держат dispatch-путь
+безопасным. Session-scoped logout (`sid`) намеренно отложен до
+следующей feature-итерации.
+
+`OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` обязателен, как только
+хотя бы у одного RP появляется `backchannel_logout_uri` — у
+Celery worker'а нет HTTP request context. Django system check
+(`allianceauth_oidc.E001`, severity `Error`) проваливает
+`manage.py check` на деплое, если настройка отсутствует.
 
 ### System checks (`manage.py check`)
 

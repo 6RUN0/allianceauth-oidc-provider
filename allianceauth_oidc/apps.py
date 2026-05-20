@@ -89,8 +89,8 @@ def _connect_bcl_pre_save_gate() -> None:
     ``backchannel_logout_uri`` is non-empty so the typical
     ``Application.save()`` under the OAuth code-exchange path (which
     never touches BCL fields) pays no DNS cost. The validator itself
-    is non-blocking on transient DNS failures (per AC-3b) — so a
-    flaky resolver does not break unrelated app saves.
+    is non-blocking on transient DNS failures — so a flaky resolver
+    does not break unrelated app saves.
 
     ``weak=False`` keeps the receiver alive past local scope (the
     closure would otherwise be garbage-collected after ``ready()``
@@ -140,8 +140,7 @@ def _check_jwt_wiring() -> None:
     Log a warning when JWT mode is on but the dispatcher is missing.
 
     Mitigates the "operator activated JWT mode but forgot to wire
-    ``ACCESS_TOKEN_GENERATOR``" failure mode (Pre-mortem Scenario 4
-    in ``.omc/plans/jwt-access-tokens-plan-v3.md``). SAFE-by-design:
+    ``ACCESS_TOKEN_GENERATOR``" failure mode. SAFE-by-design:
     log-only, no settings mutation. Wrapped in ``try/except`` because
     reading ``oauth2_settings.ACCESS_TOKEN_GENERATOR`` triggers DOT's
     ``perform_import`` (``oauth2_provider/settings.py``); a bogus

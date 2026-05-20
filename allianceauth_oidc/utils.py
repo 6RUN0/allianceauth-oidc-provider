@@ -33,9 +33,9 @@ class LogoutDebugMeta(TypedDict):
     Curated, secret-free debug payload for back-channel logout log
     lines (``logout.py`` + ``tasks.send_logout_token``).
 
-    Allow-list per plan v5 §5.6 AC-35. Adding a field here is an
-    intentional, security-reviewed decision: the dispatcher's log
-    line is one of the few places where a stray ``access_token`` or
+    Closed allow-list. Adding a field here is an intentional,
+    security-reviewed decision: the dispatcher's log line is one of
+    the few places where a stray ``access_token`` or
     ``client_secret`` could leak across operator boundaries. If you
     need new metadata, extend the TypedDict and update the unit
     test in ``TestBackChannelLogoutLogging``.
@@ -49,11 +49,11 @@ class LogoutDebugMeta(TypedDict):
     reason: str | None
 
 
-# A string that has passed through ``redact_secret``. Runtime no-op
-# (NewType is erased), but the type-checker now refuses to accept a raw
-# ``str`` from ``request.POST.get("client_secret")`` in any field that
-# is annotated as ``RedactedSecret``. Catches "forgot to call
-# redact_secret" at edit time.
+# A string that has already been passed through ``SecretRedactor``.
+# Runtime no-op (NewType is erased), but the type-checker now refuses
+# to accept a raw ``str`` from ``request.POST.get("client_secret")`` in
+# any field that is annotated as ``RedactedSecret``. Catches "forgot to
+# run the redactor" at edit time.
 RedactedSecret = NewType("RedactedSecret", str)
 
 
@@ -65,7 +65,7 @@ class OIDCDebugMeta(TypedDict):
     "not in this request"). Secret-shaped fields are typed
     ``RedactedSecret | None`` so the type-checker fails any future
     code that tries to put raw ``request.POST.get("client_secret")``
-    here without going through ``redact_secret``.
+    here without running it through a :class:`SecretRedactor`.
     """
 
     grant_type: str | None
@@ -249,7 +249,7 @@ def build_oidc_debug_meta(
     payload_dict: Mapping[str, Any] = payload or {}
 
     return {
-        # request-side (safe)  # noqa: ERA001
+        # Request-side fields below are non-secret and pulled raw.
         "grant_type": post_get("grant_type"),
         "scope": post_get("scope"),
         "client_id": post_get("client_id"),
@@ -279,15 +279,15 @@ def build_logout_debug_meta(
     Build a :class:`LogoutDebugMeta` for back-channel logout log lines.
 
     Keeping this construction in one place — instead of each caller
-    formatting its own log dict — is what makes the AC-36 "no token
-    leaks under debug_mode" regression test stable. New BCL log lines
-    MUST route through this builder; if a field doesn't exist on the
-    TypedDict, the answer is to extend the TypedDict (and AC-35) and
-    NOT to ad-hoc add it to the log dict.
+    formatting its own log dict — is what keeps the "no token leaks
+    under debug_mode" regression test stable. New BCL log lines MUST
+    route through this builder; if a field doesn't exist on the
+    TypedDict, the answer is to extend the TypedDict and NOT to
+    ad-hoc add it to the log dict.
 
     ``application`` is the persisted ``AllianceAuthApplication`` (or
-    None); ``backchannel_logout_uri`` is non-secret per AC-35, so it's
-    safe to include in audit logs.
+    None); ``backchannel_logout_uri`` is a non-secret registered URL,
+    so it's safe to include in audit logs.
     """
     # ``getattr(None, "pk", None)`` returns ``None`` without raising,
     # so the per-field ``if application is not None`` wrappers were

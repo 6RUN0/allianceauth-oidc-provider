@@ -577,13 +577,13 @@ class TestCodeReuseTokenRevocation(GrantedOIDCTestCase):
 
     def test_n3_audit_failure_rolls_back_token_issuance(self):
         """
-        N-3 regression: if ``_record_code_issuance`` raises (audit DB
+        regression: if ``_record_code_issuance`` raises (audit DB
         outage, table missing, etc.), the outer ``transaction.atomic``
         in ``save_bearer_token`` MUST roll back the parent's AT/RT
-        writes too. Pre-N-3, the parent's atomic committed AT/RT
+        writes too. Pre-refactor, the parent's atomic committed AT/RT
         independently and the try/except swallowed the audit failure,
         leaving tokens issued without a reuse-detection FK link — a
-        race-window source the F-3 counter could only measure, not
+        race-window source the  counter could only measure, not
         close. The trade-off is fail-closed on audit-pipeline
         failure: legitimate clients see a 500 instead of a 200 with
         degraded reuse-detection.
@@ -705,7 +705,7 @@ class TestCodeReuseTokenRevocation(GrantedOIDCTestCase):
 
     def test_n1_lookup_helper_resolves_at_pk_via_token_checksum(self):
         """
-        N-1 regression: ``_lookup_dot_token_pk`` MUST find an
+        regression: ``_lookup_dot_token_pk`` MUST find an
         ``AccessToken`` row via the indexed ``token_checksum`` column
         even when the raw ``token`` column has been blanked after
         issuance (operator-side at-rest hashing). The prior
@@ -1464,7 +1464,7 @@ class TestConcurrentReuseLockingInvariant(OIDCTestCase):
         self,
     ) -> None:
         """
-        F-6 regression: a previous narrow ``except`` clause caught
+        regression: a previous narrow ``except`` clause caught
         ``AttributeError`` on the theory that a stale in-memory token
         instance could be missing ``revoke()``. In practice that
         scenario does not occur — the only realistic source of
@@ -1476,7 +1476,7 @@ class TestConcurrentReuseLockingInvariant(OIDCTestCase):
         ``(DatabaseError, ObjectDoesNotExist)`` only.
 
         AST-based pin: a bare ``"AttributeError" in src`` substring
-        check would false-positive on the F-6 commentary block; parse
+        check would false-positive on the  commentary block; parse
         the ``except`` handlers and assert against their exception
         names directly.
         """

@@ -194,7 +194,7 @@ class TestSplitJWTHelper(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# US-010 — Batch 2: config-priority integration, forward-compat, size guard,
+# Batch 2: config-priority integration, forward-compat, size guard,
 # unknown-client, startup wiring.
 # ---------------------------------------------------------------------------
 
@@ -204,7 +204,7 @@ class TestForwardCompat(GrantedOIDCTestCase):
     Existing deployments upgrading to this module: the migration adds
     ``access_token_format`` with ``default=None``, so legacy rows
     surface as ``None`` and must fall back to whatever the global
-    default is. The renamed test (per plan v3 C-N15) exercises the
+    default is. The renamed test ( ) exercises the
     actual dispatcher path, not DOT's own ``_load_access_token``.
     """
 

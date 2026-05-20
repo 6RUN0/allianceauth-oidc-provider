@@ -534,7 +534,7 @@ class TestValidateSilentAuthorization(OIDCTestCase):
     """
     Pin the short-circuit branches of ``validate_silent_authorization``.
 
-    Post-N-2 removal the function has exactly two positive surface
+    Post-refactor removal the function has exactly two positive surface
     bits and one is-usable kill-switch — no scope coverage, no
     per-user policy check at this layer (oauthlib does not propagate
     ``request.user`` to the validate-authorization-request callsite,
@@ -571,7 +571,7 @@ class TestValidateSilentAuthorization(OIDCTestCase):
         self,
     ):
         """
-        F-2: positive path — ``skip_authorization=True`` returns True
+        Positive path — ``skip_authorization=True`` returns True
         only after the deactivation gate passes. The fixture pins the
         ``is_usable`` callable explicitly to True so the test exercises
         the new gate ordering rather than the pre-fix short-circuit.
@@ -590,7 +590,7 @@ class TestValidateSilentAuthorization(OIDCTestCase):
 
     def test_skip_authorization_true_does_not_bypass_deactivation(self):
         """
-        F-2 regression: an operator who flips ``skip_authorization=True``
+        regression: an operator who flips ``skip_authorization=True``
         on a deactivated app must NOT silently re-auth its users via
         ``prompt=none``. Pre-fix the trusted-client short-circuit ran
         BEFORE the deactivation check, letting ``active=False`` slip
@@ -616,7 +616,7 @@ class TestValidateSilentAuthorization(OIDCTestCase):
 
     def test_non_trusted_client_with_usable_app_returns_false(self):
         """
-        N-2 regression: with ``skip_authorization=False`` (the common
+        regression: with ``skip_authorization=False`` (the common
         non-trusted SPA client) the function MUST return False even
         when the app is usable. Pre-removal, a dead scope-coverage
         branch *appeared* to allow silent refresh via prior

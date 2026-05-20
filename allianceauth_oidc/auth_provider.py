@@ -215,10 +215,11 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         Run the per-app state/groups gate against ``request.user``.
 
-        Returns True if the policy allows the operation, False otherwise. Used
-        as a post-validation hook by validate_code and validate_refresh_token
-        so the same gate runs on every token-issuing path; missing it on either
-        side leaves a hole.
+        Returns True if the policy allows the operation, False
+        otherwise. Used as a post-validation hook by
+        :meth:`validate_code`, :meth:`validate_refresh_token`, and
+        :meth:`validate_bearer_token` so the same gate runs on every
+        token-issuing path; missing it on any of them leaves a hole.
 
         ``stage`` is mandatory keyword-only so the ``policy_rejections``
         counter label cannot be accidentally omitted at a new call
@@ -240,7 +241,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         # Validator path doesn't render a denied page (the
         # OAuth response is the bool → invalid_grant translation),
         # so log here for operator visibility — the policy gate
-        # itself is decision-only after the M1 consolidation.
+        # itself is decision-only.
         logger.warning(
             "OIDC DENIED: validator stage=%s reason=%s "
             "user=%s client=%s client_id=%s",
@@ -278,8 +279,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         ``test_prompt_none_skip_authorization_redirects_with_code``
         test guards. Until oauthlib starts propagating the Django
         session user (or DOT does), this single fact
-        (``LoginRequiredMixin`` already passed`` => session user
-        exists``) is the correct semantics.
+        (``LoginRequiredMixin`` already passed ⇒ session user
+        exists) is the correct semantics.
 
         Without this override the parent abstract raises
         ``NotImplementedError`` and any ``prompt=none`` request from
@@ -326,14 +327,14 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         ``prompt=none`` receive ``error=consent_required`` and must
         prompt the user with an interactive authorize round-trip.
 
-        F-2: deactivation gate runs BEFORE ``skip_authorization`` so
+        Deactivation gate runs BEFORE ``skip_authorization`` so
         an operator who flips ``skip_authorization=True`` on a
         deactivated app cannot silently re-auth its users — the
         ``active=False`` kill-switch is honoured even on a
         previously-trusted client.
         """
         client = getattr(request, "client", None)
-        # F-2 deactivation gate — runs FIRST, BEFORE the
+        # Deactivation gate — runs FIRST, BEFORE the
         # ``skip_authorization`` short-circuit, so operator-toggled
         # ``active=False`` is honoured even on a trusted client.
         # Works without ``request.user`` because ``is_usable`` reads
@@ -388,8 +389,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         revocation propagation, which is the standard expectation for
         incident response.
 
-        Architect#3 (deferred): under high-RPS RS traffic the bearer
-        path actually issues three to four SELECTs per request
+        Performance note (deferred): under high-RPS RS traffic the
+        bearer path actually issues three to four SELECTs per request
         (``app.states.all()``, ``app.groups.all()``,
         ``user.groups.all()``, plus ``user.profile.state`` if not
         cached) because there's no view-layer prefetch hook. A
@@ -399,8 +400,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         who lost their state/group mid-cache-window stays authorised
         until TTL. The BCL fan-out path (immediate revocation) is the
         designed counter-balance for this trade-off, but turning it
-        on changes the security posture and is left to a separate
-        review cycle with an explicit operator-side ACK setting.
+        on changes the security posture and is left to a future
+        change gated behind an explicit operator-side ACK setting.
         Until then, RSs that need sub-ms validation should consider
         opaque-token introspection caching at the RP layer.
 
@@ -530,7 +531,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 raise oauth_errors.InvalidGrantError(
                     description="Access denied"
                 ) from None
-        # N-3: collapse the audit race-window by binding the
+        # Collapse the audit race-window by binding the
         # ``super().save_bearer_token`` AT/RT writes and the
         # ``_record_code_issuance`` audit-row insert into a single
         # outer atomic block. DOT 3.x already wraps
@@ -538,16 +539,15 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         # (oauth2_validators.py); Django nests that inner block as a
         # savepoint within our outer transaction, so AT+audit commit
         # together and an audit insert failure rolls back the
-        # issuance. The trade-off is an explicit posture shift:
-        # pre-N-3, an audit DB hiccup degraded silently to
-        # "tokens-issued, SHOULD overlay missing"; post-N-3, the same
-        # hiccup raises and the client sees ``server_error`` /
-        # ``invalid_grant`` — fail-closed for the operator's
-        # audit pipeline rather than fail-open for the legit token
-        # request. The ``_record_code_issuance`` race window the F-3
-        # counter measures collapses to zero on this path; the F-3
-        # counter remains useful for non-issued-code probes (fuzzers
-        # / replays of never-issued codes).
+        # issuance. The trade-off is an explicit posture shift: an
+        # audit DB hiccup raises and the client sees ``server_error`` /
+        # ``invalid_grant`` — fail-closed for the operator's audit
+        # pipeline rather than fail-open for the legit token request.
+        # The ``_record_code_issuance`` race window the
+        # ``code_reuse_audit_misses`` counter measures collapses to
+        # zero on this path; the counter remains useful for
+        # non-issued-code probes (fuzzers / replays of never-issued
+        # codes).
         from django.db import transaction
 
         with transaction.atomic():
@@ -578,16 +578,15 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         the bearer values, in the audit table.
 
         Called inside the outer ``transaction.atomic`` opened by
-        :meth:`save_bearer_token` (N-3) — the AT/RT writes from
-        DOT's parent and the audit-row insert here commit together,
-        so :meth:`_handle_potential_code_reuse` never observes an
+        :meth:`save_bearer_token` — the AT/RT writes from DOT's
+        parent and the audit-row insert here commit together, so
+        :meth:`_handle_potential_code_reuse` never observes an
         AT-committed-but-audit-missing window for a code this
-        provider actually issued. The F-3
-        ``code_reuse_audit_misses`` counter therefore measures only
-        probes of never-issued codes (fuzzers / replays against
-        unrelated providers / clock-skew Grant expiry) — a clean
-        upper bound on "audit row missing for known-good code"
-        events.
+        provider actually issued. The ``code_reuse_audit_misses``
+        counter therefore measures only probes of never-issued codes
+        (fuzzers / replays against unrelated providers / clock-skew
+        Grant expiry) — a clean upper bound on "audit row missing
+        for known-good code" events.
         """
         from oauth2_provider.models import (
             get_access_token_model,
@@ -617,15 +616,15 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
         access_token_value = token.get("access_token")
         refresh_token_value = token.get("refresh_token")
-        # N-1: lookup via indexed ``token_checksum`` column instead of
-        # the unindexed raw ``token`` column. Symmetrises with the
+        # Lookup via indexed ``token_checksum`` column instead of the
+        # unindexed raw ``token`` column. Symmetrises with the
         # ``TokenAudit._find_token`` pipeline in views_token.py and
         # tolerates DOT subclassing that clears ``token`` after
         # issuance (operator-side at-rest hashing).
         at_pk = _lookup_dot_token_pk(AccessToken, access_token_value)
         rt_pk = _lookup_dot_token_pk(RefreshToken, refresh_token_value)
 
-        # C-4: snapshot the client_id at row-insert time so per-RP
+        # Snapshot the client_id at row-insert time so per-RP
         # forensic queries on ``reuse_count>=1`` rows survive admin-
         # driven RP deletion (the FK becomes NULL via SET_NULL).
         client_id_snapshot = (getattr(application, "client_id", "") or "")[
@@ -684,7 +683,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 # / ``invalid_grant`` on its own) OR we hit the
                 # ``_record_code_issuance`` race window between
                 # ``super().save_bearer_token`` commit and audit
-                # insert. F-3: increment the ``code_reuse_audit_misses``
+                # insert. Increment the ``code_reuse_audit_misses``
                 # counter on either path so operators can correlate
                 # against the ``oidc_code_reuse_detected`` signal —
                 # the counter is an upper bound, the signal is the
@@ -726,10 +725,8 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 # ``ObjectDoesNotExist`` for the documented
                 # ``clear_expired_tokens`` mid-transaction race.
                 #
-                # F-6: ``AttributeError`` was previously caught here on
-                # the theory that a stale in-memory token instance
-                # could be missing the ``revoke()`` method. In practice
-                # DOT's `RefreshToken`/`AccessToken` ALWAYS expose
+                # ``AttributeError`` is NOT caught here. DOT's
+                # ``RefreshToken`` / ``AccessToken`` ALWAYS expose
                 # ``revoke``; the only realistic source of
                 # ``AttributeError`` is a programming bug — a DOT
                 # major bump that renames the method, or a misconfigured

@@ -13,9 +13,9 @@ with a registered ``backchannel_logout_uri`` and queues one
 :func:`tasks.send_logout_token` per RP). The per-RP HTTP POST itself
 runs inside the Celery task, not here.
 
-Sub-only logout per plan v5 path-b: no ``sid`` claim is ever emitted.
-Spec §2.6 explicitly permits this and obliges RPs to terminate all
-sessions for the ``sub`` when ``sid`` is absent.
+Sub-only logout: no ``sid`` claim is ever emitted. Spec §2.6
+explicitly permits this and obliges RPs to terminate all sessions
+for the ``sub`` when ``sid`` is absent.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def build_logout_token(
     # The worker runs without an HTTP request context, so
     # ``oidc_issuer(None)`` falls through DOT to
     # ``OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']``. The Django system
-    # check (US-BCL-003 / AC-19e) makes that setting structurally
+    # check ``allianceauth_oidc.E001`` makes that setting structurally
     # required when any RP enables BCL, so this call is safe.
     issuer = oauth2_settings.oidc_issuer(None)
     header = {

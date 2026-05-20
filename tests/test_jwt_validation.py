@@ -130,7 +130,7 @@ class TestStartupWiringCheck(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# US-011 — Batch 3: client_credentials, password, refresh, lifecycle.
+# Batch 3: client_credentials, password, refresh, lifecycle.
 # ---------------------------------------------------------------------------
 
 

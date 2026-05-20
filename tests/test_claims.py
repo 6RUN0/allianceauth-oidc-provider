@@ -218,7 +218,7 @@ class TestEmailClaim(SimpleTestCase):
 
     def test_m2_placeholder_blocks_force_true_security_fix(self):
         """
-        M-2 regression: ``aa_skip_email`` placeholder must NOT be
+        regression: ``aa_skip_email`` placeholder must NOT be
         promoted to ``email_verified=true`` by the
         ``ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED`` operator override.
 
@@ -263,14 +263,14 @@ class TestEmailClaim(SimpleTestCase):
         """
         Sweep the force_email_verified x default x placeholder matrix.
 
-        Pins each branch of the decision tree (after the M-2 security
+        Pins each branch of the decision tree (after the  security
         fix that swaps placeholder ahead of force):
 
         * ``force_true_overrides_default_false`` — operator
           forces verified=True on a real address even though AA's
           default emits False. Use case: users imported from a
           trusted external IdP.
-        * ``placeholder_overrides_force_true`` — M-2 fix: a
+        * ``placeholder_overrides_force_true`` —  fix: a
           synthetic ``aa_skip_email`` placeholder is by
           construction unverifiable; the force override cannot
           promote it to ``true``. Without this branch an RP that
@@ -297,7 +297,7 @@ class TestEmailClaim(SimpleTestCase):
                 True,
             ),
             (
-                # M-2 security fix: placeholder wins over force=True.
+                # security fix: placeholder wins over force=True.
                 "placeholder_overrides_force_true",
                 True,
                 True,

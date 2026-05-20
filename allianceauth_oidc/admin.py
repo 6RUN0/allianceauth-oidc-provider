@@ -77,8 +77,8 @@ class ApplicationAdmin(admin.ModelAdmin):
         the full changelist and only firing on the BCL-configured
         subset is the common operator workflow.
 
-        C-1: apps with ``backchannel_logout_on_revoke_only=True``
-        ALSO skip with their own warning. The downstream dispatcher
+        Apps with ``backchannel_logout_on_revoke_only=True`` ALSO
+        skip with their own warning. The downstream dispatcher
         (``logout.dispatch_backchannel_logout``) silently no-ops on
         any ``reason != "user_revoked"`` event when that flag is set,
         so the admin's "test BCL" button would otherwise look

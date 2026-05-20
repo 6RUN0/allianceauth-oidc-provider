@@ -26,10 +26,10 @@ import ipaddress
 import socket
 from typing import Any
 
-# Per plan v5 §4.5: ``socket.setdefaulttimeout`` does NOT bound
-# ``getaddrinfo`` (a libc resolver call, not a Python socket
-# operation). A per-call ``ThreadPoolExecutor`` is the only correct
-# way to enforce a wall-clock timeout on the resolver.
+# ``socket.setdefaulttimeout`` does NOT bound ``getaddrinfo`` (a libc
+# resolver call, not a Python socket operation). A per-call
+# ``ThreadPoolExecutor`` is the only correct way to enforce a
+# wall-clock timeout on the resolver.
 DNS_BOUND_SECONDS = 3
 
 
@@ -96,7 +96,7 @@ def is_unsafe_address(addr_str: str) -> bool:
     a resolver returning only garbage tuples would otherwise leave the
     gate at False and allow ``requests.post`` to fall through to its
     own (libc) resolver — a TOCTOU window between two resolvers that
-    may disagree. Garbage in, deny out (N-5).
+    may disagree. Garbage in, deny out.
     """
     try:
         addr: ipaddress.IPv4Address | ipaddress.IPv6Address = (

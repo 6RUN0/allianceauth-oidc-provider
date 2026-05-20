@@ -100,7 +100,7 @@ class TestOidcTokenIssuedSignal(GrantedOIDCTestCase):
         A misbehaving audit receiver must NOT propagate its exception:
         token issuance succeeds, the failure is logged, other receivers
         still run. Regression for ``send_robust`` semantics in
-        ``signals.dispatch_audit_signal`` (Architect#6 / N-6).
+        ``signals.dispatch_audit_signal`` ( / ).
         """
 
         def boom(sender, **kwargs):
@@ -434,7 +434,7 @@ class TestSignalsKillMutants(SimpleTestCase):
     ``allianceauth_oidc/signals.py``.
 
     * ``Signal(use_caching=True)`` on ``oidc_token_issued`` —
-      mirror of the existing AC-7 / AC-10 pins on
+      mirror of the existing  /  pins on
       ``oidc_logout_required`` / ``oidc_logout_dispatched``. Same
       ``ReplaceTrueWithFalse`` mutant, same kill technique.
 
@@ -450,7 +450,7 @@ class TestSignalsKillMutants(SimpleTestCase):
     """
 
     def test_oidc_token_issued_signal_uses_caching(self):
-        # AC-7 mirror: ``use_caching=True`` lets Django cache the
+        # mirror: ``use_caching=True`` lets Django cache the
         # receiver list — important for hot signal paths like the
         # token endpoint. Mutation ``ReplaceTrueWithFalse`` would
         # silently disable the cache and let every send walk the

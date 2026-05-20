@@ -26,7 +26,7 @@ Wiring lives in ``apps.py:ready()``; the helpers here only define
 the receivers + the per-receiver ``dispatch_uid`` strings so the
 test suite can disconnect them cleanly.
 
-``g-V2-7`` rule: only ``groups_changed`` and ``state_changed``
+Newly-denied gating: only ``groups_changed`` and ``state_changed``
 gate on ``DEFAULT_POLICY.is_allowed`` (the "newly denied" check);
 ``user_revoked``, ``user_deactivated``, and ``user_deleted`` emit
 unconditionally on RT/AT presence — the user already lost access
@@ -209,15 +209,15 @@ def on_user_post_delete(sender: Any, instance: Any, **kwargs: Any) -> None:
     the tokens themselves are gone — so we cannot re-derive
     application set from the DB here. Hence the pre-delete snapshot.
 
-    F-7: rehydrate with ``active=True`` to match the snapshot taken in
+    Rehydrate with ``active=True`` to match the snapshot taken in
     :func:`on_user_pre_delete` — ``apps_with_active_tokens`` filters on
     ``active=True`` at snapshot time, so an app deactivated in the
     micro-window between ``pre_delete`` and ``post_delete`` (long-running
     cascade on a heavy User row, concurrent admin save) must NOT
-    receive a BCL fan-out. ``dispatch_backchannel_logout`` already has
-    a downstream ``is_usable`` kill-switch (see ``logout.py:247-249``),
-    but symmetrising the rehydrate filter closes the gap one layer
-    earlier and keeps the invariant local to this receiver.
+    receive a BCL fan-out. :func:`dispatch_backchannel_logout` already
+    has a downstream ``is_usable`` kill-switch, but symmetrising the
+    rehydrate filter closes the gap one layer earlier and keeps the
+    invariant local to this receiver.
     """
     from oauth2_provider.models import get_application_model
 
@@ -287,8 +287,8 @@ def record_backchannel_logout_attempt(
             normalised_user_pk = int(user_pk)
         except (TypeError, ValueError):
             normalised_user_pk = None
-    # C-3: snapshot client_id + name at row-insert time. Both
-    # survive the FK becoming NULL after admin-driven RP deletion,
+    # Snapshot client_id + name at row-insert time. Both survive the
+    # FK becoming NULL after admin-driven RP deletion,
     # so per-RP forensic queries still work for historical rows.
     client_id_snapshot = (getattr(application, "client_id", "") or "")[:100]
     name_snapshot = (getattr(application, "name", "") or "")[:255]

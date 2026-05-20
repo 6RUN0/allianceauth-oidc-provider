@@ -218,9 +218,8 @@ class TokenAudit:
             "format": classify_token_format(getattr(token, "token", None)),
         }
         # ``dispatch_audit_signal`` wraps ``send_robust`` with the
-        # Architect#6 receiver-failure counter so SIEM-forwarder
-        # outages surface as a non-zero Prometheus rate per affected
-        # signal.
+        # receiver-failure counter so SIEM-forwarder outages surface
+        # as a non-zero Prometheus rate per affected signal.
         dispatch_audit_signal(
             oidc_token_issued,
             signal_name="oidc_token_issued",
@@ -250,9 +249,9 @@ class TokenView(OAuthLibMixin, View):
       issuance.
     """
 
-    # F-4: every OAuth2 / OIDC secret the token endpoint may receive
-    # must be marked sensitive so Django's debug-error rendering and
-    # any post-mortem error reporter that honours the marker
+    # Every OAuth2 / OIDC secret the token endpoint may receive must
+    # be marked sensitive so Django's debug-error rendering and any
+    # post-mortem error reporter that honours the marker
     # (Sentry, Rollbar) redact it before the body is captured. With
     # ``DEBUG=True`` (operator error) a 500-page would otherwise echo
     # the raw credential in plaintext on the technical 500 page.

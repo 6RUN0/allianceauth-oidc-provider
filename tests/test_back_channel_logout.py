@@ -1,12 +1,12 @@
 """
 Tests for OIDC Back-Channel Logout 1.0 (sub-only v1).
 
-Covers acceptance criteria AC-1..AC-41 from plan v5
-(``.omc/plans/back-channel-logout-plan-v5.md``).
+Covers acceptance criteria .. from internal design notes
+.
 
-US-BCL-001 lives in ``TestBackChannelLogoutModel`` — model field,
+ lives in ``TestBackChannelLogoutModel`` — model field,
 ``clean()`` SSRF guard, DNS-failure non-blocking policy, and migration
-shape. US-BCL-002 lives in ``TestBackChannelLogoutSignals`` — the
+shape.  lives in ``TestBackChannelLogoutSignals`` — the
 trigger/audit signal pair and ``LogoutAuditBody`` TypedDict.
 """
 
@@ -133,7 +133,7 @@ class TestBackChannelLogoutFKSetNull(OIDCTestCase):
 
 class TestDnsSafetyFailClosed(TestCase):
     """
-    N-5: ``is_unsafe_address`` must treat unparseable IP strings as
+    ``is_unsafe_address`` must treat unparseable IP strings as
     unsafe (fail-closed). Pre-fix, garbage tuples from a resolver
     returned False from the per-tuple predicate; with the ``any()``
     aggregator in ``addresses_have_unsafe`` that meant a resolver
@@ -172,7 +172,7 @@ class TestDnsSafetyFailClosed(TestCase):
 
 class TestBackChannelLogoutModel(OIDCTestCase):
     """
-    AC-1 / AC-3 / AC-3a / AC-3b / AC-5 / AC-6 — field shape, clean()
+    field shape, clean()
     SSRF guard, DNS-failure non-blocking policy, migration sanity.
     """
 
@@ -180,7 +180,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         creds = make_app(owner=self.user1, backchannel_logout_uri=uri)
         return creds.app
 
-    # ---------- AC-1 ----------
+    # ---------- divider ----------
 
     def test_ac1_field_is_urlfield_with_http_https_schemes(self) -> None:
         field = AllianceAuthApplication._meta.get_field(
@@ -191,7 +191,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         self.assertTrue(field.blank)
         self.assertEqual(field.default, "")
         # ``URLField.default_validators`` always carries a permissive
-        # ``URLValidator()`` (ftp/ftps allowed). AC-1 is satisfied when
+        # ``URLValidator()`` (ftp/ftps allowed).  is satisfied when
         # at least one explicit validator narrows the schemes set down
         # to exactly ``{"http", "https"}`` — the same pattern used by
         # the existing ``logo_url`` field on this model.
@@ -203,11 +203,11 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         ]
         self.assertTrue(
             strict_validators,
-            "AC-1 expects an explicit URLValidator restricting "
+            " expects an explicit URLValidator restricting "
             "schemes to http/https on backchannel_logout_uri",
         )
 
-    # ---------- AC-3 ----------
+    # ---------- divider ----------
 
     @override_settings(DEBUG=False)
     def test_ac3_http_rejected_when_debug_false(self) -> None:
@@ -231,7 +231,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         ):
             app.full_clean()
 
-    # ---------- AC-3a — SSRF rejections ----------
+    # ---------- SSRF rejections ----------
 
     @override_settings(DEBUG=False)
     def test_ac3a_private_ip_rejected(self) -> None:
@@ -432,7 +432,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
         ):
             app.full_clean()
 
-    # ---------- AC-3b — non-blocking DNS failure ----------
+    # ---------- non-blocking DNS failure ----------
 
     @override_settings(DEBUG=False)
     def test_ac3b_gaierror_is_non_blocking_and_warns(self) -> None:
@@ -501,7 +501,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
             app.full_clean()
         resolver.assert_not_called()
 
-    # ---------- AC-5 — migration sanity ----------
+    # ---------- migration sanity ----------
 
     def test_ac5_makemigrations_check_dry_run_clean(self) -> None:
         """
@@ -519,7 +519,7 @@ class TestBackChannelLogoutModel(OIDCTestCase):
             stderr=out,
         )
 
-    # ---------- AC-6 — round-trip blank default ----------
+    # ---------- round-trip blank default ----------
 
     def test_ac6_blank_default_round_trip(self) -> None:
         app = self._new_app(uri="")
@@ -534,7 +534,7 @@ class _SignalSender:
     Stand-in ``sender`` argument for ``Signal.send`` in tests.
 
     ``oidc_logout_required`` was declared ``use_caching=True`` per
-    plan §5.2 AC-7; Django keys the receiver cache on a
+     ; Django keys the receiver cache on a
     ``WeakValueDictionary`` so the sender must be weakref-able.
     ``None`` and bare ``object()`` instances aren't — using a class
     object satisfies the contract without dragging in real models.
@@ -543,30 +543,30 @@ class _SignalSender:
 
 class TestBackChannelLogoutSignals(TestCase):
     """
-    AC-7 / AC-8 / AC-9 / AC-10 / AC-11 helper — the trigger/audit
+     /  /  /  /  helper — the trigger/audit
     signal pair, the ``LogoutAuditBody`` TypedDict shape, and the
     ``connect_default_logout_receiver`` indirection helper.
     """
 
-    # ---------- AC-7 ----------
+    # ---------- divider ----------
 
     def test_ac7_oidc_logout_required_is_signal_with_caching(self) -> None:
         sig = oidc_signals.oidc_logout_required
         self.assertIsInstance(sig, Signal)
         self.assertTrue(
             sig.use_caching,
-            "AC-7: oidc_logout_required must use_caching=True "
+            "oidc_logout_required must use_caching=True "
             "(mirrors oidc_token_issued)",
         )
 
-    # ---------- AC-10 ----------
+    # ---------- divider ----------
 
     def test_ac10_oidc_logout_dispatched_is_signal_with_caching(self) -> None:
         sig = oidc_signals.oidc_logout_dispatched
         self.assertIsInstance(sig, Signal)
         self.assertTrue(sig.use_caching)
 
-    # ---------- AC-9 ----------
+    # ---------- divider ----------
 
     def test_ac9_logout_audit_body_has_exact_keys(self) -> None:
         keys = set(typing.get_type_hints(oidc_signals.LogoutAuditBody).keys())
@@ -585,7 +585,7 @@ class TestBackChannelLogoutSignals(TestCase):
         keys = set(typing.get_type_hints(oidc_signals.LogoutAuditBody).keys())
         self.assertNotIn("sid", keys)
 
-    # ---------- AC-8 — receiver signature ----------
+    # ---------- receiver signature ----------
 
     def test_ac8_signal_accepts_documented_receiver_signature(self) -> None:
         captured: list[dict] = []
@@ -631,7 +631,7 @@ class TestBackChannelLogoutSignals(TestCase):
             ],
         )
 
-    # ---------- AC-11 helper — connect_default_logout_receiver ----------
+    # ----------  helper — connect_default_logout_receiver ----------
 
     def test_connect_default_logout_receiver_uses_constant_uid(self) -> None:
         """
@@ -680,7 +680,7 @@ class TestBackChannelLogoutSignals(TestCase):
 
     def test_connect_default_logout_receiver_is_strong_ref(self) -> None:
         """
-        ``weak=False`` per plan §5.2 AC-11 prevents Python's GC from
+        ``weak=False``   prevents Python's GC from
         silently dropping the dispatcher between requests.
         """
         from allianceauth_oidc.logout import dispatch_backchannel_logout
@@ -717,7 +717,7 @@ class TestBackChannelLogoutSignals(TestCase):
 
 class TestBackChannelLogoutSystemCheck(OIDCTestCase):
     """
-    AC-19e / AC-19f / AC-19g — Django system check
+    Django system check
     ``allianceauth_oidc.E001`` fires Error when any RP has
     ``backchannel_logout_uri`` set and ``OIDC_ISS_ENDPOINT`` is
     unset; clean otherwise.
@@ -751,7 +751,7 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
         self.addCleanup(oauth2_settings.reload)
         self.addCleanup(ctx.disable)
 
-    # ---------- AC-19e ----------
+    # ---------- divider ----------
 
     def test_ac19e_error_when_bcl_set_and_iss_unset(self) -> None:
         from allianceauth_oidc.checks import (
@@ -765,11 +765,11 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
         self.assertEqual(len(msgs), 1)
         msg = msgs[0]
         self.assertEqual(msg.id, E001_ID)
-        # plan v5 m-V3-1: severity is Error, not Warning. Verify
+        # internal design notes severity is Error, not Warning. Verify
         # via the ``level`` attribute set by ``Error()``.
         self.assertEqual(msg.level, checks.ERROR)
 
-    # ---------- AC-19f — manage.py check raises SystemCheckError ----------
+    # ---------- manage.py check raises SystemCheckError ----------
 
     def test_ac19f_manage_check_raises_with_e001(self) -> None:
         from io import StringIO
@@ -784,7 +784,7 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
             call_command("check", stdout=out, stderr=out)
         self.assertIn("allianceauth_oidc.E001", str(ctx.exception))
 
-    # ---------- AC-19g — clean when iss set ----------
+    # ---------- clean when iss set ----------
 
     def test_ac19g_clean_when_iss_endpoint_set(self) -> None:
         from allianceauth_oidc.checks import (
@@ -856,8 +856,7 @@ class TestBackChannelLogoutSystemCheck(OIDCTestCase):
 
 class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
     """
-    AC-17 / AC-17a / AC-18 / AC-19 / AC-19a / AC-20 / AC-21 / AC-22
-    — ``logout.build_logout_token`` shape, key resolution, byte-
+    ``logout.build_logout_token`` shape, key resolution, byte-
     identical retries, and PII pin.
     """
 
@@ -889,7 +888,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         ks.add(key)
         return ks
 
-    # ---------- AC-17 — return shape & jti generation ----------
+    # ---------- return shape & jti generation ----------
 
     def test_ac17_returns_jwt_and_jti(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -910,7 +909,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         _h, payload = self._decode_unverified(token)
         self.assertEqual(payload["jti"], "deadbeef" * 4)
 
-    # ---------- AC-17a — SigningKeyRetiredError ----------
+    # ---------- SigningKeyRetiredError ----------
 
     def test_ac17a_unknown_kid_raises_signing_key_retired(self) -> None:
         from allianceauth_oidc.logout import (
@@ -957,7 +956,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
             finally:
                 oauth2_settings.reload()
 
-    # ---------- AC-18 — header shape ----------
+    # ---------- header shape ----------
 
     def test_ac18_header_is_logout_plus_jwt_rs256(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -969,7 +968,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         self.assertIsInstance(header["kid"], str)
         self.assertGreater(len(header["kid"]), 16)  # RFC 7638 thumbprint
 
-    # ---------- AC-19 — payload shape (closed set) ----------
+    # ---------- payload shape (closed set) ----------
 
     def test_ac19_payload_has_exact_keys(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -1019,7 +1018,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         first_event_key = next(iter(events))
         self.assertEqual(events[first_event_key], {})
 
-    # ---------- AC-19a — iss from OIDC_ISS_ENDPOINT ----------
+    # ---------- iss from OIDC_ISS_ENDPOINT ----------
 
     def test_ac19a_iss_uses_oidc_iss_endpoint_setting(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -1029,7 +1028,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         # test_settingsAA4 pins OIDC_ISS_ENDPOINT to this value.
         self.assertEqual(payload["iss"], "https://auth.example.test/o")
 
-    # ---------- AC-20 — nonce MUST NOT ----------
+    # ---------- nonce MUST NOT ----------
 
     def test_ac20_payload_never_contains_nonce(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -1038,7 +1037,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         _h, payload = self._decode_unverified(token)
         self.assertNotIn("nonce", payload)
 
-    # ---------- AC-21 — PII pin ----------
+    # ---------- PII pin ----------
 
     def test_ac21_payload_never_contains_pii(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -1058,7 +1057,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         leaked = forbidden & set(payload.keys())
         self.assertEqual(leaked, set(), msg=payload)
 
-    # ---------- AC-22 — JWT verifies against JWKS ----------
+    # ---------- JWT verifies against JWKS ----------
 
     def test_ac22_jwt_verifies_against_jwks(self) -> None:
         from jwcrypto import jwt as jw
@@ -1070,7 +1069,7 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         # If verification fails ``jw.JWT(jwt=..., key=...)`` raises.
         verifier.token.deserialize(token, key=self._jwks_keyset())
 
-    # ---------- Byte-identical retries (AC-30 helper) ----------
+    # ---------- Byte-identical retries  ----------
 
     def test_byte_identical_retry_when_jti_and_iat_pinned(self) -> None:
         from allianceauth_oidc.logout import build_logout_token
@@ -1239,7 +1238,7 @@ class TestAppsWithActiveTokensFilter(OIDCTestCase):
 
 class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
     """
-    AC-12 / AC-13 / AC-14 / AC-15 / AC-16 — the five v1 trigger
+    the five v1 trigger
     sites emit ``oidc_logout_required`` exactly when the plan says
     they should, per ``(user, application)`` with active tokens.
     """
@@ -1269,7 +1268,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
             token=f"refresh-{user.pk}-{app.pk}",
         )
 
-    # ---------- AC-12 — oidc_revoke_user_tokens command ----------
+    # ---------- oidc_revoke_user_tokens command ----------
 
     def test_ac12_revoke_command_emits_signal_once_per_app(self) -> None:
         creds_a = make_app(
@@ -1295,7 +1294,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
         for _pk, reason in cap.calls:
             self.assertEqual(reason, "user_revoked")
 
-    # ---------- AC-13 — User.is_active flip ----------
+    # ---------- User.is_active flip ----------
 
     def test_ac13_user_deactivate_fires_signal(self) -> None:
         creds = make_app(
@@ -1339,7 +1338,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
         ]
         self.assertEqual(deactivate_calls, [])
 
-    # ---------- AC-14 — groups m2m change ----------
+    # ---------- groups m2m change ----------
 
     def test_ac14_group_removal_fires_when_policy_now_denies(self) -> None:
         from django.contrib.auth.models import Group
@@ -1356,7 +1355,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
             self.user1.groups.remove(grp)
         self.assertEqual(cap.calls, [(creds.app.pk, "groups_changed")])
 
-    # ---------- AC-15 — AA state_changed ----------
+    # ---------- AA state_changed ----------
 
     def test_ac15_state_change_fires_when_policy_now_denies(self) -> None:
         from allianceauth.authentication.models import State
@@ -1379,7 +1378,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
         ]
         self.assertEqual(state_calls, [(creds.app.pk, "state_changed")])
 
-    # ---------- AC-16 — pre_delete + post_delete cascade ----------
+    # ---------- pre_delete + post_delete cascade ----------
 
     def test_ac16_user_delete_fires_per_app(self) -> None:
         from allianceauth_oidc import receivers as bcl_receivers
@@ -1410,7 +1409,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
         self,
     ) -> None:
         """
-        F-7 regression: ``apps_with_active_tokens`` filters on
+        regression: ``apps_with_active_tokens`` filters on
         ``active=True`` at snapshot time. If an app is deactivated in
         the micro-window between ``on_user_pre_delete`` and
         ``on_user_post_delete``, the rehydrate query in post_delete
@@ -1460,11 +1459,11 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
             "filter on apps_with_active_tokens",
         )
 
-    # ---------- AC-31 — multi-RP fanout skips blank URI ----------
+    # ---------- multi-RP fanout skips blank URI ----------
 
     def test_ac31_multi_rp_fanout_skips_blank_uri(self) -> None:
         """
-        Plan §5.4 AC-31: 3 apps (A: uri set, B: blank, C: uri set);
+        Plan §5.4 3 apps (A: uri set, B: blank, C: uri set);
         a single trigger event signals exactly 2 RPs — the blank URI
         is invisible to the fanout because every RP's signal is
         gated downstream by the dispatcher's
@@ -1503,7 +1502,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
 
     def test_ac31_dispatcher_drops_blank_uri(self) -> None:
         """
-        AC-31 sibling: the dispatcher itself MUST skip when
+         sibling: the dispatcher itself MUST skip when
         ``backchannel_logout_uri`` is blank — ``apply_async`` is
         never invoked for that RP.
         """
@@ -1554,11 +1553,11 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
             )
         apply_async.assert_not_called()
 
-    # ---------- AC-32 — state scoping: only affected RPs ----------
+    # ---------- state scoping: only affected RPs ----------
 
     def test_ac32_group_removal_scopes_to_gated_apps_only(self) -> None:
         """
-        Plan §5.4 AC-32: user removed from group X. Apps that gate on
+        Plan §5.4 user removed from group X. Apps that gate on
         group X (and which the user is therefore newly denied for)
         get tasks; apps with no policy constraints do not.
 
@@ -1590,11 +1589,7 @@ class TestBackChannelLogoutTriggers(GrantedOIDCTestCase):
 
 
 class TestBackChannelLogoutCeleryTask(OIDCTestCase):
-    """
-    AC-23 / AC-24 / AC-24a / AC-25 / AC-26 / AC-26a /
-    AC-27 / AC-28 / AC-28a / AC-29 / AC-29a /
-    AC-31 / AC-32 / AC-39 — the worker side.
-    """
+    """Exercise the BCL Celery task — the worker side of the fan-out."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -1659,7 +1654,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
             )
             return dispatches, post
 
-    # ---------- AC-23 — task name constant ----------
+    # ---------- task name constant ----------
 
     def test_ac23_task_registered_under_constant_name(self) -> None:
         from allianceauth_oidc.constants import TASK_SEND_LOGOUT_TOKEN
@@ -1667,7 +1662,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
 
         self.assertEqual(send_logout_token.name, TASK_SEND_LOGOUT_TOKEN)
 
-    # ---------- AC-24 — task signature ----------
+    # ---------- task signature ----------
 
     def test_ac24_task_signature_is_arity_5(self) -> None:
         from allianceauth_oidc.tasks import send_logout_token
@@ -1687,11 +1682,11 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
             ],
         )
 
-    # ---------- AC-24a — task args are scalars ----------
+    # ---------- task args are scalars ----------
 
     def test_ac24a_apply_async_args_are_typed_scalars(self) -> None:
         """
-        Plan §5.4 AC-24a: ``apply_async.args`` MUST be exactly five
+        Plan §5.4 ``apply_async.args`` MUST be exactly five
         scalars typed (int, int, str, str, int). No JWT, no
         credentials in the broker payload.
         """
@@ -1724,7 +1719,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         self.assertIsInstance(args[3], str)
         self.assertIsInstance(args[4], int)
 
-    # ---------- AC-26 — outbound HTTP discipline ----------
+    # ---------- outbound HTTP discipline ----------
 
     def test_ac26_posts_form_encoded_with_logout_token_field(self) -> None:
         _dispatches, post = self._call_task(status_code=200)
@@ -1739,11 +1734,11 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
             kwargs["headers"]["User-Agent"],
         )
         self.assertIn("logout_token", kwargs["data"])
-        # AC-26a: no follow-redirects, bounded timeouts.
+        # no follow-redirects, bounded timeouts.
         self.assertEqual(kwargs["allow_redirects"], False)
         self.assertEqual(kwargs["timeout"], (5, 10))
 
-    # ---------- AC-27 — 2xx success ----------
+    # ---------- 2xx success ----------
 
     def test_ac27_2xx_fires_success(self) -> None:
         dispatches, _ = self._call_task(status_code=204)
@@ -1751,7 +1746,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         self.assertTrue(dispatches[0]["success"])
         self.assertIsNone(dispatches[0]["reason"])
 
-    # ---------- AC-28 — 4xx no retry ----------
+    # ---------- 4xx no retry ----------
 
     def test_ac28_4xx_no_retry(self) -> None:
         dispatches, _ = self._call_task(status_code=404)
@@ -1759,18 +1754,18 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         self.assertFalse(dispatches[0]["success"])
         self.assertEqual(dispatches[0]["reason"], "rp_client_error")
 
-    # ---------- AC-28a — 3xx blocked ----------
+    # ---------- 3xx blocked ----------
 
     def test_ac28a_3xx_blocked(self) -> None:
         dispatches, _ = self._call_task(status_code=302)
         self.assertEqual(dispatches[0]["reason"], "redirect_blocked")
         self.assertFalse(dispatches[0]["success"])
 
-    # ---------- AC-29 — 5xx final retry exhaustion ----------
+    # ---------- 5xx final retry exhaustion ----------
 
     def test_ac29_5xx_retries_exhausted_emits_audit(self) -> None:
         """
-        Plan §5.4 AC-29: when ``self.request.retries`` has reached
+        Plan §5.4 when ``self.request.retries`` has reached
         ``self.max_retries`` and the RP still returns 5xx, the task
         records ``reason="retries_exhausted"`` and returns without
         re-raising (which would re-fire Celery autoretry).
@@ -1937,7 +1932,7 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                 iat=1_700_000_000,
             )
 
-    # ---------- AC-29a — signing kid retired ----------
+    # ---------- signing kid retired ----------
 
     def test_ac29a_signing_kid_retired(self) -> None:
         from allianceauth_oidc.signals import oidc_logout_dispatched
@@ -1965,18 +1960,18 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                 signing_kid="not-a-real-kid",
                 iat=1_700_000_000,
             )
-            post.assert_not_called()  # AC-29a — no HTTP call
+            post.assert_not_called()  #  — no HTTP call
         self.assertEqual(
             dispatches,
             [{"success": False, "reason": "signing_kid_retired"}],
         )
 
-    # ---------- AC-30 (helper covered by US-BCL-004) ----------
+    # ----------  (helper covered by ) ----------
     # The byte-identical retry already verified in
     # TestBackChannelLogoutTokenBuilder; the worker just plumbs the
     # arguments through.
 
-    # ---------- AC-39 — broker_unavailable ----------
+    # ---------- broker_unavailable ----------
 
     def test_ac39_broker_unavailable_fires_audit_signal(self) -> None:
         from allianceauth_oidc.logout import dispatch_backchannel_logout
@@ -2179,7 +2174,7 @@ class TestSendLogoutTokenBoundaries(OIDCTestCase):
 
 class TestBackChannelLogoutDiscovery(OIDCTestCase):
     """
-    AC-33 / AC-34 — discovery doc emits exactly
+    discovery doc emits exactly
     ``backchannel_logout_supported: true`` and NEVER
     ``backchannel_logout_session_supported``.
     """
@@ -2254,11 +2249,11 @@ class TestBackChannelLogoutDiscovery(OIDCTestCase):
 
 class TestBackChannelLogoutLogging(OIDCTestCase):
     """
-    AC-35 / AC-36 / AC-38 — all BCL log lines route through
+    all BCL log lines route through
     ``build_logout_debug_meta``; no token/secret material leaks
     into captured log output.
 
-    AC-36 covers four code paths: success (2xx), redirect (3xx),
+     covers four code paths: success (2xx), redirect (3xx),
     RP client error (4xx), and signing-kid retired. Three of these
     are exercised below via ``assertLogs(level=WARNING)``; the 2xx
     branch deliberately emits no WARN-level line at
@@ -2279,7 +2274,7 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
         self.app = creds.app
         self.client_secret = creds.client_secret
 
-    # ---------- AC-35 — TypedDict shape ----------
+    # ---------- TypedDict shape ----------
 
     def test_ac35_logout_debug_meta_keys_are_allow_listed(self) -> None:
         from allianceauth_oidc.utils import (
@@ -2316,7 +2311,7 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
         self.assertIsNone(meta["application_name"])
         self.assertIsNone(meta["backchannel_logout_uri"])
 
-    # ---------- AC-36 — secret-pin across all dispatch branches ----------
+    # ---------- secret-pin across all dispatch branches ----------
 
     def _exercise_status_branch(self, *, status_code: int) -> str:
         from allianceauth_oidc.tasks import send_logout_token
@@ -2389,7 +2384,7 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
         ):
             self.assertNotIn(forbidden, joined, msg=joined)
 
-    # ---------- AC-38 — audit signal fires on every attempt ----------
+    # ---------- audit signal fires on every attempt ----------
 
     def test_ac38_dispatched_signal_fires_on_success(self) -> None:
         from allianceauth_oidc.signals import oidc_logout_dispatched
@@ -2429,12 +2424,12 @@ def _active_kid() -> str:
 
 # ----------------------------------------------------------------------
 # US-OROF — backchannel_logout_on_revoke_only per-app flag
-# Plan: .omc/plans/bcl-on-revoke-only-plan-v1.md
+# Plan: see project-internal design notes
 # ----------------------------------------------------------------------
 
 
 class TestBackChannelLogoutOnRevokeOnlyModel(OIDCTestCase):
-    """US-OROF-001 — model field shape (AC-1)."""
+    """— model field shape ()."""
 
     def test_field_exists_default_false_with_help_text(self) -> None:
         field = AllianceAuthApplication._meta.get_field(
@@ -2470,7 +2465,7 @@ def _make_app_with_flag(
 
 class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
     """
-    US-OROF-002 / US-OROF-003 / US-OROF-004 / US-OROF-005 —
+     /  /  /  —
     dispatcher gating, default-False regression, flag=True paths.
 
     Tests call ``dispatch_backchannel_logout`` directly (the default
@@ -2506,7 +2501,7 @@ class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
             )
         return apply_async
 
-    # ---------- US-OROF-003 — default False preserves v1 behavior ----------
+    # ----------  — default False preserves v1 behavior ----------
 
     def _default_false_fires_for(self, reason: str) -> None:
         app = _make_app_with_flag(self, on_revoke_only=False)
@@ -2538,14 +2533,14 @@ class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
     ) -> None:
         self._default_false_fires_for("user_deleted")
 
-    # ---------- US-OROF-004 — flag=True allows explicit revoke ----------
+    # ----------  — flag=True allows explicit revoke ----------
 
     def test_flag_true_allows_user_revoked(self) -> None:
         app = _make_app_with_flag(self, on_revoke_only=True)
         apply_async = self._dispatch(app=app, reason="user_revoked")
         apply_async.assert_called_once()
 
-    # ---------- US-OROF-005 — flag=True skips 4 lifecycle reasons ----------
+    # ----------  — flag=True skips 4 lifecycle reasons ----------
 
     def _flag_true_skips(self, reason: str) -> None:
         app = _make_app_with_flag(self, on_revoke_only=True)
@@ -2564,11 +2559,11 @@ class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
     def test_flag_true_skips_user_deleted(self) -> None:
         self._flag_true_skips("user_deleted")
 
-    # ---------- US-OROF-005 / AC-7 — silent skip (no audit signal) ----------
+    # ----------  /  — silent skip (no audit signal) ----------
 
     def test_skipped_events_emit_no_dispatched_signal(self) -> None:
         """
-        AC-7: when gating skips, ``oidc_logout_dispatched`` MUST NOT
+        When gating skips, ``oidc_logout_dispatched`` MUST NOT
         be emitted. Audit log stays clean for default-False
         deployments and only carries real dispatch outcomes.
         """
@@ -2594,16 +2589,16 @@ class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
         self.assertEqual(
             captured,
             [],
-            "AC-7: skipped events MUST NOT emit oidc_logout_dispatched",
+            "skipped events MUST NOT emit oidc_logout_dispatched",
         )
 
-    # ---------- US-OROF-002 — gating is centralized in the dispatcher ----------
+    # ----------  — gating is centralized in the dispatcher ----------
 
     def test_custom_signal_sender_with_non_revoke_reason_is_gated(
         self,
     ) -> None:
         """
-        AC-6: gating lives in the dispatcher, not the receivers.
+        Gating lives in the dispatcher, not the receivers.
         A custom signal sender that picks an unrecognised reason
         (e.g. ``"custom_audit_event"``) is treated as non-revoke
         and silently skipped when the flag is True.
@@ -2614,7 +2609,7 @@ class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
 
 
 class TestBackChannelLogoutOnRevokeOnlyLogging(OIDCTestCase):
-    """US-OROF-006 — debug_mode-gated log on skipped events (AC-8)."""
+    """— debug_mode-gated log on skipped events ()."""
 
     _LOG_NAME = "extensions.allianceauth_oidc.logout"
     _SKIP_SUBSTR = "skipped by on_revoke_only flag"
@@ -2645,7 +2640,7 @@ class TestBackChannelLogoutOnRevokeOnlyLogging(OIDCTestCase):
 
     def test_skip_logged_at_info_when_debug_mode(self) -> None:
         """
-        AC-8a: with ``debug_mode=True`` on the RP, ``app_log`` routes
+        With ``debug_mode=True`` on the RP, ``app_log`` routes
         to INFO. The captured INFO log MUST contain the literal
         substring marker AND the reason value.
         """
@@ -2657,7 +2652,7 @@ class TestBackChannelLogoutOnRevokeOnlyLogging(OIDCTestCase):
 
     def test_skip_silent_when_debug_mode_false(self) -> None:
         """
-        AC-8b: with ``debug_mode=False`` on the RP, ``app_log`` routes
+        With ``debug_mode=False`` on the RP, ``app_log`` routes
         to DEBUG. Capturing at INFO level MUST find NO log entries
         bearing the skip substring marker.
         """
@@ -2680,7 +2675,7 @@ class TestBackChannelLogoutOnRevokeOnlyLogging(OIDCTestCase):
 
 
 class TestBackChannelLogoutOnRevokeOnlyAdmin(OIDCTestCase):
-    """US-OROF-007 — admin exposes flag in list_filter (AC-9)."""
+    """— admin exposes flag in list_filter ()."""
 
     def test_admin_lists_field_in_list_filter(self) -> None:
         from allianceauth_oidc.admin import ApplicationAdmin
@@ -2692,7 +2687,7 @@ class TestBackChannelLogoutOnRevokeOnlyAdmin(OIDCTestCase):
 
 
 class TestBackChannelLogoutOnRevokeOnlyDocs(OIDCTestCase):
-    """US-OROF-008 / US-OROF-009 — docs describe the flag (AC-10)."""
+    """/  — docs describe the flag ()."""
 
     _DOCS_EN = "docs/BACK_CHANNEL_LOGOUT.md"
     _DOCS_RU = "docs/BACK_CHANNEL_LOGOUT.ru.md"
@@ -2713,7 +2708,7 @@ class TestBackChannelLogoutOnRevokeOnlyDocs(OIDCTestCase):
     def test_docs_describe_on_revoke_only_flag_ru(self) -> None:
         content = self._read_doc(self._DOCS_RU)
         self.assertIn("backchannel_logout_on_revoke_only", content)
-        # AC-10b: a localised Russian section heading exists.
+        # a localised Russian section heading exists.
         # ``"Фильтрация"`` is the section-title keyword; matching
         # the noun alone keeps the test resilient to wording
         # variations like "Фильтрация триггеров" / "Фильтрация по
@@ -2725,17 +2720,17 @@ class TestBackChannelLogoutOnRevokeOnlyDocs(OIDCTestCase):
 # Dead-letter audit feature (BCL-DL)
 # ============================================================
 #
-# US-BCLDL-001 — model exists with the expected shape.
-# US-BCLDL-002 — receiver records failure events by default.
-# US-BCLDL-003 — receiver skips successes by default; opts in via setting.
-# US-BCLDL-004 — receiver wired in apps.py:ready() under the documented UID.
-# US-BCLDL-005 — admin registration is read-only.
-# US-BCLDL-006 — signal contract exposes ``user_pk``.
-# US-BCLDL-007 — EN + RU docs describe the feature.
+#  — model exists with the expected shape.
+#  — receiver records failure events by default.
+#  — receiver skips successes by default; opts in via setting.
+#  — receiver wired in apps.py:ready() under the documented UID.
+#  — admin registration is read-only.
+#  — signal contract exposes ``user_pk``.
+#  — EN + RU docs describe the feature.
 
 
 class TestBackChannelLogoutAttemptModel(OIDCTestCase):
-    """US-BCLDL-001 — ``BackChannelLogoutAttempt`` model shape."""
+    """— ``BackChannelLogoutAttempt`` model shape."""
 
     def test_model_fields_present_with_expected_attributes(self) -> None:
         from allianceauth_oidc.models import BackChannelLogoutAttempt
@@ -2787,7 +2782,7 @@ class TestBackChannelLogoutAttemptModel(OIDCTestCase):
 
 class TestBackChannelLogoutAttemptReceiver(OIDCTestCase):
     """
-    US-BCLDL-002 / US-BCLDL-003 — receiver records failures by
+     /  — receiver records failures by
     default, skips successes unless opted in.
     """
 
@@ -2952,7 +2947,7 @@ class TestBackChannelLogoutAttemptReceiver(OIDCTestCase):
 
 
 class TestBackChannelLogoutAttemptWiring(OIDCTestCase):
-    """US-BCLDL-004 — receiver is connected by ``apps.ready()``."""
+    """— receiver is connected by ``apps.ready()``."""
 
     def test_receiver_connected_under_documented_uid(self) -> None:
         """
@@ -2986,7 +2981,7 @@ class TestBackChannelLogoutAttemptWiring(OIDCTestCase):
 
 
 class TestBackChannelLogoutAttemptAdmin(OIDCTestCase):
-    """US-BCLDL-005 — admin is registered and read-only."""
+    """— admin is registered and read-only."""
 
     def test_admin_registered(self) -> None:
         from django.contrib import admin as django_admin
@@ -3021,7 +3016,7 @@ class TestBackChannelLogoutAttemptAdmin(OIDCTestCase):
 
 
 class TestBackChannelLogoutAttemptDocs(OIDCTestCase):
-    """US-BCLDL-007 — EN + RU docs describe the dead-letter feature."""
+    """— EN + RU docs describe the dead-letter feature."""
 
     _DOCS_EN = "docs/BACK_CHANNEL_LOGOUT.md"
     _DOCS_RU = "docs/BACK_CHANNEL_LOGOUT.ru.md"

@@ -4,7 +4,7 @@ Regression tests added during the audit pass.
 The pass closed:
 
 * H-1  — ``logout_token`` MUST carry an ``exp`` claim.
-* M-4  — ``oidc_code_reuse_detected`` MUST carry
+*   — ``oidc_code_reuse_detected`` MUST carry
   ``revoke_succeeded`` so SIEM can distinguish "reuse detected and
   tokens recalled" from "reuse detected but revocation failed".
 * CR-HIGH-4 — ``_record_code_issuance`` silent skip on
@@ -66,12 +66,12 @@ from allianceauth_oidc.security import (
 from ._factories import make_app
 from ._oidc_testcase import GrantedOIDCTestCase, OIDCTestCase
 
-# ---------- M-4 + AT-only revocation ----------
+# ----------  + AT-only revocation ----------
 
 
 class TestCodeReuseRevokeSucceededFlag(OIDCTestCase):
     """
-    M-4: ``oidc_code_reuse_detected`` carries ``revoke_succeeded``.
+    ``oidc_code_reuse_detected`` carries ``revoke_succeeded``.
 
     The validator default-path sets ``True``; the
     ``(DatabaseError, ObjectDoesNotExist)`` handler sets ``False`` so

@@ -93,9 +93,9 @@ how long any single leaked PII payload stays valid.
 
 Recommended: `OAUTH2_PROVIDER["ACCESS_TOKEN_EXPIRE_SECONDS"] = 300` (5
 minutes) at minimum. RPs refresh more often, but the PII-at-rest window
-shrinks proportionally. The same logic applies to the existing WikiJS
-guidance in `CLAUDE.md`; for JWT mode it becomes the default rather
-than the special case.
+shrinks proportionally. The same logic applies to the WikiJS recipe in
+the project README; for JWT mode the short TTL becomes the default
+rather than the special case.
 
 For deployments where JWT mode would force PII into less-secure
 pipelines (analytics, full-traffic logs, cold backups), keep the
@@ -190,7 +190,9 @@ mode therefore has no functional effect on WikiJS:
 
 The recommended sequence is **per-app first, global last**:
 
-1. Apply migration 0012 (adds the `access_token_format` field).
+1. Run `manage.py migrate` so the schema has the `access_token_format`
+   column. A clean install applies every migration up to the latest;
+   the column itself was introduced by `0012_allianceauthapplication_access_token_format`.
 2. In Django admin, pick a single non-critical RP. Set its
    `access_token_format` to `"jwt"`. Save.
 3. Wire `ACCESS_TOKEN_GENERATOR` in `local.py` (the dispatcher itself

@@ -122,7 +122,7 @@ class DiscoveryCapabilities:
 #   1.0 §3. Clients doing RFC 9068 JWT access-token validation
 #   feature-detect on this; provider only signs with RS256.
 _CAPABILITIES: Final[DiscoveryCapabilities] = DiscoveryCapabilities(
-    # F-5: ``password`` (RFC 6749 §4.3) and ``implicit`` (RFC 6749 §4.2)
+    # ``password`` (RFC 6749 §4.3) and ``implicit`` (RFC 6749 §4.2)
     # were deprecated by RFC 9700 §2.1.2/§2.1.1. ``response_types_supported``
     # below already pins ``("code",)`` and per-app
     # ``authorization_grant_type`` gating rejects non-code requests at
@@ -174,11 +174,11 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         # ``as_discovery_dict`` field rather than two scattered edits.
         data.update(_CAPABILITIES.as_discovery_dict())
         # OIDC Back-Channel Logout 1.0 §3 discovery — RPs feature-
-        # detect on this single flag. v1 is sub-only logout
-        # (path-b in plan v5), so we deliberately DO NOT emit
+        # detect on this single flag. v1 is sub-only logout, so we
+        # deliberately DO NOT emit
         # ``backchannel_logout_session_supported``; that companion
         # flag promises ``sid``-scoped logout, which the AS reserves
-        # for feature v2.
+        # for a future feature iteration.
         data["backchannel_logout_supported"] = True
         # OIDC Discovery 1.0 §3 OPTIONAL ``op_policy_uri`` /
         # ``op_tos_uri``: links to the AS's privacy policy and
@@ -225,8 +225,8 @@ class AllianceAuthJwksInfoView(JwksInfoView):
     Thin wrapper around DOT's ``JwksInfoView`` that adds the
     ``Access-Control-Allow-Origin: *`` header.
 
-    O-1: discovery already advertises the JWKS URI cross-origin
-    (via :class:`AllianceAuthDiscoveryView`), but the upstream JWKS
+    Discovery already advertises the JWKS URI cross-origin (via
+    :class:`AllianceAuthDiscoveryView`), but the upstream JWKS
     response itself does not. Browser-based RP libraries
     (``oidc-client-ts``, Auth.js et al.) fetch the JWKS to validate
     id_tokens locally and require CORS on this endpoint or fall back

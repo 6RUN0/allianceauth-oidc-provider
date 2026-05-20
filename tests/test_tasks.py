@@ -279,7 +279,7 @@ class TestSendLogoutTokenRetryEnvelope(SimpleTestCase):
         booting.
 
         Envelope formula (Celery exponential backoff): for retry
-        N (1-indexed) the wait is ``min(retry_backoff * 2^(N-1),
+        N (1-indexed) the wait is ``min(retry_backoff * 2^(),
         retry_backoff_max)``. Summed across all ``max_retries``
         attempts gives the total wall-clock the task can absorb
         before it dead-letters.

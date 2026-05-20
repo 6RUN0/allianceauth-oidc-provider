@@ -598,11 +598,11 @@ class TestTokensCleanedCounter(OIDCTestCase):
 
 class TestCodeReuseAuditMissesCounter(OIDCTestCase):
     """
-    F-3: ``aa_oidc_code_reuse_audit_misses_total{client_id}`` fires
+    ``aa_oidc_code_reuse_audit_misses_total{client_id}`` fires
     when :meth:`AllianceAuthOAuth2Validator._handle_potential_code_reuse`
     walks ``IssuedCodeAudit`` and finds no row for the presented
     code. This is the observability hook for the RFC 6749 §10.5
-    SHOULD-overlay race window: pre-F-3 the branch was silent, so
+    SHOULD-overlay race window: pre-refactor the branch was silent, so
     a reuse hit that landed inside the
     ``_record_code_issuance``-after-``save_bearer_token`` window
     degraded to log-only without surfacing on dashboards.
@@ -633,7 +633,7 @@ class TestCodeReuseAuditMissesCounter(OIDCTestCase):
 
         validator = AllianceAuthOAuth2Validator()
         # No IssuedCodeAudit row exists for this code — drives the
-        # ``audit is None`` branch where F-3 increments the counter.
+        # ``audit is None`` branch where  increments the counter.
         validator._handle_potential_code_reuse(
             "code-with-no-audit-row", self.oauth_app
         )
@@ -695,7 +695,7 @@ class TestCodeReuseAuditMissesCounter(OIDCTestCase):
 
 class TestAuditReceiverFailuresCounter(OIDCTestCase):
     """
-    Architect#6 / N-6: ``aa_oidc_audit_receiver_failures_total{signal,
+     / ``aa_oidc_audit_receiver_failures_total{signal,
     receiver_dispatch_uid}`` fires when an audit-signal receiver
     raises during dispatch. Single counter covers all four audit
     signals — without this metric, a silently-broken SIEM forwarder

@@ -246,7 +246,7 @@ class TestDebugLoggingJWTMode(GrantedOIDCTestCase):
 
 class TestTokenViewSensitivePostParameters(SimpleTestCase):
     """
-    F-4 regression: the ``sensitive_post_parameters`` decorator on
+    regression: the ``sensitive_post_parameters`` decorator on
     :meth:`TokenView.post` must cover every credential the token
     endpoint may receive — not only ``password``. Django consults
     ``request.sensitive_post_parameters`` from the 500-debug page

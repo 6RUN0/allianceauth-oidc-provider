@@ -164,9 +164,12 @@ arguments (`user_pk`, `application_pk`, `jti`, `signing_kid`, `iat`)
 so the broker NEVER stores a JWT. On each attempt the worker rebuilds
 the token against the captured `signing_kid` and the pinned
 `(jti, iat)`, so retries are byte-identical. Default retry schedule
-is exponential backoff (5s, 10s, 20s, 40s, 80s capped at 125s) with
-`max_retries=5`; cumulative wall-clock ≤ 155 s (≈ 2:35), inside the
-3-minute window the spec recommends for RP `iat` freshness.
+is exponential backoff with `retry_backoff_max=125 s` as the
+per-attempt delay ceiling; with `max_retries=5` the realised
+sequence is 5 s, 10 s, 20 s, 40 s, 80 s — cumulative wall-clock
+≤ 155 s (≈ 2:35), inside the 3-minute window the spec recommends
+for RP `iat` freshness. A higher `max_retries` would actually
+exercise the 125 s ceiling.
 
 Status-code routing:
 
@@ -240,15 +243,17 @@ Two Django signals are emitted:
 inspect it from Django admin → **Alliance Auth OIDC → Back-Channel
 Logout attempts**.
 
-| Column          | Source signal field | Notes                                                  |
-|-----------------|---------------------|--------------------------------------------------------|
-| `application`   | `application`       | FK to `AllianceAuthApplication`. `CASCADE` on delete.  |
-| `user_pk`       | `user_pk`           | Plain int; `NULL` after the user row is gone.          |
-| `jti`           | `jti`               | 32-char hex from `uuid4().hex`. Empty for pre-mint failures. |
-| `success`       | `success`           | `True` = HTTP 2xx; `False` = every other terminal outcome. |
-| `attempt_count` | `attempt_count`     | Celery attempt number (1-based). `0` for dispatcher-side failures. |
-| `reason`        | `reason`            | Trigger reason on success, failure mode on failure.    |
-| `created_at`    | wall clock          | `auto_now_add`; indexed for `-created_at` ordering.    |
+| Column                            | Source signal field | Notes                                                  |
+|-----------------------------------|---------------------|--------------------------------------------------------|
+| `application`                     | `application`       | FK to `AllianceAuthApplication`. `SET_NULL` on delete — admin-driven RP deletion does NOT wipe the row. |
+| `application_client_id_snapshot`  | `application`       | `client_id` snapshot captured at insert; survives FK becoming NULL. Indexed for per-RP forensic queries on historical rows. |
+| `application_name_snapshot`       | `application`       | Display-name snapshot captured at insert; survives FK becoming NULL. |
+| `user_pk`                         | `user_pk`           | Plain int; `NULL` after the user row is gone.          |
+| `jti`                             | `jti`               | 32-char hex from `uuid4().hex`. Empty for pre-mint failures. |
+| `success`                         | `success`           | `True` = HTTP 2xx; `False` = every other terminal outcome. |
+| `attempt_count`                   | `attempt_count`     | Celery attempt number (1-based). `0` for dispatcher-side failures. |
+| `reason`                          | `reason`            | Trigger reason on success, failure mode on failure.    |
+| `created_at`                      | wall clock          | `auto_now_add`; indexed for `-created_at` ordering.    |
 
 **What gets recorded.** By default, **only failures** —
 `success=False` rows with one of `redirect_blocked`,
@@ -287,10 +292,9 @@ set.
 ## 8. Out of scope — feature v2 (session-scoped logout)
 
 Sub-only logout terminates **all** of the user's sessions on the RP.
-A future feature v2 may add session-scoped logout (`sid` claim on the
-`logout_token`) — see plan v5 §12 for the three documented forward
-paths. The v1 omission is intentional, not an oversight; the
-session-scoped flow requires coupling with DOT's
+A future feature iteration may add session-scoped logout (`sid`
+claim on the `logout_token`). The v1 omission is intentional, not
+an oversight; the session-scoped flow requires coupling with DOT's
 `RefreshToken.token_family` or a dedicated `OIDCSession` model, and
 the spec explicitly permits the AS to opt out of session scoping.
 

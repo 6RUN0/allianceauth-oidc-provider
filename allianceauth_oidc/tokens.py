@@ -123,13 +123,12 @@ def _build_jwt(request: Any) -> str:
     union order is RFC-framing first, identity overlay last — so
     when ``sub`` (or any other claim) appears in both maps the
     identity value wins. This matches the spec's "AT and id_token
-    claim sets byte-equivalent for the same scope" guarantee
-    (id_token comes from ``get_oidc_claims`` directly, so AT must
-    too — see ``.omc/specs/deep-interview-jwt-access-tokens.md``
-    §"Non-Goals" line 85). Identity never emits the RFC 9068
-    framing keys (``typ`` / ``exp`` / ``iat`` / ``jti`` / ``scope`` /
-    ``client_id``) so the union cannot break required-claim
-    presence.
+    claim sets byte-equivalent for the same scope" guarantee:
+    id_token comes from ``get_oidc_claims`` directly, so the AT
+    payload must compose from the same canonical claim source.
+    Identity never emits the RFC 9068 framing keys (``typ`` /
+    ``exp`` / ``iat`` / ``jti`` / ``scope`` / ``client_id``) so the
+    union cannot break required-claim presence.
 
     Local imports for ``jwcrypto`` and ``django.utils.dateformat``
     keep the module's module-level import surface minimal — these

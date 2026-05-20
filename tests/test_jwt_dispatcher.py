@@ -29,7 +29,7 @@ class TestDOTContract(TestCase):
     """
     Invariant test that locks DOT's ``AccessToken.token`` field shape
     so a future DOT release cannot silently break our wide-token
-    assumption (see ``.omc/plans/jwt-access-tokens-plan-v3.md``
+    assumption (see the internal design notes
     Decision D and Risk R1').
     """
 
@@ -42,7 +42,7 @@ class TestDOTContract(TestCase):
             field,
             TextField,
             "DOT regression: AccessToken.token narrowed; widening the "
-            "field is now this module's responsibility — see plan v3 "
+            "field is now this module's responsibility — see internal design notes "
             "Decision D for the rationale and the migration recipe.",
         )
 

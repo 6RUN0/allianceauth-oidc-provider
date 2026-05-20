@@ -164,10 +164,13 @@ Celery task `allianceauth_oidc.send_logout_token` принимает скаля�
 поэтому broker НИКОГДА не хранит JWT. На каждой попытке worker
 пересобирает токен против зафиксированного `signing_kid` и
 закрепленных `(jti, iat)`, поэтому retry — байт-в-байт идентичны.
-Default расписание retry — exponential backoff (5s, 10s, 20s, 40s,
-80s, capped at 125s) с `max_retries=5`; кумулятивный wall-clock ≤
-155 s (≈ 2:35), внутри 3-минутного окна, рекомендованного spec для
-свежести `iat` на RP-стороне.
+Default расписание retry — exponential backoff с потолком
+`retry_backoff_max=125 s` на одиночную задержку; при
+`max_retries=5` реализуемая последовательность — 5 s, 10 s, 20 s,
+40 s, 80 s, кумулятивный wall-clock ≤ 155 s (≈ 2:35), внутри
+3-минутного окна, рекомендованного spec для свежести `iat` на
+RP-стороне. Потолок 125 s фактически достигается только при
+большем `max_retries`.
 
 Маршрутизация по статус-коду:
 
@@ -241,15 +244,17 @@ Default расписание retry — exponential backoff (5s, 10s, 20s, 40s,
 Просматривается из Django admin → **Alliance Auth OIDC →
 Back-Channel Logout attempts**.
 
-| Колонка         | Поле сигнала    | Заметки                                                  |
-|-----------------|-----------------|----------------------------------------------------------|
-| `application`   | `application`   | FK на `AllianceAuthApplication`. `CASCADE` при удалении. |
-| `user_pk`       | `user_pk`       | Целое число; `NULL`, если строка пользователя уже удалена. |
-| `jti`           | `jti`           | 32-символьный hex из `uuid4().hex` (16 байт энтропии). Пустой для отказов до выдачи токена. |
-| `success`       | `success`       | `True` = HTTP 2xx; `False` = любой другой терминальный исход. |
-| `attempt_count` | `attempt_count` | Номер попытки Celery (1-based). `0` для отказов на стороне dispatcher. |
-| `reason`        | `reason`        | Trigger reason при успехе, failure mode при провале.     |
-| `created_at`    | wall clock      | `auto_now_add`; индекс для сортировки `-created_at`.     |
+| Колонка                          | Поле сигнала    | Заметки                                                  |
+|----------------------------------|-----------------|----------------------------------------------------------|
+| `application`                    | `application`   | FK на `AllianceAuthApplication`. `SET_NULL` при удалении — админ-удаление RP НЕ затирает строку. |
+| `application_client_id_snapshot` | `application`   | Снимок `client_id`, сделанный при вставке; переживает обнуление FK. Индексирован для per-RP forensic-запросов по историческим строкам. |
+| `application_name_snapshot`      | `application`   | Снимок display-name, сделанный при вставке; переживает обнуление FK. |
+| `user_pk`                        | `user_pk`       | Целое число; `NULL`, если строка пользователя уже удалена. |
+| `jti`                            | `jti`           | 32-символьный hex из `uuid4().hex` (16 байт энтропии). Пустой для отказов до выдачи токена. |
+| `success`                        | `success`       | `True` = HTTP 2xx; `False` = любой другой терминальный исход. |
+| `attempt_count`                  | `attempt_count` | Номер попытки Celery (1-based). `0` для отказов на стороне dispatcher. |
+| `reason`                         | `reason`        | Trigger reason при успехе, failure mode при провале.     |
+| `created_at`                     | wall clock      | `auto_now_add`; индекс для сортировки `-created_at`.     |
 
 **Что записывается.** По умолчанию — **только провалы**:
 `success=False` со значениями `reason` из набора
@@ -288,13 +293,12 @@ TypedDict документирует безопасный для отправк�
 
 ## 8. Out of scope — feature v2 (session-scoped logout)
 
-Sub-only logout завершает **все** сессии пользователя на RP. Feature
-v2 в будущем может добавить session-scoped logout (`sid` claim в
-`logout_token`) — см. plan v5 §12 для трёх описанных forward-paths.
-v1-омиссия намеренная, не упущение; session-scoped flow требует
-coupling с `RefreshToken.token_family` (DOT) либо отдельной моделью
-`OIDCSession`, а spec явно разрешает AS отказаться от session-
-scoping.
+Sub-only logout завершает **все** сессии пользователя на RP. Будущая
+feature-итерация может добавить session-scoped logout (`sid` claim в
+`logout_token`). v1-омиссия намеренная, не упущение; session-scoped
+flow требует coupling с `RefreshToken.token_family` (DOT) либо
+отдельной моделью `OIDCSession`, а spec явно разрешает AS отказаться
+от session-scoping.
 
 ## 9. RP integration
 

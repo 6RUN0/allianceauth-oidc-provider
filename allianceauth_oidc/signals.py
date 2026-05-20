@@ -78,13 +78,13 @@ def dispatch_audit_signal(
     Send an audit signal via ``send_robust`` and observe receiver
     failures through the ``aa_oidc_audit_receiver_failures`` counter.
 
-    Architect#6 / N-6: single dispatch helper for all four audit
-    signals (``oidc_token_issued``, ``oidc_code_reuse_detected``,
+    Single dispatch helper for all four audit signals
+    (``oidc_token_issued``, ``oidc_code_reuse_detected``,
     ``oidc_token_introspected``, ``oidc_logout_dispatched``). The
     counter label set ``(signal, receiver_dispatch_uid)`` makes a
     SIEM-forwarder outage visible as a non-zero rate per affected
-    signal — pre-helper, the only trace was a log line that operators
-    rarely watched.
+    signal — without it, the only trace would be a log line that
+    operators rarely watch.
 
     Callers pass ``signal_name`` explicitly (instead of inferring it
     from ``signal``) because Django's ``Signal`` does not carry its
@@ -482,7 +482,8 @@ class LogoutAuditBody(TypedDict):
     ``user_deleted`` path can still report which user the fan-out
     was for after the row is gone.
 
-    No ``sid`` key in v1 (sub-only logout per plan v5).
+    No ``sid`` key in v1 — sub-only logout, see
+    ``docs/BACK_CHANNEL_LOGOUT.md``.
     """
 
     application_id: NotRequired[int | None]
@@ -499,8 +500,8 @@ class LogoutAuditBody(TypedDict):
 #         ...
 #
 # ``reason`` is one of ``user_revoked`` / ``user_deactivated`` /
-# ``groups_changed`` / ``state_changed`` / ``user_deleted`` — see
-# plan v5 §5.2 AC-8 for the closed set. The default dispatcher
+# ``groups_changed`` / ``state_changed`` / ``user_deleted`` — the
+# closed set of v1 lifecycle triggers. The default dispatcher
 # (``logout.dispatch_backchannel_logout``) computes a ``jti``, pins
 # ``iat`` at enqueue time, and submits one Celery task per RP via
 # ``transaction.on_commit`` so a rolled-back trigger does not page out

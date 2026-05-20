@@ -796,7 +796,7 @@ class TestLogoutAllowPrivateInProductionCheck(TestCase):
         self,
     ) -> None:
         """
-        Architect#7 / E006: the dangerous combination has a concrete
+         / E006: the dangerous combination has a concrete
         victim — at least one ``AllianceAuthApplication`` has a
         ``backchannel_logout_uri`` — so silenced Warning becomes a
         loud Error unless the operator has explicitly acknowledged

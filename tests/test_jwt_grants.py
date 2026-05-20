@@ -295,7 +295,7 @@ class TestBackcompatLifecycle(GrantedOIDCTestCase):
 
 
 # ---------------------------------------------------------------------------
-# US-012 — Follow-up coverage from second-pass review (M-1, G-1, G-2, G-3)
+# Follow-up coverage from second-pass review (, , , )
 # ---------------------------------------------------------------------------
 
 
@@ -307,7 +307,7 @@ class TestJWTRevocation(GrantedOIDCTestCase):
     that was just issued, AND for an opaque token issued *before*
     flipping the global default to JWT.
 
-    Closes G-3 from the second-pass review.
+    Closes from the follow-up review.
     """
 
     def setUp(self) -> None:

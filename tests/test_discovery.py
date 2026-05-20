@@ -179,7 +179,7 @@ class TestDiscoveryAndJWKS(GrantedOIDCTestCase):
 
     def test_discovery_grant_types_excludes_deprecated_flows(self):
         """
-        F-5 regression: discovery must NOT advertise grant types this
+        regression: discovery must NOT advertise grant types this
         provider does not implement. ``password`` (RFC 6749 §4.3,
         deprecated by RFC 9700 §2.1.2) and ``implicit`` (RFC 6749 §4.2,
         deprecated by RFC 9700 §2.1.1) used to appear in

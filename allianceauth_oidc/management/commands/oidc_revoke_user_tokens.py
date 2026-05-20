@@ -125,9 +125,9 @@ class Command(BaseCommand):
                 token.revoke()
                 revoked_refresh += 1
 
-        # Command-local dedup — per plan v5 m-V3-3 the dispatcher
-        # itself does NOT dedup, but the entry-point command is a
-        # top-level scope with a finite, known ``(user, app)`` set.
+        # Command-local dedup — the dispatcher itself does NOT dedup,
+        # but the entry-point command is a top-level scope with a
+        # finite, known ``(user, app)`` set.
         seen: set[tuple[int, int]] = set()
         for app in Application.objects.filter(pk__in=app_ids):
             key = (user.pk, app.pk)

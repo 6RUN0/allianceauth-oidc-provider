@@ -107,8 +107,8 @@ def clear_expired_tokens() -> None:
     )
 
 
-# Per plan v5 §5.4 AC-26a — connect timeout 5 s, read timeout 10 s.
-# Bounded explicitly so a slow RP can't hold the worker indefinitely.
+# Connect timeout 5 s, read timeout 10 s — bounded explicitly so a
+# slow RP can't hold the worker indefinitely.
 _HTTP_TIMEOUT: tuple[int, int] = (5, 10)
 
 
@@ -234,10 +234,10 @@ def send_logout_token(  # noqa: PLR0911
     material; the worker rebuilds the JWT against the captured
     ``signing_kid`` and the pinned ``(jti, iat)``, so retries are
     byte-identical (spec §2.4 recommendation, RPs MAY use ``iat`` /
-    ``jti`` for idempotency within a 2-minute window — see plan §5.4
-    AC-30 for the retry-window math).
+    ``jti`` for idempotency within a 2-minute window — see
+    ``docs/BACK_CHANNEL_LOGOUT.md`` for the retry-window math).
 
-    Outbound HTTP discipline (plan §5.4 AC-26a):
+    Outbound HTTP discipline:
 
     * ``allow_redirects=False`` — never follow 3xx, instead log and
       audit ``reason="redirect_blocked"``. The fan-out semantic is
@@ -317,10 +317,11 @@ def send_logout_token(  # noqa: PLR0911
             allow_redirects=False,
         )
     except requests.RequestException:
-        # C-2: ConnectionError / Timeout / ssl-error / DNS — Celery
-        # autoretry catches these via ``autoretry_for``, but until N-6
-        # the final-retry exhaustion path emitted NO audit signal,
-        # leaving operators blind to "RP entirely unreachable" events.
+        # ConnectionError / Timeout / ssl-error / DNS — Celery
+        # autoretry catches these via ``autoretry_for``, but the
+        # final-retry exhaustion path needs to emit a distinct audit
+        # signal so operators are not blind to "RP entirely unreachable"
+        # events.
         # The 5xx path below emits ``retries_exhausted`` on the final
         # retry; mirror that here under a distinct
         # ``retries_exhausted_network`` reason so dashboards can tell

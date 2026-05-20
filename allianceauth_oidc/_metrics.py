@@ -162,9 +162,9 @@ authorize_denied = _counter(
 # RP, with the long tail dominated by SSL handshake + first-byte on
 # cold connections. ``(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 # 15.0)`` covers normal traffic at fine resolution and still
-# separates the timeout floor (10 s read timeout per plan v5 AC-26a)
-# from the timeout ceiling. ``+Inf`` is auto-appended by
-# prometheus_client.
+# separates the timeout floor (10 s read timeout — see
+# ``_HTTP_TIMEOUT`` in ``tasks.py``) from the timeout ceiling.
+# ``+Inf`` is auto-appended by prometheus_client.
 bcl_delivery_seconds = _histogram(
     "aa_oidc_bcl_delivery_seconds",
     "Back-channel logout HTTP delivery latency, by outcome.",
@@ -220,14 +220,14 @@ policy_rejections = _counter(
 )
 
 
-# F-3: reuse-detection observability for the RFC 6749 §10.5 SHOULD
+# Reuse-detection observability for the RFC 6749 §10.5 SHOULD
 # overlay. ``_handle_potential_code_reuse`` walks the
 # ``IssuedCodeAudit`` table to find the linked tokens to revoke on a
 # reuse hit. When no audit row exists for the presented code, this
 # counter fires.
 #
-# Post-N-3 (``save_bearer_token`` wraps the parent call and the audit
-# insert in a single ``transaction.atomic``), the prior race-window
+# ``save_bearer_token`` wraps the parent call and the audit-row
+# insert in a single ``transaction.atomic``, so the prior race-window
 # source — audit row missing for a code this provider DID issue — is
 # closed: AT/RT writes and the audit row commit together. The only
 # surviving source is therefore **never-issued codes** (fuzzers
@@ -237,12 +237,12 @@ policy_rejections = _counter(
 # as a "did anyone hit the reuse path without us having issued the
 # code" signal — operators correlate against the
 # ``oidc_code_reuse_detected`` Django signal to confirm zero overlap
-# (post-N-3, the two metrics are disjoint by construction).
+# (the two metrics are disjoint by construction).
 code_reuse_audit_misses = _counter(
     "aa_oidc_code_reuse_audit_misses",
     (
         "Reuse-detection attempts where the audit row was absent — "
-        "post-N-3, exclusively never-issued codes (fuzzer noise / "
+        "exclusively never-issued codes (fuzzer noise / "
         "wrong-provider replays); the race-window source is closed "
         "by the save_bearer_token atomic wrap. Operators correlate "
         "against the oidc_code_reuse_detected signal — the two "
@@ -291,13 +291,13 @@ tokens_cleaned = _counter(
 )
 
 
-# Architect#6: receiver-failure observability for the audit signal
-# pipeline. Every audit signal (``oidc_token_issued``,
+# Receiver-failure observability for the audit signal pipeline.
+# Every audit signal (``oidc_token_issued``,
 # ``oidc_code_reuse_detected``, ``oidc_token_introspected``,
 # ``oidc_logout_dispatched``) is dispatched via ``send_robust`` so a
 # failing SIEM forwarder or external receiver cannot break the others
-# — but until N-6 the only trace of a silently-broken audit pipeline
-# lived in log lines that operators rarely watch. One counter covers
+# — without this counter the only trace of a silently-broken audit
+# pipeline would live in log lines operators rarely watch. One counter covers
 # all four audit signals: ``signal`` is the signal name (matches the
 # Python attribute), ``receiver_dispatch_uid`` is the receiver's
 # ``dispatch_uid`` when set, else the receiver's ``__qualname__``

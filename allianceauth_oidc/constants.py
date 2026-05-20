@@ -29,7 +29,7 @@ AUDIT_DISPATCH_UID: Final[str] = "allianceauth_oidc.audit_oidc_token_issued"
 # ``oidc_token_introspected``. RFC 7662 introspection is the
 # resource-server side of the trust boundary — every check is a
 # probe by an RS for a token's validity, valuable signal for SIEM
-# correlations ("RS X is enumerating tokens against AS"). Same  # noqa: ERA001
+# correlations (an RS enumerating tokens against the AS). Same
 # disconnect / re-connect contract as :data:`AUDIT_DISPATCH_UID`.
 INTROSPECT_AUDIT_DISPATCH_UID: Final[str] = (
     "allianceauth_oidc.audit_oidc_token_introspected"
@@ -130,8 +130,8 @@ class BCLDispatchOutcome(str, Enum):
     REDIRECT_BLOCKED = "redirect_blocked"
     RP_CLIENT_ERROR = "rp_client_error"
     RETRIES_EXHAUSTED = "retries_exhausted"
-    # C-2: network-level exhaustion (ConnectionError / Timeout /
-    # ssl errors). Distinct from the 5xx-driven ``RETRIES_EXHAUSTED``
+    # Network-level exhaustion (ConnectionError / Timeout / ssl
+    # errors). Distinct from the 5xx-driven ``RETRIES_EXHAUSTED``
     # so dashboards can separate "RP returned 5xx repeatedly"
     # (RP-application problem) from "RP unreachable" (network /
     # firewall / RP down). Both share the autoretry envelope.

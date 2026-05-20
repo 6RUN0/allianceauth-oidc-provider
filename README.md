@@ -365,10 +365,12 @@ incident respectively) — pass-through is fine for both.
 ### Code-reuse audit table
 
 RFC 6749 §10.5 SHOULD-clause defence-in-depth: every successful authorization-code exchange
-writes a row to `IssuedCodeAudit` (`code_hash`, `application`, `access_token_pk`,
-`refresh_token_pk`, `reuse_count`, `last_reuse_at`, `created_at`). If the same code is
-presented a second time, `validate_code` revokes the linked tokens and fires
-`oidc_code_reuse_detected` for SIEM correlation.
+writes a row to `IssuedCodeAudit` (`code_hash`, `application`, `application_client_id_snapshot`,
+`access_token_pk`, `refresh_token_pk`, `reuse_count`, `last_reuse_at`, `created_at`). If the
+same code is presented a second time, `validate_code` revokes the linked tokens and fires
+`oidc_code_reuse_detected` for SIEM correlation. The `application_client_id_snapshot` column is
+populated at row insert and survives admin-driven RP deletion (the `application` FK is
+`SET_NULL`), so per-RP forensic queries on historical rows keep working.
 
 **Retention**:
 
@@ -392,7 +394,7 @@ Beyond DOT's `AbstractApplication` schema, `AllianceAuthApplication` adds:
 - `active` — `is_usable()` returns this; deactivated apps cannot issue codes.
 - `debug_mode` — per-app flag escalating log level (see *Debug logging*).
 - `pkce_required` — per-app PKCE enforcement; resolved by
-  `pkce.per_app_pkce_required` (delegates to `AccessPolicy.pkce_required`).
+  `pkce.per_app_pkce_required` (delegates to `AccessPolicy.requires_pkce`).
 - `access_token_format` — per-app override for the access-token wire format
   (`"opaque"` / `"jwt"` / blank). Blank inherits the deployment-wide
   `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT` (default `"opaque"`). See

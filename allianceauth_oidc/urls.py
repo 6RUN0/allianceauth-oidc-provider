@@ -56,7 +56,7 @@ oidc_urlpatterns = [
         AllianceAuthDiscoveryView.as_view(),
         name="oidc-connect-discovery-info",
     ),
-    # O-1: CORS-augmented JWKS so browser-based RPs can fetch the
+    # CORS-augmented JWKS so browser-based RPs can fetch the
     # signing keys cross-origin (the discovery JSON already advertises
     # the URI cross-origin via ``AllianceAuthDiscoveryView``).
     path(

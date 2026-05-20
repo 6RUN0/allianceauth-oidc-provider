@@ -109,7 +109,7 @@ class AllianceAuthApplication(AbstractApplication):
     # ``null=True`` is intentional: the form's "blank" state must persist
     # as ``None`` (not ``""``) so the resolver's
     # ``per_app in ("opaque", "jwt")`` gate falls through cleanly to the
-    # global default. See plan v3 AC and Critic finding C-N15.
+    # global default.
     access_token_format = models.CharField(  # noqa: DJ001
         max_length=8,
         choices=ACCESS_TOKEN_FORMAT_CHOICES,
@@ -126,8 +126,8 @@ class AllianceAuthApplication(AbstractApplication):
     # the user's session. Empty string disables BCL for this RP.
     # ``URLValidator(schemes=['http','https'])`` mirrors ``logo_url``:
     # ``ftp://`` is meaningless for a token POST and only widens the
-    # SSRF surface. The ``clean()`` override adds two additional
-    # gates per plan v5 §5.1 AC-3 / AC-3a / AC-3b:
+    # SSRF surface. The ``clean()`` override adds three additional
+    # gates:
     #   * ``http://`` is rejected unless ``settings.DEBUG`` is True;
     #   * the host's DNS resolution is checked against private /
     #     loopback / link-local / multicast / reserved IPs;
@@ -249,13 +249,13 @@ class AllianceAuthApplication(AbstractApplication):
 
     def _validate_backchannel_logout_uri(self) -> None:
         """
-        Plan v5 §5.1 AC-3 / AC-3a / AC-3b — enforce TLS in production
-        and gate DNS resolution against private/loopback/link-local
-        IPs to close the SSRF surface on the worker's outbound POST.
+        Enforce TLS in production and gate DNS resolution against
+        private/loopback/link-local IPs to close the SSRF surface on
+        the worker's outbound POST.
 
-        Per AC-3b, transient resolver failures are non-blocking: the
-        admin save is allowed and a WARNING is logged for monitoring.
-        Operators decide whether to alert on the warning frequency.
+        Transient resolver failures are non-blocking: the admin save
+        is allowed and a WARNING is logged for monitoring. Operators
+        decide whether to alert on the warning frequency.
 
         Internally split into a scheme half (TLS / DEBUG policy) and
         a target half (DNS-resolved IP). The split exists so the
@@ -380,7 +380,7 @@ class BackChannelLogoutAttempt(models.Model):
     historically faithful even when the originating user no longer
     exists. Use :meth:`get_user` for a best-effort lookup.
 
-    C-3: the ``application`` FK is ``on_delete=SET_NULL``, NOT
+    The ``application`` FK is ``on_delete=SET_NULL``, NOT
     ``CASCADE`` — admin-driven deletion of an application row must
     NOT wipe its dead-letter history (the operator most needs that
     history when removing a compromised or buggy RP). Two
@@ -397,7 +397,7 @@ class BackChannelLogoutAttempt(models.Model):
         related_name="backchannel_logout_attempts",
         verbose_name=_("Application"),
     )
-    # C-3: snapshot columns survive ``application`` becoming NULL on
+    # Snapshot columns survive ``application`` becoming NULL on
     # admin-driven RP deletion. Indexed so per-RP forensic queries
     # work for historical rows whose FK is gone. Populated on insert
     # by ``receivers.record_backchannel_logout_attempt`` from the
@@ -521,7 +521,7 @@ class IssuedCodeAudit(models.Model):
     rows with ``reuse_count>=1`` for forensic review until an explicit
     operator cleanup.
 
-    C-4: the ``application`` FK is ``on_delete=SET_NULL``, NOT
+    The ``application`` FK is ``on_delete=SET_NULL``, NOT
     ``CASCADE`` — the docstring promise of preserving
     ``reuse_count>=1`` rows past the cleanup-task TTL must also
     hold against admin-driven app deletion. The

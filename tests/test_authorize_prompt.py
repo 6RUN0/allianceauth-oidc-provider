@@ -145,7 +145,7 @@ class TestValidateSilentAuthorizationTrustedClient(OIDCTestCase):
     validate-authorization-request callsite (verified at
     ``oauth2_provider/oauth2_backends.py``), so the branch was dead
     in production while passing under synthetic ``SimpleNamespace``
-    request stubs — the canonical test-theatre footgun. The N-2
+    request stubs — the canonical test-theatre footgun. The
     removal collapses the function to the honest contract: only
     operator-declared trust grants silent consent. Non-trusted SPAs
     must accept ``error=consent_required`` and prompt the user for
