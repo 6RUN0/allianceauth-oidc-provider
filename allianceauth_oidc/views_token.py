@@ -261,6 +261,9 @@ class TokenView(OAuthLibMixin, View):
     # * ``client_secret``      — RFC 6749 §2.3.1 Client Authentication
     # * ``code``                — RFC 6749 §4.1 single-use code (still
     #                              hot until exchanged)
+    # * ``code_verifier``       — RFC 7636 §4.5 PKCE proof-of-possession;
+    #                              leaking this together with the code
+    #                              defeats PKCE entirely
     # * ``refresh_token``      — RFC 6749 §6 long-lived rotation token
     # * ``assertion``          — RFC 7521 client / RFC 7522 SAML / RFC
     #                              7523 JWT assertion grants (DOT may
@@ -271,6 +274,7 @@ class TokenView(OAuthLibMixin, View):
             "password",
             "client_secret",
             "code",
+            "code_verifier",
             "refresh_token",
             "assertion",
         )

@@ -285,7 +285,11 @@ class TestTokenViewSensitivePostParameters(SimpleTestCase):
                 "password",
                 "client_secret",
                 "code",
+                "code_verifier",
                 "refresh_token",
                 "assertion",
             ),
+            "PKCE ``code_verifier`` MUST be marked sensitive — leaking "
+            "the verifier together with the code defeats PKCE entirely "
+            "(RFC 7636 §4.5).",
         )
