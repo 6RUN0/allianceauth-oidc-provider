@@ -1635,33 +1635,30 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                 }
             )
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink")
-        try:
-            # Stub the request-time SSRF re-resolution so the test
-            # exercises the HTTP-routing logic without touching DNS.
-            # The validator itself is exercised separately by
-            # ``TestSendLogoutTokenSSRFGate``.
-            with (
-                mock.patch(
-                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
-                    return_value=_stub_resolver(_PUBLIC_IP),
-                ),
-                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
-            ):
-                if raises is not None:
-                    post.side_effect = raises
-                else:
-                    post.return_value = mock.MagicMock(status_code=status_code)
-                send_logout_token(
-                    user_pk=self.user1.pk,
-                    application_pk=self.app.pk,
-                    jti="deadbeef" * 4,
-                    signing_kid=self._active_signing_kid(),
-                    iat=1_700_000_000,
-                )
-                return dispatches, post
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink")
+        self.signal_capture(oidc_logout_dispatched, sink)
+        # Stub the request-time SSRF re-resolution so the test
+        # exercises the HTTP-routing logic without touching DNS.
+        # The validator itself is exercised separately by
+        # ``TestSendLogoutTokenSSRFGate``.
+        with (
+            mock.patch(
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
+            if raises is not None:
+                post.side_effect = raises
+            else:
+                post.return_value = mock.MagicMock(status_code=status_code)
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="deadbeef" * 4,
+                signing_kid=self._active_signing_kid(),
+                iat=1_700_000_000,
+            )
+            return dispatches, post
 
     # ---------- AC-23 — task name constant ----------
 
@@ -1810,31 +1807,28 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         # the production task body reads via ``self.request.retries``.
         task_cls = type(send_logout_token._get_current_object())
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ac29")
-        try:
-            with (
-                mock.patch.object(
-                    task_cls,
-                    "request",
-                    new_callable=mock.PropertyMock,
-                    return_value=fake_request,
-                ),
-                mock.patch(
-                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
-                    return_value=_stub_resolver(_PUBLIC_IP),
-                ),
-                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
-            ):
-                post.return_value = mock.MagicMock(status_code=503)
-                send_logout_token(
-                    user_pk=self.user1.pk,
-                    application_pk=self.app.pk,
-                    jti="deadbeef" * 4,
-                    signing_kid=self._active_signing_kid(),
-                    iat=1_700_000_000,
-                )
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.ac29")
+        self.signal_capture(oidc_logout_dispatched, sink)
+        with (
+            mock.patch.object(
+                task_cls,
+                "request",
+                new_callable=mock.PropertyMock,
+                return_value=fake_request,
+            ),
+            mock.patch(
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
+            post.return_value = mock.MagicMock(status_code=503)
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="deadbeef" * 4,
+                signing_kid=self._active_signing_kid(),
+                iat=1_700_000_000,
+            )
         self.assertEqual(len(dispatches), 1)
         self.assertFalse(dispatches[0]["success"])
         self.assertEqual(dispatches[0]["reason"], "retries_exhausted")
@@ -1875,35 +1869,32 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
 
         task_cls = type(send_logout_token._get_current_object())
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.c2")
-        try:
-            with (
-                mock.patch.object(
-                    task_cls,
-                    "request",
-                    new_callable=mock.PropertyMock,
-                    return_value=fake_request,
+        self.signal_capture(oidc_logout_dispatched, sink)
+        with (
+            mock.patch.object(
+                task_cls,
+                "request",
+                new_callable=mock.PropertyMock,
+                return_value=fake_request,
+            ),
+            mock.patch(
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            mock.patch(
+                "allianceauth_oidc.tasks.requests.post",
+                side_effect=requests.exceptions.ConnectionError(
+                    "RP refused TCP connect"
                 ),
-                mock.patch(
-                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
-                    return_value=_stub_resolver(_PUBLIC_IP),
-                ),
-                mock.patch(
-                    "allianceauth_oidc.tasks.requests.post",
-                    side_effect=requests.exceptions.ConnectionError(
-                        "RP refused TCP connect"
-                    ),
-                ),
-            ):
-                send_logout_token(
-                    user_pk=self.user1.pk,
-                    application_pk=self.app.pk,
-                    jti="cafebabe" * 4,
-                    signing_kid=self._active_signing_kid(),
-                    iat=1_700_000_000,
-                )
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.c2")
+            ),
+        ):
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="cafebabe" * 4,
+                signing_kid=self._active_signing_kid(),
+                iat=1_700_000_000,
+            )
         self.assertEqual(len(dispatches), 1)
         self.assertFalse(dispatches[0]["success"])
         self.assertEqual(dispatches[0]["reason"], "retries_exhausted_network")
@@ -1963,22 +1954,19 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
                 }
             )
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.kid")
-        try:
-            # Pass a kid that exists in NEITHER active nor inactive
-            # key stores — build_logout_token raises
-            # SigningKeyRetiredError; the task catches it.
-            with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
-                send_logout_token(
-                    user_pk=self.user1.pk,
-                    application_pk=self.app.pk,
-                    jti="deadbeef" * 4,
-                    signing_kid="not-a-real-kid",
-                    iat=1_700_000_000,
-                )
-                post.assert_not_called()  # AC-29a — no HTTP call
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.kid")
+        self.signal_capture(oidc_logout_dispatched, sink)
+        # Pass a kid that exists in NEITHER active nor inactive
+        # key stores — build_logout_token raises
+        # SigningKeyRetiredError; the task catches it.
+        with mock.patch("allianceauth_oidc.tasks.requests.post") as post:
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="deadbeef" * 4,
+                signing_kid="not-a-real-kid",
+                iat=1_700_000_000,
+            )
+            post.assert_not_called()  # AC-29a — no HTTP call
         self.assertEqual(
             dispatches,
             [{"success": False, "reason": "signing_kid_retired"}],
@@ -2000,29 +1988,26 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         def sink(sender, application, jti, success, attempt_count, **kw):
             dispatches.append({"reason": kw.get("reason")})
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.broker")
+        self.signal_capture(oidc_logout_dispatched, sink)
         # ``transaction.on_commit`` callbacks are deferred to the
         # OUTERMOST commit, which never fires under ``TestCase``
         # (transactions are rolled back). ``captureOnCommitCallbacks(
         # execute=True)`` is the documented way to run them
         # synchronously inside a test.
-        try:
-            with (
-                mock.patch(
-                    "allianceauth_oidc.tasks.send_logout_token.apply_async",
-                    side_effect=RuntimeError("broker down"),
-                ),
-                self.captureOnCommitCallbacks(execute=True),
-            ):
-                dispatch_backchannel_logout(
-                    sender=type(self.user1),
-                    user=self.user1,
-                    application=self.app,
-                    reason="user_revoked",
-                )
-            self.assertEqual(dispatches, [{"reason": "broker_unavailable"}])
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.broker")
+        with (
+            mock.patch(
+                "allianceauth_oidc.tasks.send_logout_token.apply_async",
+                side_effect=RuntimeError("broker down"),
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_backchannel_logout(
+                sender=type(self.user1),
+                user=self.user1,
+                application=self.app,
+                reason="user_revoked",
+            )
+        self.assertEqual(dispatches, [{"reason": "broker_unavailable"}])
 
 
 class TestSendLogoutTokenBoundaries(OIDCTestCase):
@@ -2095,39 +2080,34 @@ class TestSendLogoutTokenBoundaries(OIDCTestCase):
         fake_request.retries = retries
         task_cls = type(send_logout_token._get_current_object())
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.boundary")
-        try:
-            with (
-                mock.patch.object(
-                    task_cls,
-                    "request",
-                    new_callable=mock.PropertyMock,
-                    return_value=fake_request,
-                ),
-                mock.patch(
-                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
-                    return_value=_stub_resolver(_PUBLIC_IP),
-                ),
-                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
-            ):
-                post.return_value = mock.MagicMock(status_code=status_code)
-                # 5xx below max_retries re-raises an HTTPError, which
-                # Celery's autoretry wraps in its own ``Retry``. Either
-                # flavour means "the production contract held"; the
-                # captured ``oidc_logout_dispatched`` signals stay
-                # available for the assertions in the caller.
-                with contextlib.suppress(Exception):
-                    send_logout_token(
-                        user_pk=self.user1.pk,
-                        application_pk=self.app.pk,
-                        jti="deadbeef" * 4,
-                        signing_kid=self._active_signing_kid(),
-                        iat=1_700_000_000,
-                    )
-        finally:
-            oidc_logout_dispatched.disconnect(
-                dispatch_uid="test.sink.boundary"
-            )
+        self.signal_capture(oidc_logout_dispatched, sink)
+        with (
+            mock.patch.object(
+                task_cls,
+                "request",
+                new_callable=mock.PropertyMock,
+                return_value=fake_request,
+            ),
+            mock.patch(
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
+            post.return_value = mock.MagicMock(status_code=status_code)
+            # 5xx below max_retries re-raises an HTTPError, which
+            # Celery's autoretry wraps in its own ``Retry``. Either
+            # flavour means "the production contract held"; the
+            # captured ``oidc_logout_dispatched`` signals stay
+            # available for the assertions in the caller.
+            with contextlib.suppress(Exception):
+                send_logout_token(
+                    user_pk=self.user1.pk,
+                    application_pk=self.app.pk,
+                    jti="deadbeef" * 4,
+                    signing_kid=self._active_signing_kid(),
+                    iat=1_700_000_000,
+                )
         return dispatches
 
     # ---- 2xx/3xx/4xx boundary matrix --------------------------
@@ -2421,25 +2401,22 @@ class TestBackChannelLogoutLogging(OIDCTestCase):
         def sink(sender, application, jti, success, attempt_count, **kw):
             seen.append(success)
 
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ac38")
-        try:
-            with (
-                mock.patch(
-                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
-                    return_value=_stub_resolver(_PUBLIC_IP),
-                ),
-                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
-            ):
-                post.return_value = mock.MagicMock(status_code=200)
-                send_logout_token(
-                    user_pk=self.user1.pk,
-                    application_pk=self.app.pk,
-                    jti="deadbeef" * 4,
-                    signing_kid=_active_kid(),
-                    iat=1_700_000_000,
-                )
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.ac38")
+        self.signal_capture(oidc_logout_dispatched, sink)
+        with (
+            mock.patch(
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
+            post.return_value = mock.MagicMock(status_code=200)
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="deadbeef" * 4,
+                signing_kid=_active_kid(),
+                iat=1_700_000_000,
+            )
         self.assertEqual(seen, [True])
 
 
@@ -2610,18 +2587,11 @@ class TestBackChannelLogoutOnRevokeOnlyFlag(OIDCTestCase):
                 }
             )
 
-        oidc_logout_dispatched.connect(
-            sink, dispatch_uid="test.sink.onrevokeonly"
-        )
-        try:
-            self._dispatch(app=app, reason="user_deactivated")
-            self._dispatch(app=app, reason="groups_changed")
-            self._dispatch(app=app, reason="state_changed")
-            self._dispatch(app=app, reason="user_deleted")
-        finally:
-            oidc_logout_dispatched.disconnect(
-                dispatch_uid="test.sink.onrevokeonly"
-            )
+        self.signal_capture(oidc_logout_dispatched, sink)
+        self._dispatch(app=app, reason="user_deactivated")
+        self._dispatch(app=app, reason="groups_changed")
+        self._dispatch(app=app, reason="state_changed")
+        self._dispatch(app=app, reason="user_deleted")
         self.assertEqual(
             captured,
             [],
@@ -3594,23 +3564,20 @@ class TestSendLogoutTokenSSRFGate(OIDCTestCase):
                 "allianceauth_oidc._dns_safety.resolve_host_bounded",
                 return_value=_stub_resolver(*(resolver_ips or ())),
             )
-        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.ssrf")
-        try:
-            with (
-                resolver_mock,
-                mock.patch("allianceauth_oidc.tasks.requests.post") as post,
-            ):
-                post.return_value = mock.MagicMock(status_code=200)
-                send_logout_token(
-                    user_pk=self.user1.pk,
-                    application_pk=self.app.pk,
-                    jti="deadbeef" * 4,
-                    signing_kid=self._active_signing_kid(),
-                    iat=1_700_000_000,
-                )
-                return dispatches, post
-        finally:
-            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.ssrf")
+        self.signal_capture(oidc_logout_dispatched, sink)
+        with (
+            resolver_mock,
+            mock.patch("allianceauth_oidc.tasks.requests.post") as post,
+        ):
+            post.return_value = mock.MagicMock(status_code=200)
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="deadbeef" * 4,
+                signing_kid=self._active_signing_kid(),
+                iat=1_700_000_000,
+            )
+            return dispatches, post
 
     def test_request_time_rebinding_to_private_blocked(self) -> None:
         """DNS rebinding to RFC 1918 caught — no POST, audit fires."""
