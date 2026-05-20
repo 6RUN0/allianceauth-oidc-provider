@@ -275,7 +275,12 @@ class TestAccessPolicyEnforce(SimpleTestCase):
         policy = AccessPolicy()
         with self.assertRaises(PermissionDenied) as ctx:
             policy.enforce(user, app=None)
-        self.assertIn(str(DenyReason.GLOBAL), str(ctx.exception))
+        # Use ``.value`` instead of ``str()`` — Python 3.11 changed the
+        # str-mixin ``Enum.__str__`` (bpo-44513), so ``str(member)``
+        # returns ``'DenyReason.GLOBAL'`` on 3.10 but ``'global'`` on
+        # 3.11+. The value attribute is what the policy message
+        # interpolates either way.
+        self.assertIn(DenyReason.GLOBAL.value, str(ctx.exception))
 
 
 # ---------- Debug-mode STATE/GROUP diagnostics ----------

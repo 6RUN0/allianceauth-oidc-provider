@@ -275,8 +275,25 @@ class AccessPolicy:
         decision = self.decide(user, app)
         if decision.allowed:
             return
+        # On the ``not allowed`` branch ``decision`` is statically
+        # ``GlobalDeny | AppDeny`` (both carry a non-None
+        # ``deny_reason``), but the ``allowed`` bool is not the Literal
+        # discriminator the type checker tracks. The ``or`` fallback
+        # narrows ``Optional[DenyReason]`` to ``DenyReason`` without an
+        # ``assert`` (which Bandit B101 rejects in production code, and
+        # which ``python -O`` strips). The fallback would only fire in
+        # the impossible state where a future subclass forgets to set
+        # ``deny_reason``.
+        deny_reason = decision.deny_reason or DenyReason.GLOBAL
+        # Use ``.value`` (not the enum member) so the message stays
+        # byte-identical across Python versions. ``class DenyReason(
+        # str, Enum)`` is a str-mixin enum whose ``__format__`` /
+        # ``__str__`` results diverge between 3.10 and 3.11+ (the
+        # mixin-vs-Enum dispatch question rewritten under PEP 663 and
+        # then again under bpo-44511). Mirrors the audit-label site at
+        # ``auth_provider._enforce_policy``.
         raise PermissionDenied(
-            f"OIDC access denied (reason={decision.deny_reason})"
+            f"OIDC access denied (reason={deny_reason.value})"
         )
 
     def requires_pkce(self, app: AppLike | None) -> bool:

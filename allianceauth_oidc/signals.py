@@ -55,7 +55,16 @@ def _receiver_dispatch_label(signal: Signal, receiver: Any) -> str:
     Prometheus cardinality.
     """
     target_id = id(receiver)
-    for lookup_key, stored, _is_async in signal.receivers:
+    # Django 5.0 widened ``Signal.receivers`` entries from
+    # ``(lookup_key, receiver_ref)`` to
+    # ``(lookup_key, receiver_ref, is_async)``. The third element is
+    # the async-receiver flag introduced for ``send_async``; this
+    # helper only consults the first two. Index-access works on
+    # tuples of either shape and keeps the AA 4.x (Django 4.2) stack
+    # passing alongside AA 5.x (Django 5.2).
+    for entry in signal.receivers:
+        lookup_key = entry[0]
+        stored = entry[1]
         candidate = stored() if isinstance(stored, weakref.ref) else stored
         if candidate is None or id(candidate) != target_id:
             continue
