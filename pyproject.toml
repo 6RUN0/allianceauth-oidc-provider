@@ -7,7 +7,8 @@ name = "allianceauth-oidc-provider-eveo7"
 version = "0.3.0"
 description = "OpenID Connect / OAuth2 provider for Alliance Auth, layered on django-oauth-toolkit."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = [ "LICENSE" ]
 authors = [ { name = "AaronKable", email = "aaronkable@gmail.com" } ]
 maintainers = [ { name = "Boris Talovikov", email = "boris.t.66@gmail.com" } ]
 requires-python = ">=3.10,<3.14"
@@ -17,7 +18,6 @@ classifiers = [
     "Framework :: Django :: 4.2",
     "Framework :: Django :: 5.2",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
