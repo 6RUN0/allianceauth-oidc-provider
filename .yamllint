@@ -1,0 +1,21 @@
+# yamllint config — extends the bundled ``relaxed`` profile and
+# lifts line-length to 200 chars. Rationale:
+#
+# * GitHub Actions ``run:`` blocks legitimately produce lines beyond
+#   80 chars (shell pipelines, ``uses:`` action references with
+#   pinned commit SHAs plus a comment, etc.); enforcing 80 here
+#   would require artificial line-continuation splits that hurt
+#   readability of the surrounding workflow logic.
+# * Truncation is still enforced — 200 catches genuinely runaway
+#   one-liners (e.g. a forgotten newline after a multi-line ``|``
+#   block) without nagging on every reasonable workflow step.
+#
+# The other ``relaxed`` defaults (duplicate-keys = error, indent,
+# trailing-spaces, etc.) are the actual value-add of this hook over
+# ``check-yaml``'s parseability check.
+extends: relaxed
+
+rules:
+  line-length:
+    max: 200
+    level: warning

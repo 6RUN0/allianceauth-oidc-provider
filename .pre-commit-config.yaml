@@ -63,6 +63,17 @@ repos:
       - id: validate-pyproject
         additional_dependencies: ["validate-pyproject-schema-store[all]"]
 
+  # Style / structural lint for YAML beyond check-yaml's
+  # parseability check. Catches duplicate keys (silent merges in
+  # GitHub Actions schema), indent drift, mixed quoting,
+  # trailing-space rot. Config in ``.yamllint``: extends ``relaxed``
+  # + ``line-length: 200`` to accommodate GHA shell pipelines.
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ["-c", ".yamllint"]
+
   # Typo lint for code, docstrings, comments, log messages, and
   # Markdown. Complements ``vale`` (prose linter for *.md only) and
   # ruff D-codes (docstring *shape*, not spelling). Reads its config
