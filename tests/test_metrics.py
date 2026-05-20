@@ -692,3 +692,99 @@ class TestCodeReuseAuditMissesCounter(OIDCTestCase):
         )
         self.assertEqual(1.0, after_a - before_a)
         self.assertEqual(1.0, after_b - before_b)
+
+
+class TestAuditReceiverFailuresCounter(OIDCTestCase):
+    """
+    Architect#6 / N-6: ``aa_oidc_audit_receiver_failures_total{signal,
+    receiver_dispatch_uid}`` fires when an audit-signal receiver
+    raises during dispatch. Single counter covers all four audit
+    signals — without this metric, a silently-broken SIEM forwarder
+    leaves no trace beyond a log line operators rarely watch.
+    """
+
+    def test_failing_receiver_increments_counter_with_signal_label(
+        self,
+    ) -> None:
+        from allianceauth_oidc.signals import (
+            dispatch_audit_signal,
+            oidc_token_issued,
+        )
+
+        def boom(sender, **kwargs):
+            raise RuntimeError("simulated SIEM forwarder failure")
+
+        # Strong reference — ``Signal.connect`` defaults to weak.
+        self._boom = boom
+        oidc_token_issued.connect(boom, dispatch_uid="test-arf-boom")
+        self.addCleanup(
+            oidc_token_issued.disconnect, dispatch_uid="test-arf-boom"
+        )
+
+        labels = {
+            "signal": "oidc_token_issued",
+            "receiver_dispatch_uid": "test-arf-boom",
+        }
+        before = _sample_value(
+            "aa_oidc_audit_receiver_failures_total", **labels
+        )
+
+        dispatch_audit_signal(
+            oidc_token_issued,
+            signal_name="oidc_token_issued",
+            sender=type(self),
+            request=None,
+            token=None,
+            body=None,
+        )
+
+        after = _sample_value(
+            "aa_oidc_audit_receiver_failures_total", **labels
+        )
+        self.assertEqual(
+            1.0,
+            after - before,
+            f"expected delta=1 for label set {labels!r}; got {after - before}",
+        )
+
+    def test_successful_receivers_do_not_increment_counter(self) -> None:
+        from allianceauth_oidc.signals import (
+            dispatch_audit_signal,
+            oidc_token_issued,
+        )
+
+        captured: list = []
+
+        def receiver(sender, **kwargs):
+            captured.append(kwargs)
+
+        self._receiver = receiver
+        oidc_token_issued.connect(receiver, dispatch_uid="test-arf-ok")
+        self.addCleanup(
+            oidc_token_issued.disconnect, dispatch_uid="test-arf-ok"
+        )
+
+        labels = {
+            "signal": "oidc_token_issued",
+            "receiver_dispatch_uid": "test-arf-ok",
+        }
+        before = _sample_value(
+            "aa_oidc_audit_receiver_failures_total", **labels
+        )
+
+        dispatch_audit_signal(
+            oidc_token_issued,
+            signal_name="oidc_token_issued",
+            sender=type(self),
+            request=None,
+            token=None,
+            body=None,
+        )
+
+        # Receiver ran.
+        self.assertEqual(1, len(captured))
+        # Counter did NOT move for this label set.
+        after = _sample_value(
+            "aa_oidc_audit_receiver_failures_total", **labels
+        )
+        self.assertEqual(0.0, after - before)

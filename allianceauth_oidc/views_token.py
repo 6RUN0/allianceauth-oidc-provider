@@ -26,7 +26,7 @@ from django.views.generic import View
 from oauth2_provider.models import get_access_token_model
 from oauth2_provider.views.mixins import OAuthLibMixin
 
-from .signals import oidc_token_issued
+from .signals import dispatch_audit_signal, oidc_token_issued
 from .utils import build_oidc_debug_meta
 
 if TYPE_CHECKING:
@@ -212,31 +212,23 @@ class TokenAudit:
         """Fan out to ``oidc_token_issued`` receivers, logging failures."""
         if self.request is None:
             return
-        # send_robust returns [(receiver, response_or_exception), ...]
-        # without propagating; one bad receiver can't break the others
-        # or token issuance.
         audit_body: OIDCAuditBody = {
             "grant_type": self.request.POST.get("grant_type"),
             "scope": self.request.POST.get("scope"),
             "format": classify_token_format(getattr(token, "token", None)),
         }
-        for receiver, response_or_exc in oidc_token_issued.send_robust(
+        # ``dispatch_audit_signal`` wraps ``send_robust`` with the
+        # Architect#6 receiver-failure counter so SIEM-forwarder
+        # outages surface as a non-zero Prometheus rate per affected
+        # signal.
+        dispatch_audit_signal(
+            oidc_token_issued,
+            signal_name="oidc_token_issued",
             sender=self.sender,
             request=self.request,
             token=token,
             body=audit_body,
-        ):
-            # ``send_robust`` itself only catches ``Exception``, but
-            # matching on ``BaseException`` here keeps the branch
-            # correct for future subclasses (e.g. 3.11+
-            # ``ExceptionGroup``) without relying on implementation
-            # details of Django's signal layer.
-            if isinstance(response_or_exc, BaseException):
-                self.log.error(
-                    "OIDC audit receiver %r failed",
-                    receiver,
-                    exc_info=response_or_exc,
-                )
+        )
 
 
 @method_decorator(csrf_exempt, name="dispatch")

@@ -281,6 +281,11 @@ def record_backchannel_logout_attempt(
             normalised_user_pk = int(user_pk)
         except (TypeError, ValueError):
             normalised_user_pk = None
+    # C-3: snapshot client_id + name at row-insert time. Both
+    # survive the FK becoming NULL after admin-driven RP deletion,
+    # so per-RP forensic queries still work for historical rows.
+    client_id_snapshot = (getattr(application, "client_id", "") or "")[:100]
+    name_snapshot = (getattr(application, "name", "") or "")[:255]
     try:
         BackChannelLogoutAttempt.objects.create(
             application_id=app_pk,
@@ -289,6 +294,8 @@ def record_backchannel_logout_attempt(
             success=bool(success),
             attempt_count=int(attempt_count or 0),
             reason=reason or "",
+            application_client_id_snapshot=client_id_snapshot,
+            application_name_snapshot=name_snapshot,
         )
     except Exception:
         # Audit MUST NOT break the dispatcher. Failing to persist a

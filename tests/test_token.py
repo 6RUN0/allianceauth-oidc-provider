@@ -512,6 +512,78 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         self.assertIsNotNone(audit.access_token_pk)
         self.assertIsNotNone(audit.refresh_token_pk)
 
+    def test_n3_audit_failure_rolls_back_token_issuance(self):
+        """
+        N-3 regression: if ``_record_code_issuance`` raises (audit DB
+        outage, table missing, etc.), the outer ``transaction.atomic``
+        in ``save_bearer_token`` MUST roll back the parent's AT/RT
+        writes too. Pre-N-3, the parent's atomic committed AT/RT
+        independently and the try/except swallowed the audit failure,
+        leaving tokens issued without a reuse-detection FK link — a
+        race-window source the F-3 counter could only measure, not
+        close. The trade-off is fail-closed on audit-pipeline
+        failure: legitimate clients see a 500 instead of a 200 with
+        degraded reuse-detection.
+
+        Asserts at the validator boundary (the exception escapes
+        ``save_bearer_token`` rather than at the HTTP boundary) so
+        the test is independent of Django's debug-page rendering or
+        request-exception propagation settings.
+        """
+        from unittest.mock import patch
+
+        from oauth2_provider.models import (
+            get_access_token_model,
+            get_refresh_token_model,
+        )
+
+        from allianceauth_oidc.auth_provider import (
+            AllianceAuthOAuth2Validator,
+        )
+
+        AccessToken = get_access_token_model()
+        RefreshToken = get_refresh_token_model()
+
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="n3-rollback-test")
+
+        at_count_before = AccessToken.objects.count()
+        rt_count_before = RefreshToken.objects.count()
+
+        # ``self.client.post`` re-raises exceptions from the view by
+        # default — drop that so we get a 500 response instead of an
+        # exception interrupting the test.
+        with (
+            patch.object(
+                AllianceAuthOAuth2Validator,
+                "_record_code_issuance",
+                side_effect=RuntimeError("simulated audit DB outage"),
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            self.client.raise_request_exception = True
+            self.client.post(
+                "/o/token/",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": self.oauth_id,
+                    "client_secret": self.oauth_secret,
+                    "redirect_uri": REDIRECT_URI,
+                    "code": code,
+                },
+            )
+
+        self.assertEqual(
+            at_count_before,
+            AccessToken.objects.count(),
+            "outer atomic must roll back AccessToken insert on audit failure",
+        )
+        self.assertEqual(
+            rt_count_before,
+            RefreshToken.objects.count(),
+            "outer atomic must roll back RefreshToken insert on audit failure",
+        )
+
     def test_cleanup_drops_clean_old_audits_but_keeps_reused_ones(self):
         """
         ``clear_expired_tokens`` deletes ``IssuedCodeAudit`` rows
@@ -567,6 +639,149 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         self.assertTrue(
             IssuedCodeAudit.objects.filter(pk=clean_fresh.pk).exists(),
             "fresh audit row must not be touched",
+        )
+
+    def test_n1_lookup_helper_resolves_at_pk_via_token_checksum(self):
+        """
+        N-1 regression: ``_lookup_dot_token_pk`` MUST find an
+        ``AccessToken`` row via the indexed ``token_checksum`` column
+        even when the raw ``token`` column has been blanked after
+        issuance (operator-side at-rest hashing). The prior
+        implementation filtered on the raw column directly and
+        silently returned None for such deployments, breaking the
+        reuse-detection FK link without an observable signal.
+
+        DOT's ``TokenChecksumField.pre_save`` auto-populates the
+        checksum from ``token`` at save time, so the test creates the
+        row with a real raw value (DOT computes the checksum), then
+        clears ``token`` via queryset ``update`` (which bypasses
+        ``pre_save``) to simulate the post-issuance hash-and-clear.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import get_access_token_model
+
+        from allianceauth_oidc.auth_provider import _lookup_dot_token_pk
+
+        AccessToken = get_access_token_model()
+        raw = "n1-checksum-lookup-fixture"
+        at = AccessToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            token=raw,
+            expires=timezone.now() + timedelta(seconds=3600),
+            scope="openid",
+        )
+        # Blank ``token`` after issuance — bypass ``pre_save`` so the
+        # checksum survives.
+        AccessToken.objects.filter(pk=at.pk).update(token="")
+
+        resolved_pk = _lookup_dot_token_pk(AccessToken, raw)
+        self.assertEqual(at.pk, resolved_pk)
+
+    def test_n1_lookup_helper_falls_back_to_token_for_refresh_token(self):
+        """
+        ``RefreshToken`` has no ``token_checksum`` column in DOT 3.x
+        — the helper must fall back to the raw ``token`` column for
+        models without the indexed checksum field. Asymmetry is a
+        DOT-side limitation, not a bug here; the test pins the
+        fallback so a future helper refactor cannot accidentally
+        skip RT lookups.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from oauth2_provider.models import (
+            get_access_token_model,
+            get_refresh_token_model,
+        )
+
+        from allianceauth_oidc.auth_provider import _lookup_dot_token_pk
+
+        AccessToken = get_access_token_model()
+        RefreshToken = get_refresh_token_model()
+        at = AccessToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            token="n1-rt-fallback-at",
+            expires=timezone.now() + timedelta(seconds=3600),
+            scope="openid",
+        )
+        rt = RefreshToken.objects.create(
+            user=self.user1,
+            application=self.oauth_app,
+            access_token=at,
+            token="n1-rt-fallback-raw",
+        )
+        self.assertEqual(
+            rt.pk, _lookup_dot_token_pk(RefreshToken, "n1-rt-fallback-raw")
+        )
+
+    def test_c4_audit_row_survives_application_delete(self):
+        """
+        C-4 regression: ``IssuedCodeAudit.application`` FK is
+        ``on_delete=SET_NULL`` so admin-driven RP deletion preserves
+        ``reuse_count>=1`` forensic rows. The
+        ``application_client_id_snapshot`` column lets the row
+        identify its originating RP after the FK becomes NULL.
+        """
+        from allianceauth_oidc.models import IssuedCodeAudit
+
+        from ._factories import make_app
+
+        app = make_app(owner=self.user1).app
+        snapshot_client_id = app.client_id
+        row = IssuedCodeAudit.objects.create(
+            code_hash="c4" * 32,
+            application=app,
+            reuse_count=2,  # forensic evidence — must survive
+            application_client_id_snapshot=snapshot_client_id,
+        )
+        app.delete()
+        survivor = IssuedCodeAudit.objects.get(pk=row.pk)
+        self.assertIsNone(
+            survivor.application,
+            "C-4 FK must be SET_NULL on application delete",
+        )
+        self.assertEqual(
+            snapshot_client_id, survivor.application_client_id_snapshot
+        )
+        self.assertEqual(2, survivor.reuse_count)
+
+    def test_c4_record_code_issuance_populates_snapshot(self):
+        """
+        ``_record_code_issuance`` is the single insert path for
+        IssuedCodeAudit. It must snapshot the application's
+        ``client_id`` automatically — operators don't pass it
+        through the validator.
+        """
+        from allianceauth_oidc.models import IssuedCodeAudit
+
+        self.grant_oidc_access(self.user1)
+        code = self.authorize_to_code(self.user1, state="c4-snapshot")
+        self.exchange_code_for_token(code=code, redirect_uri=REDIRECT_URI)
+
+        import hashlib
+
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        row = IssuedCodeAudit.objects.get(
+            code_hash=code_hash, application=self.oauth_app
+        )
+        self.assertEqual(
+            self.oauth_app.client_id, row.application_client_id_snapshot
+        )
+
+    def test_n1_lookup_helper_returns_none_for_empty_or_unknown(self):
+        from oauth2_provider.models import get_access_token_model
+
+        from allianceauth_oidc.auth_provider import _lookup_dot_token_pk
+
+        AccessToken = get_access_token_model()
+        self.assertIsNone(_lookup_dot_token_pk(AccessToken, None))
+        self.assertIsNone(_lookup_dot_token_pk(AccessToken, ""))
+        self.assertIsNone(
+            _lookup_dot_token_pk(AccessToken, "never-issued-token")
         )
 
 

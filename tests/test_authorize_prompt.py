@@ -138,115 +138,27 @@ class TestAuthorizePromptNoneAnonymous(OIDCTestCase):
         self.assertEqual(["prompt-none-anon"], qs.get("state"))
 
 
-class TestValidateSilentAuthorizationPriorConsent(OIDCTestCase):
+class TestValidateSilentAuthorizationTrustedClient(OIDCTestCase):
     """
-    OIDC Core 1.0 §3.1.2.4 — ``prompt=none`` MUST succeed when the
-    end-user has already granted consent for the requested scopes,
-    even if the client is NOT marked ``skip_authorization=True``.
+    OIDC Core 1.0 §3.1.2.4 — ``prompt=none`` succeeds only via
+    operator-declared trust (``skip_authorization=True``).
 
-    The prior implementation returned ``True`` only on the
-    ``skip_authorization`` path, breaking the canonical
-    silent-refresh-in-iframe pattern for normal apps the user had
-    already approved. A non-expired ``AccessToken`` covering the
-    requested scopes is the proof-of-prior-consent we accept.
+    A prior implementation attempted a "prior-AT proves prior consent"
+    branch, but oauthlib does not propagate ``request.user`` to the
+    validate-authorization-request callsite (verified at
+    ``oauth2_provider/oauth2_backends.py``), so the branch was dead
+    in production while passing under synthetic ``SimpleNamespace``
+    request stubs — the canonical test-theatre footgun. The N-2
+    removal collapses the function to the honest contract: only
+    operator-declared trust grants silent consent. Non-trusted SPAs
+    must accept ``error=consent_required`` and prompt the user for
+    an interactive authorize round-trip.
     """
 
-    @classmethod
-    def setUpTestData(cls) -> None:  # type: ignore[override]
-        super().setUpTestData()
-        # ``make_app`` returns ``AppCredentials`` (NamedTuple); the
-        # persisted model is on ``.app``. Use the model directly so
-        # ``AccessToken.application`` FK accepts it.
-        cls.app = make_app(
-            owner=cls.users[0],
-            skip_authorization=False,
-            pkce_required=False,
-        ).app
-        # M-1 fix re-runs the policy gate inside
-        # ``validate_silent_authorization``; without the
-        # ``access_oidc`` permission the gate denies BEFORE the scope
-        # coverage check the tests below are pinning. Granting on the
-        # fixture user keeps the assertions about ``positive consent``
-        # honest — they exercise scope coverage, not the policy gate.
-        cls.users[0].user_permissions.add(cls.access_oauth)
-        cls.users[0].refresh_from_db()
-
-    def _build_request(self, *, user, scopes):
-        """Minimal oauthlib-shaped request stand-in for the validator."""
-        from types import SimpleNamespace
-
-        return SimpleNamespace(client=self.app, user=user, scopes=list(scopes))
-
-    def _issue_access_token(self, *, user, scope: str, ttl_seconds: int):
-        from datetime import timedelta
-
-        from django.utils import timezone
-        from oauth2_provider.models import get_access_token_model
-
-        AccessToken = get_access_token_model()
-        return AccessToken.objects.create(
-            user=user,
-            application=self.app,
-            token=f"silent-test-{user.pk}-{scope.replace(' ', '_')}",
-            expires=timezone.now() + timedelta(seconds=ttl_seconds),
-            scope=scope,
-        )
-
-    def test_returns_true_for_active_token_covering_all_scopes(self) -> None:
-        from allianceauth_oidc.auth_provider import (
-            AllianceAuthOAuth2Validator,
-        )
-
-        user = self.users[0]
-        self._issue_access_token(
-            user=user, scope="openid profile", ttl_seconds=3600
-        )
-        request = self._build_request(user=user, scopes=["openid", "profile"])
-        validator = AllianceAuthOAuth2Validator()
-        self.assertTrue(validator.validate_silent_authorization(request))
-
-    def test_returns_false_for_expired_token(self) -> None:
-        from allianceauth_oidc.auth_provider import (
-            AllianceAuthOAuth2Validator,
-        )
-
-        user = self.users[0]
-        self._issue_access_token(
-            user=user, scope="openid profile", ttl_seconds=-60
-        )
-        request = self._build_request(user=user, scopes=["openid", "profile"])
-        validator = AllianceAuthOAuth2Validator()
-        self.assertFalse(validator.validate_silent_authorization(request))
-
-    def test_returns_false_when_token_scope_does_not_cover_request(
-        self,
-    ) -> None:
-        from allianceauth_oidc.auth_provider import (
-            AllianceAuthOAuth2Validator,
-        )
-
-        user = self.users[0]
-        self._issue_access_token(user=user, scope="openid", ttl_seconds=3600)
-        # Request asks for ``profile`` too — not covered, no silent.
-        request = self._build_request(user=user, scopes=["openid", "profile"])
-        validator = AllianceAuthOAuth2Validator()
-        self.assertFalse(validator.validate_silent_authorization(request))
-
-    def test_returns_false_when_no_token_exists(self) -> None:
-        from allianceauth_oidc.auth_provider import (
-            AllianceAuthOAuth2Validator,
-        )
-
-        user = self.users[0]
-        request = self._build_request(user=user, scopes=["openid"])
-        validator = AllianceAuthOAuth2Validator()
-        self.assertFalse(validator.validate_silent_authorization(request))
-
-    def test_skip_authorization_still_short_circuits_to_true(self) -> None:
+    def test_skip_authorization_short_circuits_to_true(self) -> None:
         """
         Regression: the legacy ``skip_authorization=True`` path must
-        remain a pure short-circuit — no token lookup required, no
-        per-user state can flip it to ``False``. This is the path the
+        remain a pure short-circuit. This is the path the
         conformance basic-cert suite exercises.
         """
         from allianceauth_oidc.auth_provider import (

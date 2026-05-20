@@ -377,13 +377,49 @@ class BackChannelLogoutAttempt(models.Model):
     nullable column with no FK constraint keeps the audit log
     historically faithful even when the originating user no longer
     exists. Use :meth:`get_user` for a best-effort lookup.
+
+    C-3: the ``application`` FK is ``on_delete=SET_NULL``, NOT
+    ``CASCADE`` — admin-driven deletion of an application row must
+    NOT wipe its dead-letter history (the operator most needs that
+    history when removing a compromised or buggy RP). Two
+    snapshot columns (``application_client_id_snapshot`` /
+    ``application_name_snapshot``) preserve enough context to
+    correlate the row after the FK becomes NULL.
     """
 
     application = models.ForeignKey(
         "AllianceAuthApplication",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="backchannel_logout_attempts",
         verbose_name=_("Application"),
+    )
+    # C-3: snapshot columns survive ``application`` becoming NULL on
+    # admin-driven RP deletion. Indexed so per-RP forensic queries
+    # work for historical rows whose FK is gone. Populated on insert
+    # by ``receivers.record_backchannel_logout_attempt`` from the
+    # live application instance — the receiver is the single insert
+    # path, so backfill cost is zero for existing rows (migration
+    # data-copies them once).
+    application_client_id_snapshot = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name=_("Application client_id snapshot"),
+        help_text=_(
+            "Snapshot of the application's client_id at row-insert "
+            "time. Survives RP deletion (FK becomes NULL) so per-RP "
+            "forensic queries still work for historical events."
+        ),
+    )
+    application_name_snapshot = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name=_("Application name snapshot"),
+        help_text=_("Snapshot of the application's name at row-insert time."),
     )
     user_pk = models.PositiveIntegerField(
         null=True,
@@ -482,6 +518,13 @@ class IssuedCodeAudit(models.Model):
     ``reuse_count=0`` (no security signal, safe to forget) and keeps
     rows with ``reuse_count>=1`` for forensic review until an explicit
     operator cleanup.
+
+    C-4: the ``application`` FK is ``on_delete=SET_NULL``, NOT
+    ``CASCADE`` — the docstring promise of preserving
+    ``reuse_count>=1`` rows past the cleanup-task TTL must also
+    hold against admin-driven app deletion. The
+    ``application_client_id_snapshot`` column lets per-RP forensic
+    queries continue to work after the FK becomes NULL.
     """
 
     code_hash = models.CharField(
@@ -495,9 +538,24 @@ class IssuedCodeAudit(models.Model):
     )
     application = models.ForeignKey(
         "AllianceAuthApplication",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="+",
         verbose_name=_("Application"),
+    )
+    application_client_id_snapshot = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name=_("Application client_id snapshot"),
+        help_text=_(
+            "Snapshot of the application's client_id at row-insert "
+            "time. Survives RP deletion (FK becomes NULL) so per-RP "
+            "forensic queries still work for ``reuse_count>=1`` "
+            "rows after the originating app is gone."
+        ),
     )
     # Plain integer PKs (not FKs) for the same reason
     # ``BackChannelLogoutAttempt.user_pk`` is a plain integer: the

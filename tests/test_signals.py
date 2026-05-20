@@ -102,13 +102,14 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         A misbehaving audit receiver must NOT propagate its exception:
         token issuance succeeds, the failure is logged, other receivers
         still run. Regression for ``send_robust`` semantics in
-        ``TokenView._emit_audit``.
+        ``signals.dispatch_audit_signal`` (Architect#6 / N-6).
         """
         self.grant_oidc_access(self.user1)
 
         def boom(sender, **kwargs):
             raise RuntimeError("simulated SIEM forwarder failure")
 
+        self._boom = boom  # strong ref so weak-connect doesn't evict
         oidc_token_issued.connect(boom, dispatch_uid="test-signal-boom")
         self.addCleanup(
             oidc_token_issued.disconnect,
@@ -116,7 +117,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         )
 
         with self.assertLogs(
-            "extensions.allianceauth_oidc.views_token", level="ERROR"
+            "extensions.allianceauth_oidc.signals", level="ERROR"
         ) as cm:
             body = self.run_code_flow(self.user1, state="receiver-failure")
 
@@ -298,6 +299,12 @@ class TestOidcCodeReuseDetectedSignal(OIDCTestCase):
         def receiver(sender, **kwargs):
             self.captured.append(kwargs)
 
+        # Pin a strong reference to the closure — Django's
+        # ``Signal.connect`` defaults to ``weak=True``, and the
+        # closure is otherwise eligible for GC the moment setUp
+        # returns. Without this anchor the test is timing-fragile and
+        # the signal dispatcher may find the receiver evicted.
+        self._receiver = receiver
         oidc_code_reuse_detected.connect(
             receiver, dispatch_uid="test-reuse-signal-capture"
         )

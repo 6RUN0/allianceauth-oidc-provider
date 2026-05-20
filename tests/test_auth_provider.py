@@ -534,18 +534,19 @@ class TestValidateSilentAuthorization(OIDCTestCase):
     """
     Pin the short-circuit branches of ``validate_silent_authorization``.
 
-    Four surviving cosmic-ray mutants live on the short-circuit chain:
+    Post-N-2 removal the function has exactly two positive surface
+    bits and one is-usable kill-switch — no scope coverage, no
+    per-user policy check at this layer (oauthlib does not propagate
+    ``request.user`` to the validate-authorization-request callsite,
+    so any per-user branch here is dead in production). The tests
+    below pin the live truth-table directly:
 
-    * ``getattr(client, "skip_authorization", False)`` default —
-      missing attr must NOT trigger the trusted-client fast path.
-    * ``user is None or not getattr(user, "is_authenticated", False)``
-      — both halves of the ``or`` must fire.
-    * Empty-scopes early return — empty must be False.
-
-    Combining narrow stubs with a real `AllianceAuthOAuth2Validator`
-    avoids reaching the DB ``AccessToken.filter`` line for these
-    branches (the DB path is covered indirectly by the prompt=none
-    tests in test_authorize.py).
+    * ``skip_authorization`` default — missing/False/non-trusted
+      client returns False (no positive path without trust).
+    * ``is_usable=False`` overrides ``skip_authorization=True`` —
+      the deactivation kill-switch runs FIRST.
+    * ``client is None`` — no callable kill-switch, no
+      ``skip_authorization`` either, returns False.
     """
 
     def setUp(self) -> None:
@@ -555,9 +556,10 @@ class TestValidateSilentAuthorization(OIDCTestCase):
     def test_client_without_skip_authorization_attr_does_not_short_circuit(
         self,
     ):
-        # Missing ``skip_authorization`` ⇒ default False ⇒ continue.
-        # If the path took the True fast-path on a missing attr,
-        # an anonymous user would be silently approved.
+        # Missing ``skip_authorization`` ⇒ default False ⇒ no positive
+        # branch ⇒ False. If the path took the True fast-path on a
+        # missing attr, any client without the field would silently
+        # auto-approve.
         request = SimpleNamespace(
             client=SimpleNamespace(client_id="c"),  # no skip_authorization
             user=None,
@@ -607,88 +609,20 @@ class TestValidateSilentAuthorization(OIDCTestCase):
         )
         request = SimpleNamespace(
             client=client_stub,
-            user=self.user1,
+            user=None,  # validator-layer reality: no user attached
             scopes=["openid"],
         )
         self.assertFalse(self.validator.validate_silent_authorization(request))
 
-    def test_anonymous_user_denies_silent_consent(self):
-        # ``user is None`` — left side of the ``or`` fires.
-        request = SimpleNamespace(
-            client=SimpleNamespace(client_id="c", skip_authorization=False),
-            user=None,
-            scopes=["openid"],
-        )
-        self.assertFalse(self.validator.validate_silent_authorization(request))
-
-    def test_unauthenticated_user_denies_silent_consent(self):
-        # User present but ``is_authenticated`` is False — right side
-        # of the ``or`` fires. The two together pin ``or`` against
-        # ``and``: the ``and``-mutant requires BOTH branches True
-        # simultaneously (impossible) and would silently approve every
-        # unauthenticated request that has a user object attached.
-        request = SimpleNamespace(
-            client=SimpleNamespace(client_id="c", skip_authorization=False),
-            user=SimpleNamespace(is_authenticated=False),
-            scopes=["openid"],
-        )
-        self.assertFalse(self.validator.validate_silent_authorization(request))
-
-    def test_empty_scopes_denies_silent_consent(self):
-        # Empty scope set is not positive proof of prior consent —
-        # let oauthlib drive. ``ReplaceFalseWithTrue`` on the early
-        # return would turn empty-scopes into auto-approve.
-        #
-        # The M-1 fix adds an ``is_usable`` + ``policy.decide`` gate
-        # ahead of the scope check; stub-policy with allow=True so
-        # the test still exercises the documented empty-scopes path
-        # rather than tripping the new gate on missing state/groups.
-        request = SimpleNamespace(
-            client=SimpleNamespace(
-                client_id="c",
-                skip_authorization=False,
-                is_usable=lambda r: True,
-            ),
-            user=self.user1,  # authenticated real user
-            scopes=[],
-        )
-        with patch.object(
-            AllianceAuthOAuth2Validator, "policy", _stub_policy()
-        ):
-            self.assertFalse(
-                self.validator.validate_silent_authorization(request)
-            )
-
-    def test_silent_consent_denies_when_app_is_unusable(self):
+    def test_non_trusted_client_with_usable_app_returns_false(self):
         """
-        M-1: deactivated app must NOT silently re-consent via
-        ``prompt=none``. The ``is_usable`` check symmetrises this
-        path with ``validate_bearer_token``.
-        """
-        client_stub = SimpleNamespace(
-            client_id="c",
-            skip_authorization=False,
-            is_usable=lambda request: False,
-        )
-        request = SimpleNamespace(
-            client=client_stub,
-            user=self.user1,
-            scopes=["openid"],
-        )
-        with patch.object(
-            AllianceAuthOAuth2Validator, "policy", _stub_policy()
-        ) as pol:
-            self.assertFalse(
-                self.validator.validate_silent_authorization(request)
-            )
-        # is_usable rejected before policy was consulted — no
-        # AccessDecision was built for this request.
-        pol.decide.assert_not_called()
-
-    def test_silent_consent_denies_when_policy_denies(self):
-        """
-        M-1: user who lost the global ``access_oidc`` permission (or
-        fell out of the per-app whitelist) must NOT silently re-consent.
+        N-2 regression: with ``skip_authorization=False`` (the common
+        non-trusted SPA client) the function MUST return False even
+        when the app is usable. Pre-removal, a dead scope-coverage
+        branch *appeared* to allow silent refresh via prior
+        AccessToken — but oauthlib never propagated ``request.user``
+        at this layer, so the branch was unreachable in production
+        while looking defensive in tests.
         """
         client_stub = SimpleNamespace(
             client_id="c",
@@ -697,24 +631,20 @@ class TestValidateSilentAuthorization(OIDCTestCase):
         )
         request = SimpleNamespace(
             client=client_stub,
-            user=self.user1,
-            scopes=["openid"],
+            user=None,  # validator-layer reality: no user attached
+            scopes=["openid", "profile"],
         )
-        pol = _stub_policy(is_allowed=False, deny_reason=DenyReason.GLOBAL)
-        with patch.object(AllianceAuthOAuth2Validator, "policy", pol):
-            self.assertFalse(
-                self.validator.validate_silent_authorization(request)
-            )
-        pol.decide.assert_called_once_with(self.user1, client_stub)
+        self.assertFalse(self.validator.validate_silent_authorization(request))
 
-    def test_silent_consent_denies_when_client_is_none(self):
+    def test_silent_authorization_returns_false_when_client_is_none(self):
         """
-        M-1: missing client at the silent-auth point cannot identify
-        the target app — fail-closed.
+        Missing client at the silent-auth point cannot identify the
+        target app — fail-closed. No callable ``is_usable``, no
+        ``skip_authorization``, no positive path.
         """
         request = SimpleNamespace(
             client=None,
-            user=self.user1,
+            user=None,
             scopes=["openid"],
         )
         self.assertFalse(self.validator.validate_silent_authorization(request))

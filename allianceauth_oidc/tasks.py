@@ -305,16 +305,46 @@ def send_logout_token(  # noqa: PLR0911
     # to the histogram by design (they show up via the dead-letter
     # counter on ``retries_exhausted`` instead).
     _bcl_started = time.monotonic()
-    response = requests.post(
-        application.backchannel_logout_uri,
-        data={"logout_token": token},
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": f"allianceauth-oidc/{__version__}",
-        },
-        timeout=_HTTP_TIMEOUT,
-        allow_redirects=False,
-    )
+    try:
+        response = requests.post(
+            application.backchannel_logout_uri,
+            data={"logout_token": token},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": f"allianceauth-oidc/{__version__}",
+            },
+            timeout=_HTTP_TIMEOUT,
+            allow_redirects=False,
+        )
+    except requests.RequestException:
+        # C-2: ConnectionError / Timeout / ssl-error / DNS — Celery
+        # autoretry catches these via ``autoretry_for``, but until N-6
+        # the final-retry exhaustion path emitted NO audit signal,
+        # leaving operators blind to "RP entirely unreachable" events.
+        # The 5xx path below emits ``retries_exhausted`` on the final
+        # retry; mirror that here under a distinct
+        # ``retries_exhausted_network`` reason so dashboards can tell
+        # "RP returned 5xx" from "RP unreachable" apart.
+        if self.request.retries >= self.max_retries:
+            logger.warning(
+                "OIDC BCL: RP unreachable, retries exhausted meta=%s",
+                build_logout_debug_meta(
+                    application=application,
+                    jti=jti,
+                    reason="retries_exhausted_network",
+                ),
+            )
+            emit_bcl_failure(
+                application=application,
+                user_pk=user_pk,
+                jti=jti,
+                attempt_count=attempt_count,
+                reason="retries_exhausted_network",
+            )
+            return
+        # Not the final retry — re-raise so ``autoretry_for`` kicks
+        # in for the next attempt with the backoff envelope.
+        raise
     try:
         status = response.status_code
     finally:

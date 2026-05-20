@@ -87,17 +87,19 @@ def is_unsafe_address(addr_str: str) -> bool:
       wraps ``127.0.0.1`` — the IPv6 form is not loopback on its
       own but the embedded IPv4 is.
 
-    Unparseable addresses return False (the caller treats this as
-    "continue to the next address" — a hostile resolver that returns
-    garbage cannot bypass the gate by relying on the garbage being
-    treated as "safe").
+    Unparseable addresses return True (fail-closed). The
+    :func:`addresses_have_unsafe` aggregator uses ``any`` semantics, so
+    a resolver returning only garbage tuples would otherwise leave the
+    gate at False and allow ``requests.post`` to fall through to its
+    own (libc) resolver — a TOCTOU window between two resolvers that
+    may disagree. Garbage in, deny out (N-5).
     """
     try:
         addr: ipaddress.IPv4Address | ipaddress.IPv6Address = (
             ipaddress.ip_address(addr_str)
         )
     except ValueError:
-        return False
+        return True
     if isinstance(addr, ipaddress.IPv6Address):
         if addr.ipv4_mapped is not None:
             addr = addr.ipv4_mapped

@@ -130,6 +130,12 @@ class BCLDispatchOutcome(str, Enum):
     REDIRECT_BLOCKED = "redirect_blocked"
     RP_CLIENT_ERROR = "rp_client_error"
     RETRIES_EXHAUSTED = "retries_exhausted"
+    # C-2: network-level exhaustion (ConnectionError / Timeout /
+    # ssl errors). Distinct from the 5xx-driven ``RETRIES_EXHAUSTED``
+    # so dashboards can separate "RP returned 5xx repeatedly"
+    # (RP-application problem) from "RP unreachable" (network /
+    # firewall / RP down). Both share the autoretry envelope.
+    RETRIES_EXHAUSTED_NETWORK = "retries_exhausted_network"
     SIGNING_KID_RETIRED = "signing_kid_retired"
     SIGNING_KID_RESOLVE_FAILED = "signing_kid_resolve_failed"
     BROKER_UNAVAILABLE = "broker_unavailable"

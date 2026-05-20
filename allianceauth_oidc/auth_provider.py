@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Final
 
@@ -65,6 +66,40 @@ _ID_TOKEN_RESERVED_CLAIMS: Final[frozenset[str]] = frozenset(
         "jti",
     }
 )
+
+
+def _lookup_dot_token_pk(model: Any, raw_value: str | None) -> int | None:
+    """
+    Resolve a DOT token row's PK from its raw value.
+
+    Uses the indexed ``token_checksum`` column when the model exposes
+    it (``AccessToken`` in DOT 3.x), otherwise falls back to the raw
+    ``token`` column (``RefreshToken`` in DOT 3.x, which has no
+    checksum field). The dispatch is by field introspection rather
+    than model class so a future DOT release that adds
+    ``token_checksum`` to ``RefreshToken`` activates the indexed path
+    automatically.
+
+    Architecturally a single seam: the DOT-version-specific hashing
+    strategy lives here. A future DOT major that renames the column
+    or changes the algorithm (BLAKE2 / SHA-3 / keyed hash) is a
+    one-line edit. The previous implementation filtered on the raw
+    ``token`` column for both models, which on ``AccessToken``
+    (a) was a table-scan in DOT 3.x and (b) silently returned None
+    for deployments that subclass DOT to clear ``token`` after
+    issuance, breaking the reuse-detection FK link without an
+    observable signal.
+    """
+    if not raw_value:
+        return None
+    field_names = {f.name for f in model._meta.get_fields()}
+    if "token_checksum" in field_names:
+        checksum = hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
+        qs = model.objects.filter(token_checksum=checksum)
+    else:
+        qs = model.objects.filter(token=raw_value)
+    pk: int | None = qs.values_list("pk", flat=True).first()
+    return pk
 
 
 class AllianceAuthOAuth2Validator(OAuth2Validator):
@@ -247,68 +282,21 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         """
         return True
 
-    def _silent_consent_preconditions_pass(self, request, client) -> bool:
-        """
-        Authentication + deactivation + policy gate for silent consent.
-
-        Extracted from :meth:`validate_silent_authorization` so the
-        public entry point keeps its ``return`` count under the
-        ruff PLR0911 cap. Each fail-closed branch corresponds to a
-        distinct adversary model documented on the parent method's
-        docstring: anonymous-bypass, missing-client, deactivated app,
-        revoked permission. Order matches cost-cheapest-first: attr
-        check → attr check → callable predicate → policy decision.
-        """
-        user = getattr(request, "user", None)
-        if user is None or not getattr(user, "is_authenticated", False):
-            return False
-        if client is None:
-            return False
-        # Deactivation kill-switch: ``is_usable`` is provided by DOT's
-        # ``AbstractApplication`` so it is always callable on our
-        # ``AllianceAuthApplication``; the ``callable`` guard tolerates
-        # test seams that hand in synthetic clients.
-        is_usable = getattr(client, "is_usable", None)
-        if callable(is_usable) and not is_usable(request):
-            policy_rejections.labels(
-                stage="validate_silent_auth", reason="app_unusable"
-            ).inc()
-            return False
-        decision = self.policy.decide(user, client)
-        reason = self._emit_denial(decision, stage="validate_silent_auth")
-        return reason is None
-
     def validate_silent_authorization(self, request):
         """
         OIDC Core 1.0 §3.1.2.4 ``prompt=none`` silent-consent gate.
 
-        Returns ``True`` in either of two cases (AFTER the
-        deactivation gate passes):
-
-        1. The client is operator-declared trusted
-           (``skip_authorization=True``) — DOT's
-           ``AuthorizationView.get`` auto-approves these without
-           rendering a consent screen, so the silent path is
-           consistent with the GET path.
-
-        2. The user has previously granted consent for the requested
-           scopes on this client — represented by a non-expired
-           ``AccessToken`` covering the requested scope set. This
-           mirrors the ``approval_prompt=auto`` branch in DOT's
-           ``AuthorizationView.get`` and is the canonical
-           silent-refresh-in-iframe pattern from SPAs.
+        Returns ``True`` only when the client is operator-declared
+        trusted (``skip_authorization=True``) AND the deactivation
+        gate passes — DOT's ``AuthorizationView.get`` auto-approves
+        trusted clients without rendering a consent screen, so the
+        silent path is consistent with the GET path.
 
         Returning ``False`` causes oauthlib to raise
         ``ConsentRequired``, which DOT translates into a 302 to
         ``redirect_uri`` with ``error=consent_required`` — the
         spec-prescribed answer when consent would otherwise be
         required but the request forbade UI.
-
-        Scope coverage uses set inclusion: the requested scopes must
-        be a subset of an existing token's scopes. A prior
-        ``openid`` token does NOT cover a new
-        ``openid profile`` request — the user has not yet consented
-        to the additional claim.
 
         Layer contract — what we CAN and CANNOT enforce here:
 
@@ -317,63 +305,41 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
           can be checked directly.
         * ``request.user`` is NOT populated at this point — oauthlib's
           ``validate_authorization_request`` is called before DOT
-          attaches the Django session user to the credentials dict.
-          Permission / state-group policy enforcement happens one
-          layer up at :meth:`AuthAuthorizationView._dispatch_inner`
-          against the real session user (which has ``access_oidc``
-          and the per-app whitelist re-evaluated freshly per HTTP
-          request).
+          attaches the Django session user to the credentials dict
+          (verified at ``oauth2_provider/oauth2_backends.py``). A
+          per-user "prior-consent via existing AccessToken" branch
+          would always fail-closed in production traffic and only
+          appear to work under synthetic-request unit tests — the
+          canonical "test theatre" footgun, deliberately avoided
+          here.
+
+        Permission / state-group policy enforcement against the real
+        session user happens one layer up at
+        :meth:`AuthAuthorizationView._dispatch_inner`. The SPA
+        silent-refresh-in-iframe pattern is supported only via
+        ``skip_authorization=True``; non-trusted clients with
+        ``prompt=none`` receive ``error=consent_required`` and must
+        prompt the user with an interactive authorize round-trip.
 
         F-2: deactivation gate runs BEFORE ``skip_authorization`` so
         an operator who flips ``skip_authorization=True`` on a
         deactivated app cannot silently re-auth its users — the
         ``active=False`` kill-switch is honoured even on a
-        previously-trusted client. The narrower per-user policy
-        enforcement (which would need the user) is left to the
-        dispatch layer.
+        previously-trusted client.
         """
         client = getattr(request, "client", None)
         # F-2 deactivation gate — runs FIRST, BEFORE the
         # ``skip_authorization`` short-circuit, so operator-toggled
-        # ``active=False`` is honoured even on a trusted client. Works
-        # without ``request.user`` because ``is_usable`` reads only
-        # the client's own ``active`` field. ``client is None`` is
-        # naturally skipped here (``callable(None)`` is False) and
-        # caught one branch below in the helper.
+        # ``active=False`` is honoured even on a trusted client.
+        # Works without ``request.user`` because ``is_usable`` reads
+        # only the client's own ``active`` field.
         is_usable = getattr(client, "is_usable", None)
         if callable(is_usable) and not is_usable(request):
             policy_rejections.labels(
                 stage="validate_silent_auth", reason="app_unusable"
             ).inc()
             return False
-        if getattr(client, "skip_authorization", False):
-            return True
-        if not self._silent_consent_preconditions_pass(request, client):
-            return False
-        user = getattr(request, "user", None)
-        requested = set(getattr(request, "scopes", None) or [])
-        if not requested:
-            # An empty scope set is not a positive proof of consent —
-            # let oauthlib drive the no-scope path.
-            return False
-        # ``AccessToken.application`` FK accepts any concrete
-        # subclass of the swappable model. Filter by ``client_id``
-        # rather than ``application=client`` to dodge any proxy /
-        # cached-instance mismatch between ``request.client`` and
-        # the persisted row.
-        from django.utils import timezone
-        from oauth2_provider.models import get_access_token_model
-
-        AccessToken = get_access_token_model()
-        active = AccessToken.objects.filter(
-            user=user,
-            application__client_id=getattr(client, "client_id", None),
-            expires__gt=timezone.now(),
-        ).only("scope")
-        for token in active:
-            if requested.issubset((token.scope or "").split()):
-                return True
-        return False
+        return bool(getattr(client, "skip_authorization", False))
 
     # NOTE: ``validate_code`` / ``validate_refresh_token`` /
     # ``save_bearer_token`` / ``get_additional_claims`` keep their
@@ -416,6 +382,22 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         per-user ``_perm_cache``. The security benefit is immediate
         revocation propagation, which is the standard expectation for
         incident response.
+
+        Architect#3 (deferred): under high-RPS RS traffic the bearer
+        path actually issues three to four SELECTs per request
+        (``app.states.all()``, ``app.groups.all()``,
+        ``user.groups.all()``, plus ``user.profile.state`` if not
+        cached) because there's no view-layer prefetch hook. A
+        decision-cache (e.g. ``(user_id, app_id, settings_version)``
+        → :class:`AllowedDecision` for ≤ 60s in Django cache) would
+        eliminate the N+1, but it adds a stale-allow window: a user
+        who lost their state/group mid-cache-window stays authorised
+        until TTL. The BCL fan-out path (immediate revocation) is the
+        designed counter-balance for this trade-off, but turning it
+        on changes the security posture and is left to a separate
+        review cycle with an explicit operator-side ACK setting.
+        Until then, RSs that need sub-ms validation should consider
+        opaque-token introspection caching at the RP layer.
 
         ``super()`` sets ``request.client`` / ``request.user`` before
         returning True, so the policy check below runs with the same
@@ -543,29 +525,38 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 raise oauth_errors.InvalidGrantError(
                     description="Access denied"
                 ) from None
-        result = super().save_bearer_token(token, request, *args, **kwargs)
-        # Record the code → tokens link only for the original
-        # authorization_code exchange — refresh_token grants reuse the
-        # same audit row from the first exchange and would otherwise
-        # double-insert under a different code. ``request.code`` is set
-        # by oauthlib during ``authorization_code`` token requests.
-        if getattr(request, "grant_type", None) == "authorization_code":
-            code = getattr(request, "code", None)
-            if code:
-                try:
+        # N-3: collapse the audit race-window by binding the
+        # ``super().save_bearer_token`` AT/RT writes and the
+        # ``_record_code_issuance`` audit-row insert into a single
+        # outer atomic block. DOT 3.x already wraps
+        # ``_save_bearer_token`` in its own ``transaction.atomic``
+        # (oauth2_validators.py); Django nests that inner block as a
+        # savepoint within our outer transaction, so AT+audit commit
+        # together and an audit insert failure rolls back the
+        # issuance. The trade-off is an explicit posture shift:
+        # pre-N-3, an audit DB hiccup degraded silently to
+        # "tokens-issued, SHOULD overlay missing"; post-N-3, the same
+        # hiccup raises and the client sees ``server_error`` /
+        # ``invalid_grant`` — fail-closed for the operator's
+        # audit pipeline rather than fail-open for the legit token
+        # request. The ``_record_code_issuance`` race window the F-3
+        # counter measures collapses to zero on this path; the F-3
+        # counter remains useful for non-issued-code probes (fuzzers
+        # / replays of never-issued codes).
+        from django.db import transaction
+
+        with transaction.atomic():
+            result = super().save_bearer_token(token, request, *args, **kwargs)
+            # Record the code → tokens link only for the original
+            # authorization_code exchange — refresh_token grants reuse
+            # the same audit row from the first exchange and would
+            # otherwise double-insert under a different code.
+            # ``request.code`` is set by oauthlib during
+            # ``authorization_code`` token requests.
+            if getattr(request, "grant_type", None) == "authorization_code":
+                code = getattr(request, "code", None)
+                if code:
                     self._record_code_issuance(code, request, token, client)
-                except Exception:
-                    # Same defence-in-depth posture as
-                    # ``validate_code``: a failed audit insert cannot
-                    # be allowed to break a legitimate token
-                    # issuance. Lose the SHOULD overlay, keep the
-                    # tokens; alert via the log instead.
-                    logger.exception(
-                        "OIDC: code-issuance audit failed for "
-                        "client_id=%s — revoke-on-reuse degraded "
-                        "for this code",
-                        getattr(client, "client_id", None),
-                    )
         return result
 
     def _record_code_issuance(self, code, request, token, client):
@@ -576,30 +567,23 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         Only the sha256 of the code is stored. ``token`` is the dict
         oauthlib hands to ``save_bearer_token`` (raw bearer strings);
         we re-query the persisted ``AccessToken`` / ``RefreshToken``
-        rows by their ``token`` column so we hold the database PKs,
-        not the bearer values, in the audit table.
+        rows by their indexed ``token_checksum`` (AT) / raw ``token``
+        (RT — no checksum field in DOT 3.x) columns via
+        :func:`_lookup_dot_token_pk` so we hold the database PKs, not
+        the bearer values, in the audit table.
 
-        Known race window — RFC 6749 §10.5 SHOULD overlay
-        ------------------------------------------------
-        The audit row is written AFTER ``super().save_bearer_token``
-        commits. In a tight race where a second presenter exchanges
-        the same code in the window between DOT's Grant-delete commit
-        and the audit row's insert, ``_handle_potential_code_reuse``
-        will observe ``audit is None`` and skip revocation. The
-        protocol-level MUST half (``invalid_grant`` to the second
-        presenter) is preserved by DOT's single-use Grant; the SHOULD
-        overlay (revoke previously-issued tokens on reuse) degrades
-        gracefully in that narrow window — the first exchange's
-        tokens remain valid. Operators monitoring
-        ``oidc_code_reuse_detected`` will not see a signal for this
-        race. Closing the window fully requires pre-allocating the
-        audit row at authorize-time (hook into the authorize-flow);
-        the current code accepts the degraded SHOULD overlay because
-        an attacker reaching this race must already possess a leaked
-        authorization code.
+        Called inside the outer ``transaction.atomic`` opened by
+        :meth:`save_bearer_token` (N-3) — the AT/RT writes from
+        DOT's parent and the audit-row insert here commit together,
+        so :meth:`_handle_potential_code_reuse` never observes an
+        AT-committed-but-audit-missing window for a code this
+        provider actually issued. The F-3
+        ``code_reuse_audit_misses`` counter therefore measures only
+        probes of never-issued codes (fuzzers / replays against
+        unrelated providers / clock-skew Grant expiry) — a clean
+        upper bound on "audit row missing for known-good code"
+        events.
         """
-        import hashlib
-
         from oauth2_provider.models import (
             get_access_token_model,
             get_refresh_token_model,
@@ -617,21 +601,20 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
         access_token_value = token.get("access_token")
         refresh_token_value = token.get("refresh_token")
-        at_pk = (
-            AccessToken.objects.filter(token=access_token_value)
-            .values_list("pk", flat=True)
-            .first()
-            if access_token_value
-            else None
-        )
-        rt_pk = (
-            RefreshToken.objects.filter(token=refresh_token_value)
-            .values_list("pk", flat=True)
-            .first()
-            if refresh_token_value
-            else None
-        )
+        # N-1: lookup via indexed ``token_checksum`` column instead of
+        # the unindexed raw ``token`` column. Symmetrises with the
+        # ``TokenAudit._find_token`` pipeline in views_token.py and
+        # tolerates DOT subclassing that clears ``token`` after
+        # issuance (operator-side at-rest hashing).
+        at_pk = _lookup_dot_token_pk(AccessToken, access_token_value)
+        rt_pk = _lookup_dot_token_pk(RefreshToken, refresh_token_value)
 
+        # C-4: snapshot the client_id at row-insert time so per-RP
+        # forensic queries on ``reuse_count>=1`` rows survive admin-
+        # driven RP deletion (the FK becomes NULL via SET_NULL).
+        client_id_snapshot = (getattr(application, "client_id", "") or "")[
+            :100
+        ]
         # ``update_or_create`` keeps the operation idempotent against
         # a (vanishingly rare) replay of the issuance path that would
         # otherwise trip the ``(code_hash, application)`` unique
@@ -642,6 +625,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             defaults={
                 "access_token_pk": at_pk,
                 "refresh_token_pk": rt_pk,
+                "application_client_id_snapshot": client_id_snapshot,
             },
         )
 
@@ -657,8 +641,6 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         ``revoked_at`` column or a soft-delete flag) take effect
         without code edits here.
         """
-        import hashlib
-
         from django.core.exceptions import ObjectDoesNotExist
         from django.db import DatabaseError, transaction
         from django.utils import timezone
@@ -668,7 +650,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         )
 
         from .models import IssuedCodeAudit
-        from .signals import oidc_code_reuse_detected
+        from .signals import dispatch_audit_signal, oidc_code_reuse_detected
 
         if not code or client is None:
             return
@@ -754,7 +736,9 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
             reuse_count = audit.reuse_count
 
-        oidc_code_reuse_detected.send(
+        dispatch_audit_signal(
+            oidc_code_reuse_detected,
+            signal_name="oidc_code_reuse_detected",
             sender=type(self),
             application=client,
             code_hash=code_hash,

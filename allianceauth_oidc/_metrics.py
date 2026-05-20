@@ -224,29 +224,29 @@ policy_rejections = _counter(
 # overlay. ``_handle_potential_code_reuse`` walks the
 # ``IssuedCodeAudit`` table to find the linked tokens to revoke on a
 # reuse hit. When no audit row exists for the presented code, this
-# counter fires. Two real-world sources contribute:
+# counter fires.
 #
-# * **Race window**: the audit row is written AFTER
-#   ``super().save_bearer_token`` commits, so a second presenter
-#   exchanging the same code in that micro-window sees no audit row
-#   and the SHOULD-overlay revocation silently degrades to log-only.
-# * **Never-issued code**: an attacker fuzzing ``/o/token/`` with
-#   random ``code=...`` values also hits this branch (DOT's
-#   Grant-delete already rejected them via ``invalid_grant``).
-#
-# The counter is therefore an *upper bound* on race-window hits;
-# operators correlate against the ``oidc_code_reuse_detected``
-# Django signal (which fires only when the audit row WAS found) to
-# distinguish "race window hit" from "fuzzer noise". A non-zero
-# delta between the two is the observability signal that the
-# RFC 6749 §10.5 SHOULD overlay degraded for a real reuse event.
+# Post-N-3 (``save_bearer_token`` wraps the parent call and the audit
+# insert in a single ``transaction.atomic``), the prior race-window
+# source — audit row missing for a code this provider DID issue — is
+# closed: AT/RT writes and the audit row commit together. The only
+# surviving source is therefore **never-issued codes** (fuzzers
+# probing ``/o/token/`` with random ``code=...`` values; replays
+# against an unrelated provider; clock-skewed Grant-expiry hits that
+# DOT rejected before the audit lookup). The counter remains useful
+# as a "did anyone hit the reuse path without us having issued the
+# code" signal — operators correlate against the
+# ``oidc_code_reuse_detected`` Django signal to confirm zero overlap
+# (post-N-3, the two metrics are disjoint by construction).
 code_reuse_audit_misses = _counter(
     "aa_oidc_code_reuse_audit_misses",
     (
         "Reuse-detection attempts where the audit row was absent — "
-        "race window between save_bearer_token commit and audit "
-        "insert, or never-issued code (operators correlate against "
-        "the oidc_code_reuse_detected signal to disambiguate)."
+        "post-N-3, exclusively never-issued codes (fuzzer noise / "
+        "wrong-provider replays); the race-window source is closed "
+        "by the save_bearer_token atomic wrap. Operators correlate "
+        "against the oidc_code_reuse_detected signal — the two "
+        "should be disjoint."
     ),
     labelnames=("client_id",),
 )
@@ -266,6 +266,32 @@ code_reuse_audit_misses = _counter(
 tokens_cleaned = _counter(
     "aa_oidc_tokens_cleaned",
     "Expired AccessTokens removed by the periodic cleanup task.",
+)
+
+
+# Architect#6: receiver-failure observability for the audit signal
+# pipeline. Every audit signal (``oidc_token_issued``,
+# ``oidc_code_reuse_detected``, ``oidc_token_introspected``,
+# ``oidc_logout_dispatched``) is dispatched via ``send_robust`` so a
+# failing SIEM forwarder or external receiver cannot break the others
+# — but until N-6 the only trace of a silently-broken audit pipeline
+# lived in log lines that operators rarely watch. One counter covers
+# all four audit signals: ``signal`` is the signal name (matches the
+# Python attribute), ``receiver_dispatch_uid`` is the receiver's
+# ``dispatch_uid`` when set, else the receiver's ``__qualname__``
+# or repr — a stable label across worker processes for SIEM
+# correlation. ``rate(aa_oidc_audit_receiver_failures_total[5m])`` is
+# the canonical alert: any non-zero rate means the audit pipeline is
+# silently dropping events for at least one downstream consumer.
+audit_receiver_failures = _counter(
+    "aa_oidc_audit_receiver_failures",
+    (
+        "Audit-signal receivers that raised during dispatch. "
+        "Non-zero rate means the audit pipeline is silently dropping "
+        "events for at least one downstream consumer (SIEM, "
+        "Prometheus collector, custom hook)."
+    ),
+    labelnames=("signal", "receiver_dispatch_uid"),
 )
 
 

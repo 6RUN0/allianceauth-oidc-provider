@@ -20,6 +20,7 @@ import typing
 from io import StringIO
 from unittest import mock
 
+import requests
 from django.conf import settings
 from django.core import checks
 from django.core.exceptions import ValidationError
@@ -52,6 +53,121 @@ def _stub_resolver(*ips: str):
     so ``_dns_safety.resolve_host_bounded`` exits with those addresses.
     """
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, 0)) for ip in ips]
+
+
+class TestBackChannelLogoutFKSetNull(OIDCTestCase):
+    """
+    C-3: ``BackChannelLogoutAttempt.application`` FK is
+    ``on_delete=SET_NULL`` — admin-driven RP deletion preserves the
+    dead-letter history. Snapshot columns
+    (``application_client_id_snapshot`` /
+    ``application_name_snapshot``) keep per-RP forensic queries
+    working after the FK becomes NULL.
+    """
+
+    def test_c3_audit_row_survives_application_delete(self) -> None:
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        app = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+        ).app
+        attempt = BackChannelLogoutAttempt.objects.create(
+            application=app,
+            user_pk=self.user1.pk,
+            jti="c3" * 16,
+            success=False,
+            attempt_count=1,
+            reason="redirect_blocked",
+            application_client_id_snapshot=app.client_id,
+            application_name_snapshot=app.name,
+        )
+        attempt_pk = attempt.pk
+        snapshot_client_id = app.client_id
+        snapshot_name = app.name
+
+        # Delete the application — audit row must survive.
+        app.delete()
+        survivor = BackChannelLogoutAttempt.objects.get(pk=attempt_pk)
+        self.assertIsNone(
+            survivor.application,
+            "C-3 FK must be SET_NULL on application delete",
+        )
+        self.assertEqual(
+            snapshot_client_id, survivor.application_client_id_snapshot
+        )
+        self.assertEqual(snapshot_name, survivor.application_name_snapshot)
+        self.assertEqual("redirect_blocked", survivor.reason)
+
+    def test_c3_receiver_populates_snapshots_on_insert(self) -> None:
+        """
+        ``record_backchannel_logout_attempt`` (the dead-letter
+        recorder) is the single insert path. It must snapshot
+        ``client_id`` and ``name`` automatically — operators don't
+        thread the values through the signal.
+        """
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+        from allianceauth_oidc.receivers import (
+            record_backchannel_logout_attempt,
+        )
+
+        app = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+        ).app
+
+        record_backchannel_logout_attempt(
+            sender=type(self),
+            application=app,
+            user_pk=self.user1.pk,
+            jti="c3insert" * 4,
+            success=False,
+            attempt_count=1,
+            reason="redirect_blocked",
+        )
+
+        row = BackChannelLogoutAttempt.objects.get(jti="c3insert" * 4)
+        self.assertEqual(app.client_id, row.application_client_id_snapshot)
+        self.assertEqual(app.name, row.application_name_snapshot)
+
+
+class TestDnsSafetyFailClosed(TestCase):
+    """
+    N-5: ``is_unsafe_address`` must treat unparseable IP strings as
+    unsafe (fail-closed). Pre-fix, garbage tuples from a resolver
+    returned False from the per-tuple predicate; with the ``any()``
+    aggregator in ``addresses_have_unsafe`` that meant a resolver
+    returning ONLY garbage tuples slipped through the gate and let
+    ``requests.post`` fall back to its own resolver — a TOCTOU
+    window between two disagreeing resolvers.
+    """
+
+    def test_unparseable_ip_string_is_unsafe(self) -> None:
+        from allianceauth_oidc._dns_safety import is_unsafe_address
+
+        self.assertTrue(is_unsafe_address("not-an-ip"))
+        self.assertTrue(is_unsafe_address(""))
+        self.assertTrue(is_unsafe_address("☃"))  # snowman, non-ASCII garbage
+
+    def test_addresses_have_unsafe_blocks_all_garbage_result(self) -> None:
+        from allianceauth_oidc._dns_safety import addresses_have_unsafe
+
+        garbage_only = [
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                0,
+                "",
+                ("bogus-not-an-ip", 0, 0, 0),
+            ),
+        ]
+        self.assertTrue(addresses_have_unsafe(garbage_only))
+
+    def test_addresses_have_unsafe_still_passes_clean_public_ip(self) -> None:
+        from allianceauth_oidc._dns_safety import addresses_have_unsafe
+
+        clean = _stub_resolver(_PUBLIC_IP)
+        self.assertFalse(addresses_have_unsafe(clean))
 
 
 class TestBackChannelLogoutModel(OIDCTestCase):
@@ -1696,6 +1812,114 @@ class TestBackChannelLogoutCeleryTask(OIDCTestCase):
         self.assertEqual(len(dispatches), 1)
         self.assertFalse(dispatches[0]["success"])
         self.assertEqual(dispatches[0]["reason"], "retries_exhausted")
+
+    def test_c2_network_exhaustion_emits_retries_exhausted_network(
+        self,
+    ) -> None:
+        """
+        C-2 regression: the 5xx-driven ``retries_exhausted`` path has
+        a sibling for network-level exhaustion. Pre-C-2,
+        ``requests.RequestException`` (ConnectionError / Timeout /
+        ssl) was caught by Celery's ``autoretry_for`` and the final
+        retry produced ``MaxRetriesExceededError`` without ever
+        running the task body again — so the operator saw zero
+        ``oidc_logout_dispatched`` audit signal for "RP entirely
+        unreachable" events. The fix wraps ``requests.post`` and
+        emits ``reason="retries_exhausted_network"`` on the final
+        retry. Distinct reason so dashboards can tell "RP returned
+        5xx repeatedly" from "RP unreachable" apart.
+        """
+        from allianceauth_oidc.signals import oidc_logout_dispatched
+        from allianceauth_oidc.tasks import send_logout_token
+
+        dispatches: list[dict] = []
+
+        def sink(sender, application, jti, success, attempt_count, **kw):
+            dispatches.append(
+                {
+                    "success": success,
+                    "reason": kw.get("reason"),
+                    "attempt_count": attempt_count,
+                }
+            )
+
+        max_retries = send_logout_token.max_retries
+        fake_request = mock.MagicMock()
+        fake_request.retries = max_retries
+
+        task_cls = type(send_logout_token._get_current_object())
+
+        oidc_logout_dispatched.connect(sink, dispatch_uid="test.sink.c2")
+        try:
+            with (
+                mock.patch.object(
+                    task_cls,
+                    "request",
+                    new_callable=mock.PropertyMock,
+                    return_value=fake_request,
+                ),
+                mock.patch(
+                    "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                    return_value=_stub_resolver(_PUBLIC_IP),
+                ),
+                mock.patch(
+                    "allianceauth_oidc.tasks.requests.post",
+                    side_effect=requests.exceptions.ConnectionError(
+                        "RP refused TCP connect"
+                    ),
+                ),
+            ):
+                send_logout_token(
+                    user_pk=self.user1.pk,
+                    application_pk=self.app.pk,
+                    jti="cafebabe" * 4,
+                    signing_kid=self._active_signing_kid(),
+                    iat=1_700_000_000,
+                )
+        finally:
+            oidc_logout_dispatched.disconnect(dispatch_uid="test.sink.c2")
+        self.assertEqual(len(dispatches), 1)
+        self.assertFalse(dispatches[0]["success"])
+        self.assertEqual(dispatches[0]["reason"], "retries_exhausted_network")
+
+    def test_c2_network_failure_before_final_retry_re_raises(self) -> None:
+        """
+        C-2: on a NON-final retry, a network failure must re-raise so
+        Celery's ``autoretry_for`` engages the backoff envelope. Pin
+        this so a future refactor that converts the re-raise into a
+        silent return cannot silently break the retry behaviour.
+        """
+        from allianceauth_oidc.tasks import send_logout_token
+
+        fake_request = mock.MagicMock()
+        fake_request.retries = 0  # first attempt; well under max_retries
+
+        task_cls = type(send_logout_token._get_current_object())
+
+        with (
+            mock.patch.object(
+                task_cls,
+                "request",
+                new_callable=mock.PropertyMock,
+                return_value=fake_request,
+            ),
+            mock.patch(
+                "allianceauth_oidc._dns_safety.resolve_host_bounded",
+                return_value=_stub_resolver(_PUBLIC_IP),
+            ),
+            mock.patch(
+                "allianceauth_oidc.tasks.requests.post",
+                side_effect=requests.exceptions.Timeout("read timeout"),
+            ),
+            self.assertRaises(requests.exceptions.Timeout),
+        ):
+            send_logout_token(
+                user_pk=self.user1.pk,
+                application_pk=self.app.pk,
+                jti="feedface" * 4,
+                signing_kid=self._active_signing_kid(),
+                iat=1_700_000_000,
+            )
 
     # ---------- AC-29a — signing kid retired ----------
 

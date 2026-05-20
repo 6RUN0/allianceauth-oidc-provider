@@ -6,6 +6,7 @@ from oauth2_provider import views
 from .views import (
     AllianceAuthDiscoveryView,
     AllianceAuthIntrospectTokenView,
+    AllianceAuthJwksInfoView,
     AllianceAuthUserInfoView,
     AuthAuthorizationView,
     TokenView,
@@ -55,8 +56,13 @@ oidc_urlpatterns = [
         AllianceAuthDiscoveryView.as_view(),
         name="oidc-connect-discovery-info",
     ),
+    # O-1: CORS-augmented JWKS so browser-based RPs can fetch the
+    # signing keys cross-origin (the discovery JSON already advertises
+    # the URI cross-origin via ``AllianceAuthDiscoveryView``).
     path(
-        ".well-known/jwks.json", views.JwksInfoView.as_view(), name="jwks-info"
+        ".well-known/jwks.json",
+        AllianceAuthJwksInfoView.as_view(),
+        name="jwks-info",
     ),
     # OIDC §5.3.2: wrap DOT's UserInfoView with Cache-Control headers.
     path(

@@ -792,6 +792,106 @@ class TestLogoutAllowPrivateInProductionCheck(TestCase):
             msgs = check_logout_uri_allow_private_in_production(None)
         self.assertEqual(msgs, [])
 
+    def test_e006_escalates_when_all_three_set_and_not_acked(
+        self,
+    ) -> None:
+        """
+        Architect#7 / E006: the dangerous combination has a concrete
+        victim — at least one ``AllianceAuthApplication`` has a
+        ``backchannel_logout_uri`` — so silenced Warning becomes a
+        loud Error unless the operator has explicitly acknowledged
+        the trade-off.
+        """
+        # Need a real OIDCTestCase-style user — fall back to creating
+        # a minimal user inline since this is a SimpleTestCase derivative.
+        from django.contrib.auth import get_user_model
+
+        from allianceauth_oidc.checks import (
+            E006_ID,
+            check_logout_uri_allow_private_in_production,
+        )
+        from allianceauth_oidc.models import (
+            AllianceAuthApplication,
+        )
+
+        User = get_user_model()
+        u = User.objects.create_user(
+            "e006-test-user",
+            password="x",  # nosec B106 - test fixture
+        )
+        AllianceAuthApplication.objects.create(
+            user=u,
+            client_id="e006-app",
+            client_secret="x",  # nosec B105 - test fixture
+            redirect_uris="https://rp.example.org/cb/",
+            client_type=AllianceAuthApplication.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=(
+                AllianceAuthApplication.GRANT_AUTHORIZATION_CODE
+            ),
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+            active=True,
+        )
+        try:
+            with override_settings(
+                ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True,
+                DEBUG=False,
+            ):
+                msgs = check_logout_uri_allow_private_in_production(None)
+            self.assertEqual(len(msgs), 1, msgs)
+            msg = msgs[0]
+            self.assertEqual(msg.id, E006_ID)
+            self.assertEqual(msg.level, checks.ERROR)
+        finally:
+            AllianceAuthApplication.objects.filter(user=u).delete()
+            u.delete()
+
+    def test_e006_silenced_by_explicit_ack_setting(self) -> None:
+        """
+        With the second opt-out
+        ``ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True``,
+        the escalation downgrades back to W005. The operator has
+        explicitly acknowledged the trade-off (isolated lab, air-
+        gapped staging) and accepts the risk in writing.
+        """
+        from django.contrib.auth import get_user_model
+
+        from allianceauth_oidc.checks import (
+            W005_ID,
+            check_logout_uri_allow_private_in_production,
+        )
+        from allianceauth_oidc.models import AllianceAuthApplication
+
+        User = get_user_model()
+        u = User.objects.create_user(
+            "e006-ack-user",
+            password="x",  # nosec B106 - test fixture
+        )
+        AllianceAuthApplication.objects.create(
+            user=u,
+            client_id="e006-ack-app",
+            client_secret="x",  # nosec B105 - test fixture
+            redirect_uris="https://rp.example.org/cb/",
+            client_type=AllianceAuthApplication.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=(
+                AllianceAuthApplication.GRANT_AUTHORIZATION_CODE
+            ),
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+            active=True,
+        )
+        try:
+            with override_settings(
+                ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True,
+                ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True,
+                DEBUG=False,
+            ):
+                msgs = check_logout_uri_allow_private_in_production(None)
+            self.assertEqual(len(msgs), 1, msgs)
+            self.assertEqual(msgs[0].id, W005_ID)
+            self.assertEqual(msgs[0].level, checks.WARNING)
+        finally:
+            AllianceAuthApplication.objects.filter(user=u).delete()
+            u.delete()
+
 
 class TestPkceRequiredWiringCheck(TestCase):
     """

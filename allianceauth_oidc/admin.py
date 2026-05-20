@@ -76,12 +76,27 @@ class ApplicationAdmin(admin.ModelAdmin):
         warning rather than failing the whole action — selecting
         the full changelist and only firing on the BCL-configured
         subset is the common operator workflow.
+
+        C-1: apps with ``backchannel_logout_on_revoke_only=True``
+        ALSO skip with their own warning. The downstream dispatcher
+        (``logout.dispatch_backchannel_logout``) silently no-ops on
+        any ``reason != "user_revoked"`` event when that flag is set,
+        so the admin's "test BCL" button would otherwise look
+        successful while delivering nothing. The dual-layer check
+        (admin pre-skip + dispatcher post-skip) is consistent with
+        the codebase's three-layer policy pattern: the admin can
+        report a fast, accurate result, and the dispatcher's check
+        remains the security boundary for any out-of-band triggers.
         """
         sent = 0
-        skipped = 0
+        skipped_no_uri = 0
+        skipped_revoke_only = 0
         for app in queryset:
             if not getattr(app, "backchannel_logout_uri", ""):
-                skipped += 1
+                skipped_no_uri += 1
+                continue
+            if getattr(app, "backchannel_logout_on_revoke_only", False):
+                skipped_revoke_only += 1
                 continue
             oidc_logout_required.send(
                 sender=type(self),
@@ -99,14 +114,25 @@ class ApplicationAdmin(admin.ModelAdmin):
                 )
                 % {"count": sent},
             )
-        if skipped:
+        if skipped_no_uri:
             messages.warning(
                 request,
                 _(
                     "Skipped %(count)d application(s) without "
                     "backchannel_logout_uri."
                 )
-                % {"count": skipped},
+                % {"count": skipped_no_uri},
+            )
+        if skipped_revoke_only:
+            messages.warning(
+                request,
+                _(
+                    "Skipped %(count)d application(s) with "
+                    "backchannel_logout_on_revoke_only=True "
+                    "(only fires on real user-revoke events; not on "
+                    "admin test)."
+                )
+                % {"count": skipped_revoke_only},
             )
 
     @override

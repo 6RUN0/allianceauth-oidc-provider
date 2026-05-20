@@ -32,7 +32,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from oauth2_provider.views.introspect import IntrospectTokenView
 
-from .signals import OIDCIntrospectionAuditBody, oidc_token_introspected
+from .signals import (
+    OIDCIntrospectionAuditBody,
+    dispatch_audit_signal,
+    oidc_token_introspected,
+)
 
 if TYPE_CHECKING:
     from django.http import HttpRequest, HttpResponseBase
@@ -153,7 +157,9 @@ class AllianceAuthIntrospectTokenView(IntrospectTokenView):
             "client_id": client_id,
             "token_sha256": token_sha256,
         }
-        oidc_token_introspected.send(
+        dispatch_audit_signal(
+            oidc_token_introspected,
+            signal_name="oidc_token_introspected",
             sender=type(self),
             request=request,
             introspector=getattr(request, "user", None),

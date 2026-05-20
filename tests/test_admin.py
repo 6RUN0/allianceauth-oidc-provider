@@ -300,3 +300,48 @@ class TestApplicationAdminSendTestBackchannelLogout(OIDCTestCase):
         self.assertEqual(200, response.status_code)
         body = response.content.decode("utf-8")
         self.assertIn("send_test_backchannel_logout", body)
+
+    def test_c1_action_skips_revoke_only_apps_with_warning(self) -> None:
+        """
+        C-1 regression: an app configured with
+        ``backchannel_logout_on_revoke_only=True`` must NOT receive
+        the synthetic ``admin_test`` signal — the dispatcher would
+        silently no-op on it, so the admin button looked successful
+        while delivering nothing. The action must skip such apps
+        BEFORE emitting the signal and surface a warning naming the
+        flag so the operator sees the divergence immediately.
+        """
+        from allianceauth_oidc.signals import oidc_logout_required
+
+        revoke_only_app = make_app(
+            owner=self.user1,
+            backchannel_logout_uri="https://rp.example.org/bcl/",
+        )
+        revoke_only_app.app.backchannel_logout_on_revoke_only = True
+        revoke_only_app.app.save(
+            update_fields=["backchannel_logout_on_revoke_only"]
+        )
+
+        captured: list[int] = []
+
+        def sink(sender, user, application, reason, **kw):
+            captured.append(application.pk)
+
+        oidc_logout_required.connect(
+            sink, dispatch_uid="test.admin.revoke_only.sink"
+        )
+        try:
+            resp = self._fire_action(
+                self.with_bcl.app.pk, revoke_only_app.app.pk
+            )
+        finally:
+            oidc_logout_required.disconnect(
+                dispatch_uid="test.admin.revoke_only.sink"
+            )
+
+        self.assertEqual(200, resp.status_code)
+        # Only the non-revoke-only app got the signal.
+        self.assertEqual([self.with_bcl.app.pk], captured)
+        # The follow-up changelist response carries the warning.
+        body = resp.content.decode("utf-8")
+        self.assertIn("backchannel_logout_on_revoke_only", body)

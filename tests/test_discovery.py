@@ -196,6 +196,18 @@ class TestDiscoveryAndJWKS(OIDCTestCase):
         for field in ("kid", "n", "e"):
             self.assertIn(field, first)
 
+    def test_o1_jwks_response_carries_cors_wildcard(self) -> None:
+        """
+        O-1 regression: browser-based RP libraries (oidc-client-ts,
+        Auth.js etc.) fetch JWKS cross-origin to verify id_tokens
+        locally. Without ``Access-Control-Allow-Origin`` they fall
+        back to backend round-trips; discovery already sets the
+        header, so JWKS should follow.
+        """
+        resp = self.client.get("/o/.well-known/jwks.json")
+        self.assertEqual(200, resp.status_code)
+        self.assertEqual("*", resp.headers.get("Access-Control-Allow-Origin"))
+
     def test_id_token_is_signed_and_verifiable_against_jwks(self):
         """
         Round-trip: run the authorization-code flow, decode `id_token` with the

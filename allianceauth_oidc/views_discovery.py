@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from django.conf import settings
-from oauth2_provider.views.oidc import ConnectDiscoveryInfoView
+from oauth2_provider.views.oidc import (
+    ConnectDiscoveryInfoView,
+    JwksInfoView,
+)
 
 if TYPE_CHECKING:
     from django.http import HttpRequest, JsonResponse
@@ -215,3 +218,27 @@ class AllianceAuthDiscoveryView(ConnectDiscoveryInfoView):
         upstream.content = json.dumps(data).encode("utf-8")
         upstream["Access-Control-Allow-Origin"] = "*"
         return upstream
+
+
+class AllianceAuthJwksInfoView(JwksInfoView):
+    """
+    Thin wrapper around DOT's ``JwksInfoView`` that adds the
+    ``Access-Control-Allow-Origin: *`` header.
+
+    O-1: discovery already advertises the JWKS URI cross-origin
+    (via :class:`AllianceAuthDiscoveryView`), but the upstream JWKS
+    response itself does not. Browser-based RP libraries
+    (``oidc-client-ts``, Auth.js et al.) fetch the JWKS to validate
+    id_tokens locally and require CORS on this endpoint or fall back
+    to a slower backend round-trip. The header is symmetrically safe
+    on JWKS as on discovery: both responses are public-by-design
+    crypto metadata.
+    """
+
+    def get(
+        self, request: HttpRequest, *args: Any, **kwargs: Any
+    ) -> JsonResponse:
+        """Decorate the upstream JWKS response with a CORS wildcard."""
+        response = super().get(request, *args, **kwargs)
+        response["Access-Control-Allow-Origin"] = "*"
+        return response

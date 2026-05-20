@@ -101,6 +101,19 @@ that are not fatal but routinely cause incident-class confusion:
   documented auth-code interception attack — better to fail loud at
   ``manage.py check`` than to discover the gap from an incident
   report.
+
+* **E006** — escalation of W005 when the dangerous combination has
+  a concrete victim: ``ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE``
+  is True AND ``DEBUG`` is False AND at least one
+  ``AllianceAuthApplication`` row carries a non-empty
+  ``backchannel_logout_uri``. Silenced by a second opt-out
+  ``ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION = True``
+  — the explicit acknowledgement that the operator wants
+  private-IP targets in a production-shaped deployment (isolated
+  lab, air-gapped staging). Two-knob design follows the same
+  pattern as ``ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS``: the
+  blanket bypass + the in-production override must both be set
+  for the dangerous path to engage without an error.
 """
 
 from __future__ import annotations
@@ -123,6 +136,7 @@ E002_ID = "allianceauth_oidc.E002"
 E003_ID = "allianceauth_oidc.E003"
 E004_ID = "allianceauth_oidc.E004"
 E005_ID = "allianceauth_oidc.E005"
+E006_ID = "allianceauth_oidc.E006"
 W001_ID = "allianceauth_oidc.W001"
 W002_ID = "allianceauth_oidc.W002"
 W003_ID = "allianceauth_oidc.W003"
@@ -755,6 +769,40 @@ def check_logout_uri_allow_private_in_production(
         return []
     if getattr(settings, "DEBUG", False):
         return []
+    # Architect#7 / E006: when a BCL URI is actually registered the
+    # dangerous combination has a real victim — escalate to Error
+    # unless the operator has explicitly acknowledged the trade-off
+    # via the second opt-out setting.
+    acked = getattr(
+        settings,
+        "ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION",
+        False,
+    )
+    if not acked and _any_bcl_uri_registered():
+        return [
+            checks.Error(
+                (
+                    "ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True with "
+                    "DEBUG=False AND at least one AllianceAuthApplication "
+                    "has a non-empty backchannel_logout_uri — the SSRF gate "
+                    "on back-channel logout target resolution is disabled "
+                    "for a target that the worker will actually POST to. "
+                    "Signed logout_token JWTs can leak to 127.0.0.1 / "
+                    "169.254.169.254 / k8s overlay IPs via any registered "
+                    "URI."
+                ),
+                id=E006_ID,
+                hint=(
+                    "Set ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE = "
+                    "False (preferred — the default), OR if you need "
+                    "private-IP BCL targets in a production-shaped "
+                    "deployment (isolated lab, air-gapped staging), "
+                    "also set ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_"
+                    "PRODUCTION = True to acknowledge the trade-off. "
+                    "Both knobs together are the explicit opt-in."
+                ),
+            )
+        ]
     return [
         checks.Warning(
             (
@@ -774,6 +822,30 @@ def check_logout_uri_allow_private_in_production(
             ),
         )
     ]
+
+
+def _any_bcl_uri_registered() -> bool:
+    """
+    Return True when at least one ``AllianceAuthApplication`` row has
+    a non-empty ``backchannel_logout_uri``.
+
+    Wrapped in defensive exception handling: ``manage.py check``
+    can run before migrations, against a missing table, or with a
+    closed connection (e.g. on a fresh check inside a transaction
+    that just deleted the table). In any of those edge cases the
+    check degrades to ``False`` rather than crashing the
+    system-check pipeline — the W005 warning still surfaces, just
+    not the E006 escalation.
+    """
+    try:
+        app_model = apps.get_model(
+            "allianceauth_oidc", "AllianceAuthApplication"
+        )
+        return bool(
+            app_model.objects.exclude(backchannel_logout_uri="").exists()
+        )
+    except (LookupError, OperationalError, ProgrammingError):
+        return False
 
 
 @checks.register(checks.Tags.compatibility)

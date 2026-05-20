@@ -13,6 +13,7 @@ alongside the audit receiver wiring.
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from django.dispatch import Signal
@@ -33,6 +34,81 @@ if TYPE_CHECKING:
     from .security import TokenLike
 
 logger = logging.getLogger(f"extensions.{__name__}")
+
+
+def _receiver_dispatch_label(signal: Signal, receiver: Any) -> str:
+    """
+    Stable, low-cardinality label for the
+    ``aa_oidc_audit_receiver_failures`` counter.
+
+    Recovers the Django ``dispatch_uid`` argument the caller passed
+    to ``signal.connect(..., dispatch_uid=...)`` so the Prometheus
+    label matches the project's own constants (see
+    :mod:`constants`: ``AUDIT_DISPATCH_UID`` etc.). Django stores the
+    dispatch_uid as part of the lookup-key tuple in
+    ``Signal.receivers`` rather than on the receiver object, so the
+    helper walks that list to recover it; missing-dispatch_uid
+    receivers fall back to ``__qualname__`` and finally to ``repr``.
+
+    The label is bounded in length (128 chars) so a stray closure
+    whose qualname includes a memory address cannot blow up
+    Prometheus cardinality.
+    """
+    target_id = id(receiver)
+    for lookup_key, stored, _is_async in signal.receivers:
+        candidate = stored() if isinstance(stored, weakref.ref) else stored
+        if candidate is None or id(candidate) != target_id:
+            continue
+        uid_or_id = lookup_key[0]
+        if isinstance(uid_or_id, str):
+            return uid_or_id[:128]
+        break
+    name = getattr(receiver, "__qualname__", None) or getattr(
+        receiver, "__name__", None
+    )
+    if name:
+        return str(name)[:128]
+    return repr(receiver).strip().replace(" ", "_")[:128]
+
+
+def dispatch_audit_signal(
+    signal: Signal, *, signal_name: str, sender: Any, **kwargs: Any
+) -> None:
+    """
+    Send an audit signal via ``send_robust`` and observe receiver
+    failures through the ``aa_oidc_audit_receiver_failures`` counter.
+
+    Architect#6 / N-6: single dispatch helper for all four audit
+    signals (``oidc_token_issued``, ``oidc_code_reuse_detected``,
+    ``oidc_token_introspected``, ``oidc_logout_dispatched``). The
+    counter label set ``(signal, receiver_dispatch_uid)`` makes a
+    SIEM-forwarder outage visible as a non-zero rate per affected
+    signal — pre-helper, the only trace was a log line that operators
+    rarely watched.
+
+    Callers pass ``signal_name`` explicitly (instead of inferring it
+    from ``signal``) because Django's ``Signal`` does not carry its
+    own attribute name; passing it keeps the label byte-stable
+    against a future signal rename and is checked at edit time by the
+    type-checker.
+    """
+    from ._metrics import audit_receiver_failures
+
+    for receiver, response_or_exc in signal.send_robust(
+        sender=sender, **kwargs
+    ):
+        if isinstance(response_or_exc, BaseException):
+            label = _receiver_dispatch_label(signal, receiver)
+            audit_receiver_failures.labels(
+                signal=signal_name,
+                receiver_dispatch_uid=label,
+            ).inc()
+            logger.error(
+                "OIDC audit receiver %s failed on signal %s",
+                label,
+                signal_name,
+                exc_info=response_or_exc,
+            )
 
 
 def _safe_audit_meta(
@@ -482,7 +558,9 @@ def emit_bcl_failure(
     works at runtime (Prometheus accepts any label value) but
     misses the type-checker safety net and drifts the dashboards.
     """
-    oidc_logout_dispatched.send(
+    dispatch_audit_signal(
+        oidc_logout_dispatched,
+        signal_name="oidc_logout_dispatched",
         sender=BackChannelLogoutSender,
         application=application,
         user_pk=user_pk,
@@ -508,7 +586,9 @@ def emit_bcl_success(
     ``"success"`` and the counter dispatches on
     ``BCLDispatchOutcome.SUCCESS`` without disambiguation.
     """
-    oidc_logout_dispatched.send(
+    dispatch_audit_signal(
+        oidc_logout_dispatched,
+        signal_name="oidc_logout_dispatched",
         sender=BackChannelLogoutSender,
         application=application,
         user_pk=user_pk,
