@@ -18,8 +18,6 @@ strict conformance (RFC compatibility); the goal is to catch silent
 regressions in DOT integration, not to replace a formal OIDC test suite.
 """
 
-import json
-
 from ._oidc_testcase import (
     SCOPE_OPENID,
     OIDCTestCase,
@@ -301,7 +299,7 @@ class TestSubClaimContract(OIDCTestCase):
             },
         )
         self.assertEqual(200, info.status_code)
-        return json.loads(info.content.decode("utf-8"))["sub"]
+        return self.json_body(info, expected_status=None)["sub"]
 
     def test_sub_is_stable_across_separate_authorizations(self) -> None:
         """
@@ -319,7 +317,7 @@ class TestSubClaimContract(OIDCTestCase):
                 ]
             },
         )
-        body = json.loads(sub1_again.content.decode("utf-8"))
+        body = self.json_body(sub1_again, expected_status=None)
         self.assertEqual(sub1, body["sub"])
 
     def test_sub_differs_across_users(self) -> None:

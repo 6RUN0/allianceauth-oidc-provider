@@ -7,8 +7,6 @@ request itself (i.e. before the user reaches the consent screen). Full code-
 exchange flows belong in test_token.py.
 """
 
-import json
-
 from django.conf import settings
 from django.shortcuts import resolve_url
 
@@ -668,7 +666,7 @@ class TestIdTokenHintAuthorizeBinding(OIDCTestCase):
             },
         )
         self.assertEqual(200, token_resp.status_code, token_resp.content)
-        body = json.loads(token_resp.content.decode("utf-8"))
+        body = self.json_body(token_resp, expected_status=None)
         # id_token payload — unverified, only need ``sub``.
         _, claims = split_jwt(body["id_token"])
         self.assertEqual(
@@ -811,7 +809,7 @@ class TestOfflineAccessScopeSemantics(OIDCTestCase):
             },
         )
         self.assertEqual(200, token_resp.status_code, token_resp.content)
-        token_body = json.loads(token_resp.content.decode("utf-8"))
+        token_body = self.json_body(token_resp, expected_status=None)
         self.assertIn("refresh_token", token_body)
         echoed_scope = (token_body.get("scope") or "").split()
         self.assertNotIn(

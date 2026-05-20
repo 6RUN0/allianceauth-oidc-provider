@@ -246,7 +246,6 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
         Audit signal must also dispatch when the token was issued under
         a strict-PKCE contract.
         """
-        import json
         from urllib.parse import parse_qs, urlparse
 
         from ._factories import make_app
@@ -276,7 +275,7 @@ class TestOidcTokenIssuedSignal(OIDCTestCase):
             client_secret=creds.client_secret,
         )
         self.assertEqual(200, token_resp.status_code)
-        body = json.loads(token_resp.content.decode("utf-8"))
+        body = self.json_body(token_resp, expected_status=None)
         self.assertIn("access_token", body)
         self.assertEqual(1, len(self.captured))
 

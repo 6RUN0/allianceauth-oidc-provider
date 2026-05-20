@@ -332,7 +332,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         self.assertTrue(token_kid)
 
         jwks_resp = self.client.get(JWKS_URL)
-        jwks = json.loads(jwks_resp.content.decode("utf-8"))
+        jwks = self.json_body(jwks_resp, expected_status=None)
         published_kids = {k.get("kid") for k in jwks.get("keys", [])}
         self.assertIn(
             token_kid,
@@ -459,7 +459,7 @@ class TestNonceInIdToken(OIDCTestCase):
         refreshed = self.refresh_token(
             refresh_token=original["refresh_token"],
         )
-        refreshed_body = json.loads(refreshed.content.decode("utf-8"))
+        refreshed_body = self.json_body(refreshed, expected_status=None)
         if "id_token" not in refreshed_body:
             # No id_token in refresh response — nothing to assert.
             self.skipTest(

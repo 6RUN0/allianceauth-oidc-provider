@@ -14,7 +14,6 @@ matrix, locale negotiation, and public-client policy.
 """
 
 import base64
-import json
 import os
 from typing import Any
 
@@ -331,7 +330,7 @@ class TestPerAppPkceRequired(OIDCTestCase):
             client_secret=creds.client_secret,
         )
         self.assertEqual(200, token_resp.status_code)
-        body = json.loads(token_resp.content.decode("utf-8"))
+        body = self.json_body(token_resp, expected_status=None)
         self.assertIn("access_token", body)
 
     def test_strict_app_empty_verifier_at_exchange_is_rejected(self):
@@ -369,7 +368,7 @@ class TestPerAppPkceRequired(OIDCTestCase):
             client_secret=creds.client_secret,
         )
         self.assertEqual(400, token_resp.status_code)
-        body = json.loads(token_resp.content.decode("utf-8"))
+        body = self.json_body(token_resp, expected_status=None)
         self.assertIn(
             body.get("error"),
             {"invalid_grant", "invalid_request"},
@@ -515,7 +514,7 @@ class TestLocaleNegotiation(OIDCTestCase):
             headers={"authorization": f"Bearer {tokens['access_token']}"},
         )
         self.assertEqual(200, info.status_code)
-        body = json.loads(info.content.decode("utf-8"))
+        body = self.json_body(info, expected_status=None)
         self.assertEqual(
             "ru",
             body.get("locale"),
@@ -590,7 +589,7 @@ class TestPublicClientPolicy(OIDCTestCase):
             },
         )
         self.assertEqual(200, token_resp.status_code)
-        body = json.loads(token_resp.content.decode("utf-8"))
+        body = self.json_body(token_resp, expected_status=None)
         self.assertIn("access_token", body)
 
     def test_public_client_with_garbage_secret_does_not_500(self) -> None:

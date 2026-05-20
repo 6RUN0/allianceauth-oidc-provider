@@ -16,8 +16,6 @@ Userinfo claims live in test_userinfo.py; RP-initiated logout in
 test_logout.py; debug-logging leak protection in test_logging.py.
 """
 
-import json
-
 from allianceauth.authentication.models import State
 from parameterized import parameterized
 
@@ -331,7 +329,7 @@ class TestTokenPolicyGuards(OIDCTestCase):
 
         # First rotation: old refresh → fresh access + (rotated) refresh.
         rotated = self.refresh_token(refresh_token=old_refresh)
-        rotated_body = json.loads(rotated.content.decode("utf-8"))
+        rotated_body = self.json_body(rotated, expected_status=None)
         self.assertIn("access_token", rotated_body)
         new_refresh = rotated_body["refresh_token"]
         self.assertNotEqual(
@@ -448,7 +446,7 @@ class TestPkceRequiredRefreshFlow(OIDCTestCase):
             client_secret=creds.client_secret,
         )
         self.assertEqual(200, token_resp.status_code)
-        body = json.loads(token_resp.content.decode("utf-8"))
+        body = self.json_body(token_resp, expected_status=None)
         self.assertIn("refresh_token", body)
 
         refresh_resp = self.client.post(
@@ -461,7 +459,7 @@ class TestPkceRequiredRefreshFlow(OIDCTestCase):
             },
         )
         self.assertEqual(200, refresh_resp.status_code)
-        refreshed = json.loads(refresh_resp.content.decode("utf-8"))
+        refreshed = self.json_body(refresh_resp, expected_status=None)
         self.assertIn("access_token", refreshed)
 
 
@@ -503,7 +501,7 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
             code=code,
             redirect_uri=REDIRECT_URI,
         )
-        body = json.loads(first.content.decode("utf-8"))
+        body = self.json_body(first, expected_status=None)
         access_token = body["access_token"]
 
         # Sanity: the freshly-issued access_token works before reuse.
@@ -547,7 +545,7 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
             code=code,
             redirect_uri=REDIRECT_URI,
         )
-        body = json.loads(first.content.decode("utf-8"))
+        body = self.json_body(first, expected_status=None)
         refresh = body["refresh_token"]
 
         self.exchange_code_for_token(
@@ -1606,14 +1604,14 @@ class TestTokenEndpointAntiEnumeration(OIDCTestCase):
             client_id="not-a-registered-client",
             client_secret="anything",  # nosec B106
         )
-        body_unknown = json.loads(resp_unknown.content.decode("utf-8"))
+        body_unknown = self.json_body(resp_unknown, expected_status=None)
 
         # Probe 2: real client_id, wrong secret.
         resp_bad_secret = self._post_token(
             client_id=self.oauth_id,
             client_secret="WRONG_SECRET",  # nosec B106
         )
-        body_bad_secret = json.loads(resp_bad_secret.content.decode("utf-8"))
+        body_bad_secret = self.json_body(resp_bad_secret, expected_status=None)
 
         # Both must be 4xx OAuth-error responses.
         self.assertLess(resp_unknown.status_code, 500)

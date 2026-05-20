@@ -150,7 +150,7 @@ class TestSignatureVerification(OIDCTestCase):
 
         jwks_resp = self.client.get("/o/.well-known/jwks.json")
         self.assertEqual(200, jwks_resp.status_code)
-        jwks_doc = json.loads(jwks_resp.content)
+        jwks_doc = self.json_body(jwks_resp, expected_status=None)
         self.assertIn("keys", jwks_doc)
         self.assertGreaterEqual(len(jwks_doc["keys"]), 1)
 
