@@ -405,13 +405,21 @@ def makemigrations(session: nox.Session) -> None:
 @nox.session
 def migrations_check(session: nox.Session) -> None:
     """
-    Verify migrations are in sync with the model state (CI-safe).
+    Verify migrations are in sync and free of unsafe operations.
 
-    Runs ``makemigrations --check --dry-run``: writes nothing, exits
-    non-zero if the model layer would generate a fresh migration. Use
-    in CI before tests so an unsynced model change fails fast — the
-    same guard the sibling ``aa_discord_audit`` plugin uses to keep
-    the model + migration set tightly coupled.
+    Two checks run in sequence:
+
+    1. ``makemigrations --check --dry-run`` — writes nothing, exits
+       non-zero if the model layer would generate a fresh migration.
+       Catches an out-of-sync model change before it reaches CI.
+    2. ``django-migration-linter`` (lintmigrations) — flags unsafe
+       operations such as irreversible column drops, ``NOT NULL``
+       additions without defaults, renames that break running
+       deployments. Run via ``uv run --with`` so the linter does
+       not pollute the dev dependency group; the dedicated settings
+       module ``tests.test_settings_migration_linter`` pins ten
+       pre-existing migrations as baseline so the gate fires only on
+       new findings.
     """
     session.run(
         "python",
@@ -423,6 +431,21 @@ def migrations_check(session: nox.Session) -> None:
         "--dry-run",
         f"--settings={TEST_SETTINGS}",
         env=test_env(session),
+    )
+    session.run(
+        "uv",
+        "run",
+        "--with",
+        "django-migration-linter",
+        "python",
+        "-m",
+        "django",
+        "lintmigrations",
+        "--include-apps",
+        "allianceauth_oidc",
+        "--settings=tests.test_settings_migration_linter",
+        env=test_env(session),
+        external=True,
     )
 
 
