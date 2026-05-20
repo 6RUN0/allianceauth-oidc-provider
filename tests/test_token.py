@@ -862,17 +862,21 @@ class TestCodeReuseTokenRevocation(OIDCTestCase):
         )
 
 
-class TestPKCEAttackVectors(OIDCTestCase):
+class _PkceCodeIssuanceMixin:
     """
-    PKCE (RFC 7636) negative paths on /o/token/ and /o/authorize/.
+    Provision a PKCE-strict app and drive ``/authorize/`` to a code.
 
-    ``TestPkceRequiredRefreshFlow`` covers the happy path; this class
-    closes the verifier-validation contract on the exchange step and
-    the challenge-presence contract on the authorize step. The OIDC
-    conformance suite's PKCE coverage routinely TIMEOUTs upstream
-    (HtmlUnit), so without these Python-side tests we have no
-    automated proof that a missing / wrong / downgraded verifier is
-    actually rejected.
+    Two PKCE classes (:class:`TestPKCEAttackVectors`,
+    :class:`TestAuthorizationCodeSubstitution`) each carried their own
+    almost-identical copy of these helpers — same factory call, same
+    redirect parse — and drift had already started (one fixed the
+    method to ``S256``, the other parameterised it). Centralising on
+    a mixin removes the duplication and keeps both attack classes on
+    one verifier-issuance contract.
+
+    Mixed in BEFORE :class:`OIDCTestCase` so the test class's MRO
+    resolves ``self.user1`` / ``self.authorize_get_default`` /
+    ``self.assertEqual`` from the testcase base.
     """
 
     def _pkce_app(self):
@@ -893,8 +897,8 @@ class TestPKCEAttackVectors(OIDCTestCase):
         creds,
         *,
         challenge: str,
-        method: str = "S256",
         state: str,
+        method: str = "S256",
     ) -> str:
         from urllib.parse import parse_qs, urlparse
 
@@ -910,6 +914,20 @@ class TestPKCEAttackVectors(OIDCTestCase):
         )
         self.assertEqual(302, resp.status_code)
         return parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+
+
+class TestPKCEAttackVectors(_PkceCodeIssuanceMixin, OIDCTestCase):
+    """
+    PKCE (RFC 7636) negative paths on /o/token/ and /o/authorize/.
+
+    ``TestPkceRequiredRefreshFlow`` covers the happy path; this class
+    closes the verifier-validation contract on the exchange step and
+    the challenge-presence contract on the authorize step. The OIDC
+    conformance suite's PKCE coverage routinely TIMEOUTs upstream
+    (HtmlUnit), so without these Python-side tests we have no
+    automated proof that a missing / wrong / downgraded verifier is
+    actually rejected.
+    """
 
     def test_exchange_with_bad_pkce_verifier_rejected_sweep(self):
         """
@@ -1330,7 +1348,7 @@ class TestRefreshAfterUserDeactivation(OIDCTestCase):
         )
 
 
-class TestAuthorizationCodeSubstitution(OIDCTestCase):
+class TestAuthorizationCodeSubstitution(_PkceCodeIssuanceMixin, OIDCTestCase):
     """
     PKCE binds an authorization code to the verifier-of-issue.
 
@@ -1346,33 +1364,6 @@ class TestAuthorizationCodeSubstitution(OIDCTestCase):
     closes the WITHIN-same-client variant — the attack that PKCE
     actually solves.
     """
-
-    def _pkce_app(self):
-        from ._factories import make_app
-
-        creds = make_app(
-            owner=self.user1, pkce_required=True, skip_authorization=True
-        )
-        self.grant_oidc_access(self.user1)
-        return creds
-
-    def _issue_code_with_challenge(
-        self, creds, *, challenge: str, state: str
-    ) -> str:
-        from urllib.parse import parse_qs, urlparse
-
-        resp = self.authorize_get_default(
-            self.user1,
-            scope=SCOPE_OPENID,
-            state=state,
-            extra={
-                "client_id": creds.client_id,
-                "code_challenge": challenge,
-                "code_challenge_method": "S256",
-            },
-        )
-        self.assertEqual(302, resp.status_code)
-        return parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
 
     def test_session_a_code_with_session_b_verifier_rejected(self) -> None:
         """
