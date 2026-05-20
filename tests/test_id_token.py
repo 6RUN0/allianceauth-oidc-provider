@@ -25,11 +25,12 @@ from jwcrypto import jwk, jwt
 from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     JWKS_URL,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
 
-class TestIdTokenScopeFiltering(OIDCTestCase):
+class TestIdTokenScopeFiltering(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §5.4: scope-mapped claims (``email``, ``name``,
     ``picture``, ``groups``) belong in /userinfo, not the id_token,
@@ -51,7 +52,6 @@ class TestIdTokenScopeFiltering(OIDCTestCase):
         ``oidcc-scope-email`` flags the leak via
         ``EnsureIdTokenDoesNotContainEmailForScopeEmail``.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-narrow")
         claims = self._decode_id_token(tokens["id_token"])
 
@@ -107,7 +107,7 @@ class TestIdTokenScopeFiltering(OIDCTestCase):
         self.assertEqual("1", narrowed["sub"])
 
 
-class TestIdTokenAuthTime(OIDCTestCase):
+class TestIdTokenAuthTime(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §2 + §3.1.2.1: when the RP includes ``max_age``
     in the authorize request, the id_token MUST carry an
@@ -127,7 +127,6 @@ class TestIdTokenAuthTime(OIDCTestCase):
     def test_id_token_carries_auth_time_when_max_age_requested(
         self,
     ) -> None:
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(
             self.user1,
             state="auth-time-test",
@@ -156,7 +155,6 @@ class TestIdTokenAuthTime(OIDCTestCase):
         """
         from django.utils import dateformat
 
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(
             self.user1,
             state="auth-time-equality",
@@ -242,7 +240,7 @@ class TestIdTokenACRClaim(OIDCTestCase):
         self.assertNotIn("acr", narrowed)
 
 
-class TestIdTokenAlgConfusion(OIDCTestCase):
+class TestIdTokenAlgConfusion(GrantedOIDCTestCase):
     """
     Algorithm-confusion defences on the issued id_token.
 
@@ -265,7 +263,6 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         matches case-insensitively reduces the JWT to an unsigned
         blob and bypasses every downstream verification step.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-alg-none")
         header = split_jwt(tokens["id_token"])[0]
         alg = header.get("alg", "")
@@ -284,7 +281,6 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         verification and is the precondition for an alg-confusion
         attack on naive verifiers.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-alg-match")
         header = split_jwt(tokens["id_token"])[0]
 
@@ -324,7 +320,6 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         the AS thinks it issued a valid token — a hard-to-debug
         outage and a precondition for downgrade attacks.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="id-token-kid")
         header = split_jwt(tokens["id_token"])[0]
         token_kid = header.get("kid")
@@ -342,7 +337,7 @@ class TestIdTokenAlgConfusion(OIDCTestCase):
         )
 
 
-class TestIdTokenAudienceShape(OIDCTestCase):
+class TestIdTokenAudienceShape(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §2 — the ``aud`` claim MAY be either a single
     string (when there is one audience) or an array of strings
@@ -357,7 +352,6 @@ class TestIdTokenAudienceShape(OIDCTestCase):
     """
 
     def test_aud_is_string_not_array(self) -> None:
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="aud-shape")
         claims = split_jwt(body["id_token"])[1]
         aud = claims.get("aud")
@@ -375,13 +369,12 @@ class TestIdTokenAudienceShape(OIDCTestCase):
         that desyncs them (e.g. uses app.name or app.pk) breaks every
         RP's aud-claim verification.
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="aud-client-match")
         claims = split_jwt(body["id_token"])[1]
         self.assertEqual(self.oauth_id, claims.get("aud"))
 
 
-class TestNonceInIdToken(OIDCTestCase):
+class TestNonceInIdToken(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.3.7 step 11 + §15.5.2 — ``nonce`` propagation
     invariants.
@@ -413,7 +406,6 @@ class TestNonceInIdToken(OIDCTestCase):
         authorize/code/token chain. Twin of the discovery test but
         kept here so this class fails standalone if echo regresses.
         """
-        self.grant_oidc_access(self.user1)
         nonce = "n-0S6_WzA2Mj-anchor"
         body = self.run_code_flow(
             self.user1,
@@ -446,7 +438,6 @@ class TestNonceInIdToken(OIDCTestCase):
         cached-from-another-session). Any RP that follows §15.5.2
         treats that as a replay attempt and rejects the token.
         """
-        self.grant_oidc_access(self.user1)
         nonce = "refresh-replay-binding"
         original = self.run_code_flow(
             self.user1,
@@ -483,7 +474,6 @@ class TestNonceInIdToken(OIDCTestCase):
         the claim — a stray empty string would either be accepted as
         valid (silent bypass) or rejected as malformed (DoS).
         """
-        self.grant_oidc_access(self.user1)
         body = self.run_code_flow(self.user1, state="no-nonce")
         claims = split_jwt(body["id_token"])[1]
         self.assertNotIn(
