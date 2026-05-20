@@ -184,6 +184,73 @@ class TestTokenPolicyGuards(OIDCTestCase):
         resp = self.refresh_token(refresh_token=refresh, expected_status=400)
         self.assertOAuthError(resp, expected_error="invalid_grant")
 
+    def test_save_bearer_token_layer3_blocks_when_layer2_disabled(
+        self,
+    ) -> None:
+        """
+        Layer-3 enforcement isolation: a regression that silently
+        neutralises Layer 2 (``_enforce_policy`` always returning
+        True for ``validate_code`` / ``validate_refresh`` /
+        ``validate_bearer``) MUST still produce ``invalid_grant``
+        because ``save_bearer_token`` (Layer 3) consults
+        ``policy.decide(...)`` directly and converts a denial into
+        ``InvalidGrantError``.
+
+        Without this test, an attacker who slipped a ``return True``
+        into ``_enforce_policy`` would pass every other test in
+        this class — each of those tests relies on Layer 2 catching
+        the violation. Defence-in-depth is only meaningful when each
+        layer can be proven to enforce independently; this test pins
+        that property for Layer 3.
+
+        ``_enforce_policy`` is patched (rather than ``validate_code``
+        directly) because ``super().validate_code`` populates
+        request scopes that Layer 3 relies on; stubbing the whole
+        method short-circuits DOT bookkeeping and surfaces an
+        unrelated ``FatalClientError`` rather than testing the
+        intended layer interaction.
+
+        Symmetric Layer-2 isolation (``save_bearer_token`` neutralised,
+        Layer 2 must still deny) is covered by
+        :class:`tests.test_auth_provider.TestEnforcePolicy` —
+        ``_enforce_policy`` is exercised in isolation there with a
+        stubbed policy, independent of the Layer 3 path.
+        """
+        from unittest.mock import patch
+
+        from oauth2_provider.models import get_access_token_model
+
+        self._grant_user1_with_test_grp()
+        code = self.authorize_to_code(self.user1, state="layer3-iso")
+
+        # Strip access AFTER the code is issued — Layer 2 would
+        # normally catch this. Layer 3 must catch it on its own.
+        self.user1.groups.clear()
+        self.user1.refresh_from_db()
+
+        with patch(
+            "allianceauth_oidc.auth_provider."
+            "AllianceAuthOAuth2Validator._enforce_policy",
+            return_value=True,
+        ):
+            resp = self.exchange_code_for_token(
+                code=code,
+                state="layer3-iso",
+                redirect_uri=REDIRECT_URI,
+                expected_status=400,
+            )
+        self.assertOAuthError(resp, expected_error="invalid_grant")
+
+        # Token persistence MUST NOT have happened: Layer 3 raises
+        # ``InvalidGrantError`` before ``super().save_bearer_token``
+        # would write the row.
+        access_token_model = get_access_token_model()
+        self.assertFalse(
+            access_token_model.objects.filter(user=self.user1).exists(),
+            "Layer 3 must refuse persistence — no token row should "
+            "exist after the policy denial.",
+        )
+
     def test_token_exchange_denied_if_redirect_uri_mismatch(self):
         """
         If redirect_uri at /o/token/ doesn't match the one used at
