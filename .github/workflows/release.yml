@@ -214,6 +214,23 @@ jobs:
       contents: write          # gh release create
 
     steps:
+      # Runtime egress allow-list on the runner. ``id-token: write`` +
+      # PyPI trusted publishing makes this job the highest-value
+      # target in the workflow stack: a poisoned dep that succeeds in
+      # exfiltrating the short-lived OIDC token gets one shot at
+      # publishing a malicious wheel. ``harden-runner`` blocks
+      # outbound connections to anywhere outside an explicit
+      # allow-list. ``audit`` mode is the safe initial posture —
+      # observes baseline egress and reports unexpected destinations
+      # without failing the job. After a clean release cut, flip to
+      # ``egress-policy: block`` with an explicit ``allowed-endpoints``
+      # list reflecting the audit-mode findings (PyPI upload host,
+      # Sigstore Rekor, etc.).
+      - uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863  # v2.12.1
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
       # Sparse checkout — the publish job only reads CHANGELOG.md to
       # build release notes. Avoids cloning the whole tree just for
       # one file.
