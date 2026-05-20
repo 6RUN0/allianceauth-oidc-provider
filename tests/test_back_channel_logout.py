@@ -653,25 +653,30 @@ class TestBackChannelLogoutSignals(TestCase):
         def stub(sender, user, application, reason=None, **kwargs):
             calls.append({"reason": reason})
 
+        # Restore the production dispatcher even if the body raises
+        # — without addCleanup a failure between the swap-out and
+        # the try/finally would leave the dispatcher silently
+        # disconnected for the rest of the suite, producing
+        # cascading false-pass failures downstream.
         oidc_signals.oidc_logout_required.disconnect(
             dispatch_uid=DEFAULT_LOGOUT_DISPATCH_UID
         )
-        try:
-            oidc_signals.connect_default_logout_receiver(stub)
-            oidc_signals.oidc_logout_required.send(
-                sender=_SignalSender,
-                user=object(),
-                application=object(),
-                reason="user_revoked",
-            )
-            self.assertEqual(calls, [{"reason": "user_revoked"}])
-        finally:
-            oidc_signals.oidc_logout_required.disconnect(
-                dispatch_uid=DEFAULT_LOGOUT_DISPATCH_UID
-            )
-            oidc_signals.connect_default_logout_receiver(
-                dispatch_backchannel_logout
-            )
+        self.addCleanup(
+            oidc_signals.connect_default_logout_receiver,
+            dispatch_backchannel_logout,
+        )
+        self.addCleanup(
+            oidc_signals.oidc_logout_required.disconnect,
+            dispatch_uid=DEFAULT_LOGOUT_DISPATCH_UID,
+        )
+        oidc_signals.connect_default_logout_receiver(stub)
+        oidc_signals.oidc_logout_required.send(
+            sender=_SignalSender,
+            user=object(),
+            application=object(),
+            reason="user_revoked",
+        )
+        self.assertEqual(calls, [{"reason": "user_revoked"}])
 
     def test_connect_default_logout_receiver_is_strong_ref(self) -> None:
         """
@@ -688,26 +693,26 @@ class TestBackChannelLogoutSignals(TestCase):
         oidc_signals.oidc_logout_required.disconnect(
             dispatch_uid=DEFAULT_LOGOUT_DISPATCH_UID
         )
-        try:
-            oidc_signals.connect_default_logout_receiver(stub)
-            del stub
-            import gc
+        self.addCleanup(
+            oidc_signals.connect_default_logout_receiver,
+            dispatch_backchannel_logout,
+        )
+        self.addCleanup(
+            oidc_signals.oidc_logout_required.disconnect,
+            dispatch_uid=DEFAULT_LOGOUT_DISPATCH_UID,
+        )
+        oidc_signals.connect_default_logout_receiver(stub)
+        del stub
+        import gc
 
-            gc.collect()
-            oidc_signals.oidc_logout_required.send(
-                sender=_SignalSender,
-                user=object(),
-                application=object(),
-                reason="user_revoked",
-            )
-            self.assertEqual(calls, ["user_revoked"])
-        finally:
-            oidc_signals.oidc_logout_required.disconnect(
-                dispatch_uid=DEFAULT_LOGOUT_DISPATCH_UID
-            )
-            oidc_signals.connect_default_logout_receiver(
-                dispatch_backchannel_logout
-            )
+        gc.collect()
+        oidc_signals.oidc_logout_required.send(
+            sender=_SignalSender,
+            user=object(),
+            application=object(),
+            reason="user_revoked",
+        )
+        self.assertEqual(calls, ["user_revoked"])
 
 
 class TestBackChannelLogoutSystemCheck(OIDCTestCase):
