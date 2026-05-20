@@ -973,11 +973,32 @@ class TestBackChannelLogoutTokenBuilder(OIDCTestCase):
         _h, payload = self._decode_unverified(token)
         self.assertEqual(
             set(payload.keys()),
-            {"iss", "aud", "iat", "jti", "sub", "events"},
+            {"iss", "aud", "iat", "exp", "jti", "sub", "events"},
         )
         self.assertEqual(payload["aud"], self.client_id)
         self.assertEqual(payload["sub"], str(self.user1.pk))
         self.assertIsInstance(payload["iat"], int)
+
+    def test_logout_token_carries_exp_at_iat_plus_lifetime(self) -> None:
+        """
+        BCL §2.4: ``exp`` MAY be present and SHOULD bound the
+        token-replay window. H-1 (audit close): logout_token now
+        carries ``exp = iat + LOGOUT_TOKEN_LIFETIME_SECONDS`` so a
+        JWT extracted from RP logs cannot be replayed indefinitely.
+        Window stays > Celery retry envelope (155s) so retried
+        tokens never expire before delivery.
+        """
+        from allianceauth_oidc.constants import LOGOUT_TOKEN_LIFETIME_SECONDS
+        from allianceauth_oidc.logout import build_logout_token
+
+        token, _ = build_logout_token(self.user1, self.app, iat=1_700_000_000)
+        _h, payload = self._decode_unverified(token)
+        self.assertEqual(payload["iat"], 1_700_000_000)
+        self.assertEqual(
+            payload["exp"],
+            1_700_000_000 + LOGOUT_TOKEN_LIFETIME_SECONDS,
+        )
+        self.assertGreater(LOGOUT_TOKEN_LIFETIME_SECONDS, 155)
 
     def test_ac19_events_uri_is_literal_http_not_https(self) -> None:
         """Spec literal — ``http://`` (NOT https). Regression."""

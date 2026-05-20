@@ -10,9 +10,14 @@ from oauth2_provider.oauth2_validators import OAuth2Validator
 from oauthlib.oauth2.rfc6749 import errors as oauth_errors
 from typing_extensions import assert_never
 
-from ._metrics import code_reuse_audit_misses, policy_rejections
+from ._metrics import (
+    code_audit_skipped,
+    code_reuse_audit_misses,
+    policy_rejections,
+)
 from .app_settings import OIDCSettings
 from .claims import ClaimsBuilder, build_oidc_claim_scope
+from .constants import CodeAuditSkippedReason
 from .security import (
     DEFAULT_POLICY,
     AccessDecision,
@@ -593,6 +598,17 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
 
         application = client or getattr(request, "client", None)
         if application is None:
+            # The validator stack populates ``request.client`` on every
+            # ``authorization_code`` exchange — reaching this branch
+            # means an upstream change (DOT bump, custom validator
+            # mixin) stopped doing so. The exchange itself succeeds,
+            # but the RFC 6749 §10.5 SHOULD overlay degrades silently
+            # for this code. The counter promotes the silent drop to
+            # an operator-observable signal so the regression is
+            # caught by alert rather than by post-incident review.
+            code_audit_skipped.labels(
+                reason=CodeAuditSkippedReason.NO_CLIENT.value,
+            ).inc()
             return
 
         code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
@@ -691,6 +707,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             # returns None → 401.
             AccessToken = get_access_token_model()
             RefreshToken = get_refresh_token_model()
+            revoke_succeeded = True
             try:
                 refresh_token = (
                     RefreshToken.objects.filter(pk=rt_pk).first()
@@ -724,10 +741,17 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                 # loud and observable; the audit signal is dropped in
                 # that path on purpose (programming error > misleading
                 # "we tried to revoke" audit).
+                #
+                # ``revoke_succeeded=False`` on the audit signal tells
+                # SIEM that the linked tokens are still potentially
+                # live — without this flag, a receiver acting on
+                # ``oidc_code_reuse_detected`` would treat every event
+                # as "tokens revoked", which is wrong on this path.
+                revoke_succeeded = False
                 logger.exception(
                     "OIDC: token revocation failed during "
                     "code-reuse handling; emitting audit signal "
-                    "anyway"
+                    "with revoke_succeeded=False"
                 )
 
             audit.reuse_count += 1
@@ -745,6 +769,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             access_token_id=at_pk,
             refresh_token_id=rt_pk,
             reuse_count=reuse_count,
+            revoke_succeeded=revoke_succeeded,
         )
 
     def get_additional_claims(self, request):

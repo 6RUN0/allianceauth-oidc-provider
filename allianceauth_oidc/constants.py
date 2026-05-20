@@ -190,3 +190,39 @@ BCL_DEAD_LETTER_OUTCOMES: Final[frozenset[str]] = frozenset(
 # requests are NOT a denial (they redirect to ``LOGIN_URL``) and do
 # not contribute to this counter.
 AUTHORIZE_DENY_REASONS: Final[frozenset[str]] = frozenset({"global", "app"})
+
+
+# OIDC Back-Channel Logout 1.0 ``logout_token`` JWT lifetime (``exp -
+# iat``) in seconds. Spec §2.4 lists ``exp`` as one of the standard
+# claims a logout_token may carry; many RP libraries reject tokens
+# without an ``exp`` when treating them like ``id_token`` (mod_auth_
+# openidc, oidc-client-ts). The window must stay larger than the
+# Celery retry envelope of :func:`tasks.send_logout_token`
+# (5+10+20+40+80 = 155 s with jitter) so a retried JWT does not race
+# its own expiry — 300 s gives ~2x headroom without re-introducing a
+# meaningful replay window. RPs MUST still dedup on ``jti`` per spec
+# §2.6, so ``exp`` is defence-in-depth against log-extracted JWT
+# replay, not a primary control.
+LOGOUT_TOKEN_LIFETIME_SECONDS: Final[int] = 300
+
+
+# Reasons for ``aa_oidc_code_audit_skipped_total`` (counter, fires
+# from ``_record_code_issuance`` when the audit row insert is
+# skipped). One value today; named constant keeps Grafana queries
+# stable if future skip paths are added.
+class CodeAuditSkippedReason(str, Enum):
+    """
+    Why an authorization_code audit row was not recorded.
+
+    ``NO_CLIENT`` — ``save_bearer_token`` ran without a resolvable
+    client on the oauthlib request. Documented as a degraded path
+    (the SHOULD overlay for RFC 6749 §10.5 silently drops for this
+    exchange); the counter makes it observable instead of invisible.
+    """
+
+    NO_CLIENT = "no_client"
+
+
+CODE_AUDIT_SKIPPED_REASONS: Final[frozenset[str]] = frozenset(
+    m.value for m in CodeAuditSkippedReason
+)

@@ -266,15 +266,16 @@ def connect_default_receiver() -> None:
 # RFC 6749 §10.5 reuse-detection signal. Fired by
 # ``AllianceAuthOAuth2Validator.validate_code`` when a previously-issued
 # authorization code is presented again. By the time this fires the
-# validator has already revoked the linked AccessToken / RefreshToken;
-# the signal exists so operators can fan the event out to SIEM /
-# alerting independently of the WARNING log line.
+# validator has attempted to revoke the linked AccessToken /
+# RefreshToken; ``revoke_succeeded`` reports whether the revocation
+# itself completed. The signal exists so operators can fan the event
+# out to SIEM / alerting independently of the WARNING log line.
 #
 # Receiver contract:
 #
 #     def my_receiver(
 #         sender, application, code_hash, access_token_id,
-#         refresh_token_id, reuse_count, **kwargs,
+#         refresh_token_id, reuse_count, revoke_succeeded, **kwargs,
 #     ):
 #         ...
 #
@@ -286,12 +287,23 @@ def connect_default_receiver() -> None:
 #   code. Storing the hash (not the plaintext code) keeps audit logs
 #   forensically useful without re-introducing the secret.
 # - ``access_token_id`` / ``refresh_token_id`` are the PKs of the
-#   tokens that were revoked, or ``None`` if the audit row pointed at
-#   tokens that had already been cleaned up by
+#   tokens the validator attempted to revoke, or ``None`` if the
+#   audit row pointed at tokens that had already been cleaned up by
 #   :func:`tasks.clear_expired_tokens`.
 # - ``reuse_count`` is the post-increment count of replays observed
 #   for this code (>=1). Receivers can route higher counts to a more
 #   aggressive alert path.
+# - ``revoke_succeeded`` is ``True`` when DOT's ``revoke()`` call
+#   completed without raising. ``False`` means a transient
+#   ``DatabaseError`` or an ``ObjectDoesNotExist`` race with
+#   ``clear_expired_tokens`` interrupted revocation; the linked
+#   tokens may still be live. SIEM receivers that page on reuse MUST
+#   route ``revoke_succeeded=False`` events to a higher-severity
+#   destination than ``revoke_succeeded=True`` ones — the former
+#   means the leaked code's tokens were NOT recalled, the latter
+#   means they were. Defaults to ``True`` on receivers that do not
+#   declare the kwarg, preserving backward compatibility with pre-
+#   0.3.1 receivers.
 oidc_code_reuse_detected = Signal(use_caching=True)
 
 
@@ -303,6 +315,7 @@ def audit_oidc_code_reuse_detected(
     refresh_token_id: int | None,
     reuse_count: int,
     *args: Any,
+    revoke_succeeded: bool = True,
     **kwargs: Any,
 ) -> None:
     """
@@ -312,17 +325,22 @@ def audit_oidc_code_reuse_detected(
     sha256 is one-way: receivers may forward this payload to SIEM
     unchanged. Token PKs are integers (not the bearer strings) so
     they too are safe to forward.
+
+    ``revoke_succeeded`` defaults to ``True`` for receivers connected
+    before the kwarg existed; the validator always passes an
+    explicit value, so production traffic carries the real status.
     """
     logger.warning(
         "OIDC code-reuse detected client_id=%s app_id=%s code_hash=%s "
         "revoked_access_token_id=%s revoked_refresh_token_id=%s "
-        "reuse_count=%s",
+        "reuse_count=%s revoke_succeeded=%s",
         getattr(application, "client_id", None),
         getattr(application, "id", None),
         code_hash,
         access_token_id,
         refresh_token_id,
         reuse_count,
+        revoke_succeeded,
     )
 
 

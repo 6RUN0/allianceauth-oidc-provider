@@ -27,6 +27,8 @@ from typing import Any
 from oauth2_provider.settings import oauth2_settings
 from oauth2_provider.utils import jwk_from_pem
 
+from .constants import LOGOUT_TOKEN_LIFETIME_SECONDS
+
 # Spec literal — do NOT "fix" to https://. OIDC BCL 1.0 §2.4
 # defines this URI as ``http://schemas.openid.net/event/...``
 # regardless of the transport. RPs MUST treat it as an opaque
@@ -107,6 +109,10 @@ def build_logout_token(
     * Payload NEVER contains ``sid`` in v1 (sub-only logout).
     * Payload NEVER contains PII (``email`` / ``name`` / ``picture`` /
       ``groups`` / ``locale`` / ``scope`` / character data).
+    * Payload carries ``exp = iat + LOGOUT_TOKEN_LIFETIME_SECONDS``
+      so a JWT extracted from RP access logs cannot be replayed
+      indefinitely. The lifetime stays larger than the Celery retry
+      envelope so an in-flight retry never expires its own token.
     """
     from jwcrypto import jwt as jw  # type: ignore[import-untyped]
 
@@ -128,6 +134,7 @@ def build_logout_token(
         "iss": issuer,
         "aud": application.client_id,
         "iat": iat_value,
+        "exp": iat_value + LOGOUT_TOKEN_LIFETIME_SECONDS,
         "jti": jti_value,
         "sub": str(user.pk),
         "events": {_LOGOUT_EVENT_URI: {}},
@@ -273,11 +280,21 @@ def dispatch_backchannel_logout(
     try:
         signing_kid = _active_signing_kid()
     except Exception:
+        # Broad catch is intentional: ``_active_signing_kid`` reads
+        # ``oauth2_settings.OIDC_RSA_PRIVATE_KEY`` which routes through
+        # DOT's lazy ``perform_import`` — anything from ``ValueError``
+        # (bad PEM) to ``ImportError`` (broken dotted-path) to
+        # ``AttributeError`` (settings mock in tests) can surface here.
+        # The dispatcher MUST NOT raise into the originating trigger
+        # transaction; surface a loud WARNING with ``exc_info=True`` so
+        # the operator sees the root cause instead of just the audit
+        # reason code.
         logger.warning(
             "OIDC BCL: cannot resolve active signing key; skipping logout dispatch meta=%s",  # noqa: E501
             build_logout_debug_meta(
                 application=application, reason="signing_kid_resolve_failed"
             ),
+            exc_info=True,
         )
         emit_bcl_failure(
             application=application,
@@ -310,6 +327,13 @@ def dispatch_backchannel_logout(
                 ),
             )
         except Exception:
+            # Broker failures span ``ConnectionError`` (network),
+            # ``OperationalError`` (broker rejected the connection),
+            # ``kombu.exceptions.OperationalError``, and Celery's own
+            # ``CeleryError`` family. A narrower catch risks letting a
+            # never-predicted broker failure into the originating
+            # trigger transaction. ``exc_info=True`` keeps the full
+            # traceback in operator logs without escalating to 500.
             logger.warning(
                 "OIDC BCL: broker unavailable, dropping logout meta=%s",
                 build_logout_debug_meta(
@@ -317,6 +341,7 @@ def dispatch_backchannel_logout(
                     jti=jti_value,
                     reason="broker_unavailable",
                 ),
+                exc_info=True,
             )
             emit_bcl_failure(
                 application=application,

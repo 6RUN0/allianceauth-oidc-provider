@@ -252,6 +252,28 @@ code_reuse_audit_misses = _counter(
 )
 
 
+# Code-issuance audit rows skipped at ``_record_code_issuance``. The
+# row insert is the audit-side anchor for the RFC 6749 §10.5 SHOULD
+# overlay; a skip means the SHOULD path is silently degraded for
+# that exchange. The only skip reason today is ``"no_client"`` (the
+# oauthlib request reached ``save_bearer_token`` without a
+# resolvable client — a state the validator stack should not allow,
+# but the early-return is defensive). A non-zero rate here is an
+# operator alert: either the validator stack changed, or a DOT
+# grant type stopped populating ``request.client``. Drawn from
+# :data:`constants.CODE_AUDIT_SKIPPED_REASONS`.
+code_audit_skipped = _counter(
+    "aa_oidc_code_audit_skipped",
+    (
+        "Code-issuance audit rows skipped because save_bearer_token "
+        "could not resolve a client. Non-zero rate degrades the RFC "
+        "6749 §10.5 SHOULD overlay for the affected exchanges; "
+        "investigate the upstream validator stack."
+    ),
+    labelnames=("reason",),
+)
+
+
 # AccessToken rows removed by the periodic ``clear_expired_tokens``
 # Celery task. The counter increments by the per-run delta, so
 # ``rate(aa_oidc_tokens_cleaned_total[5m])`` matches the observed
