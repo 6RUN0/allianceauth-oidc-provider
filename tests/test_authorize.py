@@ -18,6 +18,7 @@ from ._oidc_testcase import (
     SCOPE_FULL,
     SCOPE_OPENID,
     SCOPE_PROFILE,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
@@ -265,7 +266,7 @@ class TestAuthorizeGate(OIDCTestCase):
         )
 
 
-class TestAuthorizeCsrfExemption(OIDCTestCase):
+class TestAuthorizeCsrfExemption(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1 mandates POST support at the authorize
     endpoint. The cross-origin caller cannot supply a Django CSRF
@@ -285,7 +286,6 @@ class TestAuthorizeCsrfExemption(OIDCTestCase):
         leaving downstream rendering / redirect contracts to the
         functional tests above.
         """
-        self.grant_oidc_access(self.user1)
         client = self.client_class(enforce_csrf_checks=True)
         client.force_login(self.user1)
         response = client.post(
@@ -442,7 +442,7 @@ class TestAuthAuthorizationViewPromotion(TestCase):
             request.POST["response_type"] = "tampered"
 
 
-class TestAuthorizeMethodRestriction(OIDCTestCase):
+class TestAuthorizeMethodRestriction(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §3.1.2.1 — /o/authorize/ accepts ``GET`` and ``POST``.
 
@@ -459,7 +459,6 @@ class TestAuthorizeMethodRestriction(OIDCTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.grant_oidc_access(self.user1)
         self.client.force_login(self.user1)
 
     def _assert_allow_header_lists_get_and_post(self, resp) -> None:
