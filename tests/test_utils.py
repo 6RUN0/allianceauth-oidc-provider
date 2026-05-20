@@ -18,6 +18,8 @@ from allianceauth_oidc.utils import (
     build_oidc_debug_meta,
 )
 
+from ._factories import DEFAULT_REDIRECT_URI
+
 # Local alias — keep the test bodies tight without losing the
 # class-method origin in the import block.
 mask = SecretRedactor.mask_secret
@@ -145,14 +147,14 @@ class TestBuildOidcDebugMeta(SimpleTestCase):
                 "grant_type": "authorization_code",
                 "scope": "openid email",
                 "client_id": "client-xyz",
-                "redirect_uri": "http://localhost/redir/",
+                "redirect_uri": DEFAULT_REDIRECT_URI,
             }
         )
         meta = build_oidc_debug_meta(request, payload=None)
         self.assertEqual("authorization_code", meta["grant_type"])
         self.assertEqual("openid email", meta["scope"])
         self.assertEqual("client-xyz", meta["client_id"])
-        self.assertEqual("http://localhost/redir/", meta["redirect_uri"])
+        self.assertEqual(DEFAULT_REDIRECT_URI, meta["redirect_uri"])
 
     def test_secret_request_fields_are_redacted(self):
         request = self._request(

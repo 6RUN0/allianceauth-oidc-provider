@@ -38,6 +38,8 @@ from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase, override_settings
 
+from ._factories import DEFAULT_REDIRECT_URI
+
 APP_LABEL = "allianceauth_oidc"
 MIGRATION_PREVIOUS = "0009_alter_allianceauthapplication_options"
 MIGRATION_SCHEMA = "0010_alliance_auth_application_pkce_required"
@@ -82,7 +84,7 @@ def _create_legacy_app(*, name: str = "legacy"):
         client_secret="secret",  # nosec B106 - test fixture
         client_type="confidential",
         authorization_grant_type="authorization-code",
-        redirect_uris="http://localhost/redir/",
+        redirect_uris=DEFAULT_REDIRECT_URI,
         skip_authorization=False,
     )
 
@@ -279,7 +281,7 @@ class TestPkceRequiredCleanInstall(_PkceMigrationBase):
             client_secret="secret",  # nosec B106 - test fixture
             client_type="confidential",
             authorization_grant_type="authorization-code",
-            redirect_uris="http://localhost/redir/",
+            redirect_uris=DEFAULT_REDIRECT_URI,
             skip_authorization=False,
         )
         self.assertTrue(app.pkce_required)
