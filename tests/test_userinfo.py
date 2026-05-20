@@ -10,11 +10,12 @@ from ._oidc_testcase import (
     SCOPE_FULL,
     SCOPE_OPENID,
     SCOPE_PROFILE,
+    GrantedOIDCTestCase,
     OIDCTestCase,
 )
 
 
-class TestUserinfoClaims(OIDCTestCase):
+class TestUserinfoClaims(GrantedOIDCTestCase):
     def _userinfo_for_user1_with_scope(
         self,
         scope: str,
@@ -29,7 +30,6 @@ class TestUserinfoClaims(OIDCTestCase):
         ``with_test_group=False`` skips the implicit ``test_grp`` membership
         for tests where it would interfere.
         """
-        self.grant_oidc_access(self.user1)
         self.user1.email = email
         self.user1.save()
         if with_test_group:
@@ -381,7 +381,7 @@ class TestUserinfoClaims(OIDCTestCase):
         self.assertEqual(len(groups), len(set(groups)))
 
 
-class TestUserinfoEveDeltaClaims(OIDCTestCase):
+class TestUserinfoEveDeltaClaims(GrantedOIDCTestCase):
     """
     Extended EVE-specific claim emission: ``main_character_id``
     alias of ``character_id``, ``faction_id`` / ``faction_name``
@@ -394,7 +394,6 @@ class TestUserinfoEveDeltaClaims(OIDCTestCase):
     """
 
     def _userinfo(self, *, scope: str = SCOPE_PROFILE) -> dict:
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, scope=scope, state="eve-delta")
         resp = self.client.get(
             "/o/userinfo/",
@@ -508,7 +507,7 @@ class TestUserinfoEveDeltaClaims(OIDCTestCase):
         self.assertNotIn("eve_main_character_id", info)
 
 
-class TestUserinfoTokenLifecycle(OIDCTestCase):
+class TestUserinfoTokenLifecycle(GrantedOIDCTestCase):
     """
     /o/userinfo/ lifecycle and bearer-token contracts.
 
@@ -536,7 +535,6 @@ class TestUserinfoTokenLifecycle(OIDCTestCase):
         from django.utils import timezone
         from oauth2_provider.models import get_access_token_model
 
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="userinfo-expired")
         access = tokens["access_token"]
 
@@ -561,7 +559,6 @@ class TestUserinfoTokenLifecycle(OIDCTestCase):
         """
         from oauth2_provider.models import get_access_token_model
 
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="userinfo-revoked")
         access = tokens["access_token"]
         get_access_token_model().objects.filter(token=access).delete()
@@ -582,7 +579,6 @@ class TestUserinfoTokenLifecycle(OIDCTestCase):
         """
         from base64 import b64encode
 
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="userinfo-basic")
         access = tokens["access_token"]
         basic_value = b64encode(f"user:{access}".encode("ascii")).decode(
@@ -598,7 +594,6 @@ class TestUserinfoTokenLifecycle(OIDCTestCase):
         (``raw-token-value``) must be rejected — RFC 6750 §2.1
         requires the literal ``Bearer`` scheme.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="userinfo-noscheme")
         access = tokens["access_token"]
 
@@ -606,7 +601,7 @@ class TestUserinfoTokenLifecycle(OIDCTestCase):
         self.assertIn(resp.status_code, (401, 403))
 
 
-class TestUserinfoTokenTypeConfusion(OIDCTestCase):
+class TestUserinfoTokenTypeConfusion(GrantedOIDCTestCase):
     """
     /o/userinfo/ MUST accept only access tokens.
 
@@ -637,7 +632,6 @@ class TestUserinfoTokenTypeConfusion(OIDCTestCase):
         commonly land in RP browser storage / server logs and have
         a different threat model than ATs.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="confusion-id-token")
         self.assertIn("id_token", tokens)  # sanity
         resp = self._userinfo(tokens["id_token"])
@@ -650,7 +644,6 @@ class TestUserinfoTokenTypeConfusion(OIDCTestCase):
         leaked RT (longer-lived than AT, often weakly-protected on
         device) grants instant identity disclosure.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="confusion-rt")
         resp = self._userinfo(tokens["refresh_token"])
         self.assertIn(resp.status_code, (401, 403))
@@ -661,13 +654,12 @@ class TestUserinfoTokenTypeConfusion(OIDCTestCase):
         a Bearer. Codes never live in the AT table; this MUST yield
         401/403.
         """
-        self.grant_oidc_access(self.user1)
         code = self.authorize_to_code(self.user1, state="confusion-code")
         resp = self._userinfo(code)
         self.assertIn(resp.status_code, (401, 403))
 
 
-class TestUserinfoAfterUserStateChange(OIDCTestCase):
+class TestUserinfoAfterUserStateChange(GrantedOIDCTestCase):
     """
     Effects on /o/userinfo/ when user/app state changes after token
     issuance.
@@ -700,7 +692,6 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
         (Django's default ``ModelBackend`` short-circuits on
         ``is_active``), so ``check_user_global_oidc_access`` denies.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="at-after-inactive")
         access = tokens["access_token"]
         # Sanity: AT works pre-deactivation.
@@ -724,7 +715,6 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
         Mirror of the inactive-user case for the ``access_oidc``
         permission: revoke the perm, AT immediately invalid.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="at-after-perm-revoke")
         access = tokens["access_token"]
         self.assertEqual(200, self._userinfo(access).status_code)
@@ -741,7 +731,6 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
         gap on the app side: previously the AT remained usable until
         natural expiry even after admin disabled the application.
         """
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="at-after-app-off")
         access = tokens["access_token"]
         self.assertEqual(200, self._userinfo(access).status_code)
@@ -763,7 +752,6 @@ class TestUserinfoAfterUserStateChange(OIDCTestCase):
         """
         from allianceauth.authentication.models import State
 
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="at-after-state-loss")
         access = tokens["access_token"]
         self.assertEqual(200, self._userinfo(access).status_code)
@@ -834,7 +822,7 @@ class TestUserinfoClaimAntiLeak(OIDCTestCase):
         )
 
 
-class TestUserinfoWWWAuthenticateHeader(OIDCTestCase):
+class TestUserinfoWWWAuthenticateHeader(GrantedOIDCTestCase):
     """
     RFC 6750 §3 — protected-resource responses that reject a request
     for lack of credentials or for an invalid token MUST include a
@@ -886,7 +874,6 @@ class TestUserinfoWWWAuthenticateHeader(OIDCTestCase):
         """Revoked AT presents same RFC 6750 §3.1 invalid_token signal."""
         from oauth2_provider.models import get_access_token_model
 
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="wwwauth-revoked")
         access = tokens["access_token"]
         get_access_token_model().objects.filter(token=access).delete()
@@ -897,7 +884,7 @@ class TestUserinfoWWWAuthenticateHeader(OIDCTestCase):
         self.assertIn("Bearer", challenge)
 
 
-class TestUserinfoCacheControl(OIDCTestCase):
+class TestUserinfoCacheControl(GrantedOIDCTestCase):
     """
     OIDC §5.3.2 — ``/o/userinfo/`` response carries
     ``Cache-Control: no-store`` and ``Pragma: no-cache`` so identity
@@ -910,7 +897,6 @@ class TestUserinfoCacheControl(OIDCTestCase):
     """
 
     def _userinfo(self) -> tuple[int, dict]:
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="cache-control")
         resp = self.client.get(
             "/o/userinfo/",
@@ -937,7 +923,7 @@ class TestUserinfoCacheControl(OIDCTestCase):
         self.assertEqual(headers.get("Pragma"), "no-cache")
 
 
-class TestUserinfoContentType(OIDCTestCase):
+class TestUserinfoContentType(GrantedOIDCTestCase):
     """
     OIDC §5.3.2 — successful /o/userinfo/ response MUST be
     ``application/json`` (the default for normal/un-signed userinfo).
@@ -949,7 +935,6 @@ class TestUserinfoContentType(OIDCTestCase):
     """
 
     def test_userinfo_response_is_application_json(self) -> None:
-        self.grant_oidc_access(self.user1)
         tokens = self.run_code_flow(self.user1, state="userinfo-ct")
         resp = self.client.get(
             "/o/userinfo/",
