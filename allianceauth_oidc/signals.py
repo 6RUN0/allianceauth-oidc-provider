@@ -1,13 +1,19 @@
 """
-``oidc_token_issued`` audit signal and the default audit receiver.
+OIDC audit signals and the OIDC Back-Channel Logout 1.0 signal pair.
 
-Also defines the OIDC Back-Channel Logout 1.0 signal pair —
-``oidc_logout_required`` (a trigger raised by any of the five v1 sites:
-revoke command, ``is_active`` flip, group/state change, account
-delete) and ``oidc_logout_dispatched`` (an audit signal fired by the
-Celery task on every fan-out attempt). Wiring of the default
-``oidc_logout_required`` dispatcher lives in ``apps.py:ready()``
-alongside the audit receiver wiring.
+Four audit signals (with default receivers below):
+``oidc_token_issued``, ``oidc_code_reuse_detected``,
+``oidc_token_introspected``, and ``oidc_logout_dispatched`` — fired
+on token issuance, RFC 6749 §10.5 reuse detection, RFC 7662
+introspection, and every Back-Channel Logout fan-out attempt
+respectively.
+
+Plus the back-channel-logout trigger pair: ``oidc_logout_required``
+(raised by any of the five v1 sites — revoke command, ``is_active``
+flip, group/state change, account delete) and the dispatcher that
+spawns the Celery fan-out task. Wiring of the default
+``oidc_logout_required`` dispatcher and all four audit receivers
+lives in ``apps.py:ready()``.
 """
 
 from __future__ import annotations
@@ -150,14 +156,15 @@ class OIDCAuditBody(TypedDict):
     """
     Curated, secret-free payload of the ``oidc_token_issued`` signal.
 
-    Only the OAuth2 request fields safe for audit forwarding —
-    ``grant_type`` and ``scope``. NEVER add raw token strings,
-    ``client_secret``, ``code``, or any other authentication material:
-    receivers may forward this dict to SIEM/log sinks, and the
-    "no-secrets-in-audit" guarantee depends on the sender contract.
-    Use ``token`` (the persisted ``AccessToken`` model) for anything
-    derivable from the issued token; receivers can read ``token.scope``,
-    ``token.user``, ``token.application`` directly.
+    Request-safe fields (``grant_type``, ``scope``) plus the
+    issued-token wire-format classifier (``format`` — ``"opaque"`` /
+    ``"jwt"`` / ``None`` when undetermined). NEVER add raw token
+    strings, ``client_secret``, ``code``, or any other authentication
+    material: receivers may forward this dict to SIEM/log sinks, and
+    the "no-secrets-in-audit" guarantee depends on the sender
+    contract. Use ``token`` (the persisted ``AccessToken`` model) for
+    anything derivable from the issued token; receivers can read
+    ``token.scope``, ``token.user``, ``token.application`` directly.
 
     Each field is ``NotRequired`` (PEP 655) so a sender can omit a key
     rather than emitting it as ``None``, while still letting future

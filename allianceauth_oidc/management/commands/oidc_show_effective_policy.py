@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, cast
 
 from django.contrib.auth import get_user_model
@@ -19,8 +18,6 @@ from allianceauth_oidc.security import (
 )
 
 from ._format import FORMAT_CHOICES, render_rows
-
-logger = logging.getLogger(f"extensions.{__name__}")
 
 
 class Command(BaseCommand):

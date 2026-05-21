@@ -365,10 +365,12 @@ class ClaimsBuilder:
         Returns ``None`` when no main character exists — mirrors the
         flat-claims omit contract, so an RP that keys off
         ``"affiliation" in payload`` sees a consistent absent /
-        present signal. The returned dict ALWAYS carries the
-        ``state`` (a user is in some state, even if it's
-        ``"Guest"`` / blank), drops ``alliance`` / ``faction`` when
-        the main character lacks those fields.
+        present signal. The returned dict carries the ``state`` key
+        when ``user.profile.state.name`` is truthy (typically the
+        case for an authenticated user; absent for partially-mocked
+        profiles and the rare blank-state edge), and drops
+        ``alliance`` / ``faction`` when the main character lacks
+        those fields.
         """
         if main is None:
             return None

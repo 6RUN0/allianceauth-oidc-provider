@@ -145,7 +145,12 @@ class OIDCTestCase(TestCase):
         """
         Parses a redirect response from the authorize endpoint.
 
-        Returns (location, path, parsed_qs_dict).
+        ``status_codes`` defaults to ``REDIRECT_STATUSES`` (any 3xx);
+        pass a narrower tuple/frozenset (e.g. ``(302,)``) to pin a
+        specific status — the helper ``assertIn``s against the set
+        before parsing.
+
+        Returns ``(location, path, parsed_qs_dict)``.
         """
         self.assertIn(response.status_code, status_codes)
         self.assertIn("Location", response.headers)

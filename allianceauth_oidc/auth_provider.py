@@ -373,7 +373,7 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         whitelist, or whose application was deactivated, sees ``401``
         on the next userinfo request rather than waiting for AT expiry.
 
-        Three layers, in order of cheapness:
+        Two layers, in order of cheapness:
 
         1. ``app.is_usable`` — closes the ``active=False`` propagation
            gap. The authorize endpoint's ``_get_app`` already filters

@@ -49,7 +49,7 @@ make coverage                         # term + html + xml report
 make audit                            # == uv run nox -s audit
 uv run pre-commit run pip-audit --hook-stage=manual --all-files
 
-# build a wheel / sdist (flit driven by uv run)
+# build a wheel / sdist (uv_build backend)
 make package
 ```
 
@@ -65,7 +65,7 @@ this suite. Pass `-- --parallel 1` to disable parallelism for a debugging sessio
 honours the last `--parallel` flag.
 
 All tests live in `tests/` at the repo root, deliberately outside the `allianceauth_oidc/` package so
-`flit build` does not ship them in the wheel/sdist:
+`uv build` does not ship them in the wheel/sdist:
 
 - `tests/test_*.py` — actual test cases (Django `unittest.TestCase`-based).
 - `tests/_oidc_testcase.py` — shared `OIDCTestCase` (raw fixture) and `GrantedOIDCTestCase`

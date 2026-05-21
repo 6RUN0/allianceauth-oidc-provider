@@ -1,9 +1,14 @@
 """
 Django system checks for the OIDC provider — fail-loud-fail-early.
 
-Three structurally-required configurations are guarded here. Each
-ID is part of the public API: operators grep for it in CI logs and
-the README references the migration path.
+Structurally-required configurations are guarded here as
+``Error``-level checks (``E001``-``E006``); misconfigurations that
+are not fatal but routinely cause incident-class confusion are
+surfaced as ``Warning``-level checks (``W001``-``W005``). Each ID
+is part of the public API: operators grep for it in CI logs and
+the README references the migration path. ``Error``-severity is
+intentional — demoting any of them to ``Warning`` would let CI and
+startup succeed and crash much later in production.
 
 * **E001** — back-channel logout requires ``OIDC_ISS_ENDPOINT``.
   The Celery worker has no HTTP request context to derive ``iss``
@@ -32,12 +37,9 @@ the README references the migration path.
   ``invalid_scope`` or receives a token response without an
   ``id_token`` member.
 
-Severity is intentionally ``Error`` for all three: demoting any of
-them to ``Warning`` would let CI and startup succeed and crash much
-later in production.
-
-In addition, two ``Warning``-level checks surface misconfigurations
-that are not fatal but routinely cause incident-class confusion:
+The remaining checks (``E005``, ``E006``, ``W001``-``W005``) are
+defined below — see each ``@register`` block for its trigger
+condition and remediation. The ``Warning``-level overlay covers:
 
 * **W001** — ``ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True`` while
   ``DEBUG=False``. Masked-fragment logging is a development aid;

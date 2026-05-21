@@ -197,16 +197,18 @@ bcl_dispatches = _counter(
 # or refresh a token.
 #
 # Labels:
-# - ``stage`` — one of ``"authorize"``, ``"validate_code"``,
-#   ``"validate_refresh"``, ``"validate_bearer"``, ``"save_bearer"``.
-#   Matches the value set callers pass at the emit site, so a Grafana
-#   panel can rate-limit to specific stages (e.g. "spike in
-#   ``validate_refresh`` after a group rename").
+# - ``stage`` — one of ``"authorize"``, ``"validate_silent_auth"``,
+#   ``"validate_code"``, ``"validate_refresh"``, ``"validate_bearer"``,
+#   ``"save_bearer"``. Matches the value set callers pass at the emit
+#   site, so a Grafana panel can rate-limit to specific stages (e.g.
+#   "spike in ``validate_refresh`` after a group rename").
 # - ``reason`` — one of ``DenyReason`` values
 #   (``"global"`` / ``"app"``) plus the validator-specific
-#   ``"app_unusable"`` (app row has ``active=False``). ``"unknown"``
-#   is a defensive fallback for partially-mocked decisions in
-#   integration tests; production paths always populate a real reason.
+#   ``"app_unusable"`` (app row has ``active=False``) and
+#   ``"no_client"`` (``save_bearer`` path with no resolved client).
+#   ``"unknown"`` is a defensive fallback for partially-mocked
+#   decisions in integration tests; production paths always populate
+#   a real reason.
 #
 # Why not extend ``authorize_denied`` with a ``stage`` label: that
 # counter is part of the public METRICS.md contract since 0.1; adding

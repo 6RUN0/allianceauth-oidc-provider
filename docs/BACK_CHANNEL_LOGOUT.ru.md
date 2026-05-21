@@ -57,7 +57,7 @@ POST-ит подписанный `logout_token` каждому Relying Party, к
    адреса (RFC 1918, 127.0.0.0/8, 169.254.0.0/16, 224.0.0.0/4,
    240.0.0.0/4). Используйте
    `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` только для
-   dev/compose-окружений.
+   dev и docker-compose-сетевых окружений.
 
 ## 3. Триггерные точки (T1)
 
@@ -90,7 +90,7 @@ fan-out:
 
 | Значение флага | Что fires для этого RP |
 |---|---|
-| `False` (по умолчанию) | Все пять triggers fires (v1 behaviour) |
+| `False` (по умолчанию) | Срабатывают все пять триггеров (поведение v1) |
 | `True` | ТОЛЬКО `oidc_revoke_user_tokens` (`reason="user_revoked"`); четыре lifecycle reasons (`user_deactivated`, `groups_changed`, `state_changed`, `user_deleted`) silently пропускаются |
 
 ### Когда включать
@@ -254,7 +254,7 @@ Back-Channel Logout attempts**.
 | `application_client_id_snapshot` | `application`   | Снимок `client_id`, сделанный при вставке; переживает обнуление FK. Индексирован для per-RP forensic-запросов по историческим строкам. |
 | `application_name_snapshot`      | `application`   | Снимок display-name, сделанный при вставке; переживает обнуление FK. |
 | `user_pk`                        | `user_pk`       | Целое число; `NULL`, если строка пользователя уже удалена. |
-| `jti`                            | `jti`           | 32-символьный hex из `uuid4().hex` (16 байт энтропии). Пустой для отказов до выдачи токена. |
+| `jti`                            | `jti`           | 32-символьный hex из `uuid4().hex`. Пустой для отказов до выдачи токена. |
 | `success`                        | `success`       | `True` = HTTP 2xx; `False` = любой другой терминальный исход. |
 | `attempt_count`                  | `attempt_count` | Номер попытки Celery (1-based). `0` для отказов на стороне dispatcher. |
 | `reason`                         | `reason`        | Trigger reason при успехе, failure mode при провале.     |

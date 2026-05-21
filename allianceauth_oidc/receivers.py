@@ -1,9 +1,11 @@
 """
 Django signal receivers that emit ``oidc_logout_required``.
 
-Five trigger sites in addition to the ``oidc_revoke_user_tokens``
-management command (which emits the signal directly from its
-handler):
+This module owns triggers 1-4 below; trigger 5 lives in
+:mod:`admin` and is listed here so the five-site v1 set is
+discoverable from one docstring. The ``oidc_revoke_user_tokens``
+management command also raises the signal directly from its
+handler — count it as a sixth, operator-driven site.
 
 1. ``User.is_active`` flip True→False — :func:`on_user_pre_save` /
    :func:`on_user_post_save` use a pre-save snapshot stored on the
@@ -17,14 +19,15 @@ handler):
    ``application_id`` list into a module-level
    :class:`weakref.WeakKeyDictionary`; :func:`on_user_post_delete`
    reads + pops it and emits one signal per RP.
-5. Admin bulk action "Send test back-channel logout" in
-   :mod:`admin` — operator-triggered emission with
-   ``reason="admin_test"``; used to verify BCL wiring against a
-   live RP without waiting for a real lifecycle event.
+5. Admin bulk action "Send test back-channel logout" — defined in
+   :mod:`admin` as ``ApplicationAdmin.send_test_backchannel_logout``;
+   operator-triggered emission with ``reason="admin_test"``; used to
+   verify BCL wiring against a live RP without waiting for a real
+   lifecycle event.
 
-Wiring lives in ``apps.py:ready()``; the helpers here only define
-the receivers + the per-receiver ``dispatch_uid`` strings so the
-test suite can disconnect them cleanly.
+Wiring for triggers 1-4 lives in ``apps.py:ready()``; the helpers
+here only define the receivers + the per-receiver ``dispatch_uid``
+strings so the test suite can disconnect them cleanly.
 
 Newly-denied gating: only ``groups_changed`` and ``state_changed``
 gate on ``DEFAULT_POLICY.is_allowed`` (the "newly denied" check);

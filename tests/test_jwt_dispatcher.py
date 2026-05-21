@@ -1,10 +1,9 @@
 """
 RFC 9068 JWT access tokens — dispatcher and format resolution.
 
-Sibling concerns live in test_jwt_shape.py, test_jwt_dispatcher.py,
-test_jwt_grants.py, and test_jwt_validation.py. Shared helpers
-(split_jwt / mode-switch dicts / lookalike generator) live in
-tests/_jwt_helpers.py.
+Sibling concerns live in test_jwt_shape.py, test_jwt_grants.py,
+and test_jwt_validation.py. Shared helpers (split_jwt / mode-switch
+dicts / lookalike generator) live in tests/_jwt_helpers.py.
 """
 
 from __future__ import annotations

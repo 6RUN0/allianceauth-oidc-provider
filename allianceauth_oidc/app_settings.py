@@ -8,9 +8,9 @@ override runs and never sees changes. Reading via a function call keeps
 the runtime tunable from tests and from operator hot-reloads.
 
 For dependency-injection-friendly use, ``OIDCSettings.from_django()``
-wraps the seven scalar accessors in a frozen dataclass; pass it in
-where you would otherwise call ``app_settings.foo()`` so tests can
-hand-craft a config without ``@override_settings``.
+wraps every OIDC-provider scalar setting in a frozen dataclass; pass
+it in where you would otherwise call ``app_settings.foo()`` so tests
+can hand-craft a config without ``@override_settings``.
 """
 
 from __future__ import annotations
@@ -233,7 +233,7 @@ class OIDCSettings:
         Return a cached snapshot built from the live
         ``django.conf.settings``.
 
-        Delegates to a process-global ``lru_cache`` so the seven
+        Delegates to a process-global ``lru_cache`` so the bundled
         ``getattr`` reads + ``__post_init__`` validation only run on
         the first call (and after every cache invalidation).
         ``connect_invalidator`` wires a ``setting_changed`` receiver

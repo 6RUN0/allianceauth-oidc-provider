@@ -49,8 +49,11 @@ class Command(BaseCommand):
             default="user_revoked",
             help=_(
                 "Audit reason forwarded to the oidc_logout_required "
-                "signal and the operator log line. Free-form string; "
-                "downstream BCL receivers may filter on it. Default: "
+                "signal and the operator log line. Conventionally one "
+                "of: user_revoked, user_deactivated, groups_changed, "
+                "state_changed, user_deleted (the v1 lifecycle set "
+                "downstream BCL receivers filter on). Custom values "
+                "are accepted but may bypass filters. Default: "
                 "%(default)s."
             ),
         )

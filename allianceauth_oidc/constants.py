@@ -164,6 +164,10 @@ BCL_DISPATCH_OUTCOMES: Final[frozenset[str]] = frozenset(
 # ``sum(rate(aa_oidc_bcl_dispatches_total{outcome=~"...|..."}[5m]))``
 # joining these names; canonicalised here so the set ships with the
 # module rather than being baked into individual Grafana dashboards.
+# Both terminal-retry-exhaustion outcomes are included
+# (``retries_exhausted`` for 5xx and ``retries_exhausted_network``
+# for connection / DNS / timeout errors) since both indicate the
+# autoretry envelope is spent and the worker has given up.
 # ``redirect_blocked`` and ``rp_client_error`` are included even
 # though they originate from RP behaviour rather than infrastructure
 # — both indicate the RP has refused (configuration drift on their
@@ -173,6 +177,7 @@ BCL_DISPATCH_OUTCOMES: Final[frozenset[str]] = frozenset(
 BCL_DEAD_LETTER_OUTCOMES: Final[frozenset[str]] = frozenset(
     {
         BCLDispatchOutcome.RETRIES_EXHAUSTED.value,
+        BCLDispatchOutcome.RETRIES_EXHAUSTED_NETWORK.value,
         BCLDispatchOutcome.SIGNING_KID_RETIRED.value,
         BCLDispatchOutcome.SIGNING_KID_RESOLVE_FAILED.value,
         BCLDispatchOutcome.BROKER_UNAVAILABLE.value,

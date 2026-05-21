@@ -14,6 +14,7 @@ than duplicating the values.
 
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -114,3 +115,31 @@ def test_env(session: nox.Session) -> dict[str, str]:
         "DJANGO_SETTINGS_MODULE": TEST_SETTINGS,
         "AA_USE_FAKE_REDIS": session.env.get("AA_USE_FAKE_REDIS", "1"),
     }
+
+
+def pick_free_ports(n: int) -> tuple[int, ...]:
+    """
+    Return ``n`` distinct ephemeral ports the kernel is willing to hand out.
+
+    Binds ``n`` sockets to port 0 *simultaneously* (rather than one
+    at a time and closing each) so the kernel cannot recycle a port
+    between picks and hand the same number back twice. After
+    collecting the assignments the sockets are closed, leaving a
+    short TOCTOU window before the caller binds them; for local
+    test orchestration this is acceptable — the failure mode is a
+    loud ``EADDRINUSE`` from the next binder, not a silent collision.
+
+    ``127.0.0.1`` rather than ``0.0.0.0`` so the reservation matches
+    a loopback-only publish (cosmic-ray's ``http-worker`` defaults,
+    integration sidecars).
+    """
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(n):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            sockets.append(sock)
+        return tuple(s.getsockname()[1] for s in sockets)
+    finally:
+        for sock in sockets:
+            sock.close()

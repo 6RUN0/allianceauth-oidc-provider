@@ -154,7 +154,7 @@ Spec literals you MUST NOT "fix":
 Identity / PII claims (`email`, `name`, `picture`, `groups`, `locale`,
 `scope`, `client_secret`, character data) are NEVER emitted in the
 logout_token. A regression test
-(`TestBackChannelLogoutTokenBuilder.test_ac21_payload_never_contains_pii`)
+(`TestBackChannelLogoutTokenBuilder.test_payload_never_contains_pii`)
 keeps the absence pinned.
 
 ## 5. Retry & idempotency
@@ -215,10 +215,10 @@ Outbound HTTP discipline:
   which has a fixed allow-list of fields (`application_pk`,
   `application_name`, `backchannel_logout_uri`, `jti`, `status_code`,
   `reason`). The
-  `TestBackChannelLogoutLogging.test_ac36_*_branch_log_has_no_token_material`
+  `TestBackChannelLogoutLogging.test_*_branch_log_has_no_token_material`
   tests verify no `logout_token`, `access_token`, `refresh_token`,
   `id_token`, or `client_secret` leaks into captured log output
-  across the success / 3xx / 4xx / kid-retired branches.
+  across the 3xx / 4xx / kid-retired branches.
 
 - **No PII in tokens.** Per §4 above — closed payload set.
 
@@ -284,7 +284,8 @@ that means handfuls of rows per week. Operators with high failure
 volume (or a compliance retention ceiling) can wire a Celery beat
 task that runs `BackChannelLogoutAttempt.objects.filter(
 created_at__lt=cutoff).delete()` on a schedule, mirroring the
-pattern used for `clear_expired_tokens` in §2.
+pattern used for `clear_expired_tokens` in the README's
+`Periodic cleanup of expired tokens (Celery Beat)` section.
 
 **Forwarding to SIEM.** Connect a second receiver to
 `oidc_logout_dispatched` under a different `dispatch_uid` —

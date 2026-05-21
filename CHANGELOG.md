@@ -202,11 +202,12 @@ is preserved in `git log`; this file documents fork-specific changes only.
   capture user interaction. DOT does not set these by default.
 
 - `aa_oidc_policy_rejections_total` Prometheus counter, labelled
-  by `stage` (`authorize` / `validate_code` / `validate_refresh` /
-  `save_bearer`) and `reason` (`global` / `app_state` / `app_group`
-  / `inactive_app`). Cross-cuts the three-layer policy enforcement
-  so dashboards can answer "which gate fires the most at which
-  stage" with a single counter.
+  by `stage` (`authorize` / `validate_silent_auth` /
+  `validate_code` / `validate_refresh` / `validate_bearer` /
+  `save_bearer`) and `reason` (`global` / `app` / `app_unusable`
+  / `no_client` / `unknown`). Cross-cuts the three-layer policy
+  enforcement so dashboards can answer "which gate fires the most
+  at which stage" with a single counter.
 
 - `aa_oidc_code_reuse_audit_misses_total` Prometheus counter,
   labelled by `client_id`. `_handle_potential_code_reuse`
@@ -241,10 +242,12 @@ is preserved in `git log`; this file documents fork-specific changes only.
 ### Changed
 
 - `tests/test_migrations.py` `MIGRATION_TARGET` constant bumped to
-  `"0012_allianceauthapplication_access_token_format"` so post-migrate
-  live-model `objects.create(...)` calls hit a schema with the new
-  field. PKCE-specific assertions still cover the `0011` data step
-  because that step runs as part of the chain forward to `0012`.
+  `"0015_backchannellogoutattempt"` so post-migrate live-model
+  `objects.create(...)` calls hit a schema with every field added
+  this cycle (`pkce_required`, `access_token_format`,
+  `backchannel_logout_uri`, `backchannel_logout_on_revoke_only`,
+  `BackChannelLogoutAttempt`). PKCE-specific assertions still
+  cover the `0011` data step because the chain runs forward.
 
 ## [0.2.0b2] - 2026-05-09
 
@@ -338,10 +341,12 @@ before deploying.
 
 - `email_verified` claim emitted alongside `email` in both `/userinfo`
   and `id_token` per OIDC Core 1.0 §5.1. The value reflects AA's
-  email-confirmation state via a four-tier decision tree:
-  `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` (operator override) →
-  synthetic placeholder detection (`aa_skip_email`, soft dependency) →
-  AA's `REGISTRATION_VERIFY_EMAIL` setting → emit. `email` and
+  email-confirmation state via a three-tier decision tree:
+  synthetic placeholder detection (`aa_skip_email`, soft dependency)
+  short-circuits to `false`; otherwise
+  `ALLIANCEAUTH_OIDC_FORCE_EMAIL_VERIFIED` (operator override) wins
+  when set; otherwise AA's `REGISTRATION_VERIFY_EMAIL` setting is
+  mirrored. `email` and
   `email_verified` are emitted as a coupled pair so neither appears
   without the other.
 - `acr=0` claim emitted in the id_token when the client supplies
@@ -627,3 +632,11 @@ latter to mitigate cache-poisoning across release runs).
 ## Upstream history
 
 For changes prior to this fork's divergence, see `git log` and the upstream releases page.
+
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...HEAD
+[0.2.0b2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b1...v0.2.0b2
+[0.2.0b1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b6...v0.2.0b1
+[0.1.0b6]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b5...v0.1.0b6
+[0.1.0b5]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b4...v0.1.0b5
+[0.1.0b4]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b3...v0.1.0b4
+[0.1.0b3]: https://github.com/6RUN0/allianceauth-oidc-provider/releases/tag/v0.1.0b3

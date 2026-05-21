@@ -4,10 +4,11 @@ Tests for ``manage.py oidc_*`` operator commands.
 The commands are thin wrappers around the ORM; tests verify the
 contract operators rely on:
 
-* `--dry-run` on destructive commands does not write.
-* `--format=json` produces parseable output.
-* Idempotent behaviour (re-running a destructive command on a
-  cleaned-up subject is a no-op).
+* Where applicable, ``--dry-run`` on destructive commands does not
+  write.
+* ``--format=json`` produces parseable output.
+* Destructive commands are idempotent (re-running on a cleaned-up
+  subject is a no-op); read-only commands return stable output.
 """
 
 from __future__ import annotations

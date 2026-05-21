@@ -99,8 +99,13 @@ worker URLs.
 make mutation-parallel              # N=4 workers (default)
 make mutation-parallel N=8          # N=8 workers
 uv run nox -s mutation_parallel -- 2          # direct invocation
-CR_BASE_PORT=10000 uv run nox -s mutation_parallel -- 4
 ```
+
+Worker ports are kernel-assigned ephemeral (picked once per session
+via `socket.bind(("127.0.0.1", 0))` with all N sockets held open
+simultaneously), so two concurrent invocations on the same host
+(CI matrix, dev box racing CI) cannot self-collide on a contiguous
+range.
 
 The session:
 

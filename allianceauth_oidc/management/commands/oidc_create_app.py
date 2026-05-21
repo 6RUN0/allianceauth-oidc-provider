@@ -153,7 +153,10 @@ class Command(BaseCommand):
                 app.groups.set(groups)
 
         # Audit trail: log + admin LogEntry so the action is visible
-        # in /admin/ without a code change.
+        # in /admin/ without a code change. The LogEntry write is
+        # best-effort — on failure (e.g. missing django_admin_log
+        # table) the creation still succeeds and the exception is
+        # logged at ERROR; see ``except Exception`` below.
         owner_id = owner.pk
         logger.info(
             "OIDC create_app: id=%s name=%s user_id=%s grant=%s",

@@ -205,7 +205,16 @@ def _check_jwt_wiring() -> None:
 
 
 class AllianceAuthOIDC(AppConfig):
-    """Connects the ``oidc_token_issued`` audit receiver on app load."""
+    """
+    Wire OIDC plumbing on app load.
+
+    ``ready()`` connects the four audit-signal receivers
+    (``oidc_token_issued``, ``oidc_code_reuse_detected``,
+    ``oidc_token_introspected``, ``oidc_logout_dispatched``), the
+    settings-cache invalidator, the Prometheus metric receivers, the
+    BCL pre-save SSRF gate, default ``OAUTH2_PROVIDER`` settings, and
+    the JWT-mode wiring sanity check.
+    """
 
     name = "allianceauth_oidc"
     label = "allianceauth_oidc"

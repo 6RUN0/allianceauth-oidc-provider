@@ -76,7 +76,7 @@ Some plans (notably `oidcc-basic-certification-test-plan`) drive a
 bundled HtmlUnit 4.11.1 instance that hits a `NullPointerException:
 engine is null` in the async XMLHttpRequest path. Roughly half of the
 browser-driven modules can TIMEOUT for that reason — see the
-`Dockerfile.suite` comment for the full context. To run only the
+`tls/Dockerfile.suite` comment for the full context. To run only the
 modules that complete reliably, pass `--include`:
 
 ```sh
@@ -318,8 +318,8 @@ flowchart LR
 - **Suite hangs at the login page.** AA's Django login form must
   expose `id_username` / `id_password` inputs and a submit button —
   the standard Django auth template does. If you've overridden it,
-  update the `browser.tasks` block in `run_plan.py` to match the new
-  selectors.
+  update the `browser.tasks` block in `runner/plan_config.py` to
+  match the new selectors.
 - **Provider container won't start.** Likely the AA migrations failed.
   Run `docker compose logs provider` and look for the `migrate` step.
   AA wants Redis on startup — fakeredis is enabled via
@@ -349,6 +349,6 @@ target for an iterative "fix one, re-run" loop.
   is the entire point. Triage and fix per module.
 - No Selenium grid: the suite uses its bundled headless browser. If
   the AA login template changes drastically, hand-edit
-  `browser.tasks` in `run_plan.py`.
+  `browser.tasks` in `runner/plan_config.py`.
 - `oidcc-config` exercises dynamic registration optionally; we don't
   implement it, so those modules will SKIP.

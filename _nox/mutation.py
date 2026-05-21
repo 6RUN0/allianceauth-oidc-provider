@@ -34,7 +34,7 @@ import time
 
 import nox
 
-from .shared import test_env
+from .shared import pick_free_ports, test_env
 
 # Directories that ``mutation_parallel`` excludes from the worker
 # source-tree copy. Split out from the call site so the list is
@@ -232,7 +232,10 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
     N isolated rsync copies under ``mktemp``, symlinks ``.venv`` into
     each, runs the configured ``test-command`` once as a baseline
     gate, and then drives the ``http`` distributor with workers bound
-    to ``CR_BASE_PORT`` upward.
+    to N kernel-assigned ephemeral ports (picked via
+    :func:`_nox.shared.pick_free_ports`, which binds all N
+    simultaneously so two concurrent invocations on the same host
+    cannot self-collide on a contiguous port range).
 
     Use after a ``cosmic-ray init`` (or after the first ``init``
     phase of ``nox -s mutation``) has populated ``mutation.sqlite``.
@@ -244,7 +247,6 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
         nox -s mutation_parallel -- 4              # 4 workers, resume
         nox -s mutation_parallel -- 8              # 8 workers, resume
         nox -s mutation_parallel -- --reinit 4     # back up + init + run
-        CR_BASE_PORT=10000 nox -s mutation_parallel -- 4
 
     ``--reinit`` (alias ``--fresh``) backs up ``mutation.sqlite`` to
     a timestamped sibling, runs ``cosmic-ray init`` to rebuild the
@@ -267,16 +269,15 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
     venv_bin = project_dir / ".venv" / "bin"
     session_file = project_dir / "mutation.sqlite"
     base_config = project_dir / "cosmic-ray.toml"
-    raw_port = session.env.get("CR_BASE_PORT") or "9876"
-    try:
-        base_port = int(raw_port)
-    except ValueError:
-        session.error(
-            f"CR_BASE_PORT={raw_port!r} is not an integer; "
-            "set it to the lowest worker port (default 9876)."
-        )
 
     n_workers, reinit = _parse_reinit_and_n(session)
+    # Kernel-assigned ephemeral ports, picked simultaneously so two
+    # concurrent invocations on the same host (CI matrix, dev box
+    # racing CI) cannot self-collide on a contiguous range. Replaces
+    # the prior ``CR_BASE_PORT``-driven ``base_port + i`` scheme,
+    # which produced silent ``EADDRINUSE``-style hangs in shared-host
+    # scenarios.
+    worker_ports = pick_free_ports(n_workers)
 
     if not (venv_bin / "cosmic-ray").is_file():
         session.error(
@@ -390,7 +391,7 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
             )
             (worker_dir / ".venv").symlink_to(project_dir / ".venv")
             worker_dirs.append(worker_dir)
-            worker_urls.append(f"http://127.0.0.1:{base_port + i - 1}")
+            worker_urls.append(f"http://127.0.0.1:{worker_ports[i - 1]}")
         session.log(f"materialised {n_workers} worker copies")
 
         # Worker env: prepend venv/bin to PATH so subprocess calls to
@@ -477,10 +478,10 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
 
         session.log(
             f"spawning {n_workers} workers on ports "
-            f"{base_port}-{base_port + n_workers - 1}"
+            f"{', '.join(str(p) for p in worker_ports)}"
         )
         for i, worker_dir in enumerate(worker_dirs):
-            port = base_port + i
+            port = worker_ports[i]
             log_path = work_base / f"worker-{i + 1}.log"
             log_f = log_path.open("wb")
             log_files.append(log_f)
@@ -515,7 +516,7 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
             if not pending:
                 break
             for i, proc in list(pending.items()):
-                port = base_port + i
+                port = worker_ports[i]
                 if proc.poll() is not None:
                     log_text = (work_base / f"worker-{i + 1}.log").read_text(
                         encoding="utf-8", errors="replace"
@@ -536,9 +537,13 @@ def mutation_parallel(session: nox.Session) -> None:  # noqa: PLR0912, PLR0915
                 time.sleep(0.5)
         if pending:
             stuck_ids = ", ".join(str(i + 1) for i in sorted(pending))
+            stuck_ports = ", ".join(
+                str(worker_ports[i]) for i in sorted(pending)
+            )
             session.error(
-                f"worker(s) {stuck_ids} did not bind within 30s — "
-                "check ``CR_BASE_PORT`` for port collisions"
+                f"worker(s) {stuck_ids} did not bind within 30s "
+                f"(ports {stuck_ports}) — check worker logs under "
+                f"``{work_base}`` for the actual error."
             )
         session.log(f"all {n_workers} workers ready")
 

@@ -87,8 +87,7 @@
   `AllianceAuthApplication.backchannel_logout_on_revoke_only`
   ограничивает RP получением logout-токенов только при явном вызове
   `oidc_revoke_user_tokens`. Руководство оператора:
-  [docs/BACK_CHANNEL_LOGOUT.md](docs/BACK_CHANNEL_LOGOUT.md)
-  ([RU](docs/BACK_CHANNEL_LOGOUT.ru.md)).
+  [docs/BACK_CHANNEL_LOGOUT.ru.md](docs/BACK_CHANNEL_LOGOUT.ru.md).
 
 - JWT access-токены (RFC 9068). Включается двумя ключами в
   `OAUTH2_PROVIDER`: `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT =
@@ -107,9 +106,9 @@
   `WARNING` при превышении, не меняя выпуск. Discovery-документ
   публикует `access_token_signing_alg_values_supported: ["RS256"]`.
   Руководство оператора:
-  [docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md) — включение,
-  RP cookbook (oauth2-proxy / mod_auth_openidc / WikiJS), ротация
-  ключей, data minimization, откат.
+  [docs/JWT_ACCESS_TOKENS.ru.md](docs/JWT_ACCESS_TOKENS.ru.md) —
+  включение, RP cookbook (oauth2-proxy / mod_auth_openidc / WikiJS),
+  ротация ключей, data minimization, откат.
 
 - OIDC RP-Initiated Logout 1.0 (`/o/logout/`) включён по умолчанию
   через AppConfig-хук `AllianceAuthOIDC.ready`. Discovery публикует
@@ -120,24 +119,53 @@
   `setdefault` уважает любое явное значение (в том числе `False` для
   opt-out).
 
-- Четыре новых Django system check на `manage.py check`:
-  - `allianceauth_oidc.E001` (Error) — `backchannel_logout_uri`
-    зарегистрирован без `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']`
-    (у Celery-worker'а нет HTTP-запроса, чтобы вывести `iss`).
-  - `allianceauth_oidc.E004` (Error) —
-    `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR']` указывает на
-    не-callable / не-разрешимый dotted-путь.
-  - `allianceauth_oidc.W001` (Warning) — словарь `OAUTH2_PROVIDER`
-    отсутствует, при том что `allianceauth_oidc` установлен.
-  - `allianceauth_oidc.W002` (Warning) —
-    `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но
-    `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching
-    generator. JWT-режим молча деградирует до opaque.
-  - `allianceauth_oidc.W003` (Warning) —
-    `OIDC_RP_INITIATED_LOGOUT_ENABLED=False` при наличии
-    приложений с `backchannel_logout_uri`. Single-Logout chain
-    рвётся на первом hop'е, потому что RP-init logout endpoint —
-    точка входа, которая триггерит BCL fan-out.
+- Одиннадцать новых Django system check на `manage.py check` —
+  шесть errors, пять warnings, все в пространстве
+  `allianceauth_oidc.*`:
+  - `E001` (Error) — `backchannel_logout_uri` зарегистрирован без
+    `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` (у Celery-worker'а нет
+    HTTP-запроса, чтобы вывести `iss`).
+  - `E002` (Error) — `OAUTH2_PROVIDER_APPLICATION_MODEL` не
+    указывает на `AllianceAuthApplication`. Stock-модель DOT
+    обходит трёхуровневый policy enforcement.
+  - `E003` (Error) — `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS']`
+    не указывает на `AllianceAuthOAuth2Validator`. Stock-валидатор
+    DOT пропускает слои 2 и 3 policy-гейта.
+  - `E004` (Error) — `OAUTH2_PROVIDER['SCOPES']` не содержит
+    scope `openid`. Дефолтный `{"read": ..., "write": ...}` от
+    DOT молча отключает выпуск id_token.
+  - `E005` (Error) — `OAUTH2_PROVIDER['PKCE_REQUIRED']` не
+    является (или не оборачивает)
+    `allianceauth_oidc.pkce.per_app_pkce_required`. Без адаптера
+    per-app override молча no-op'ит, оставляя публичных клиентов
+    уязвимыми к перехвату authorization code по RFC 9700.
+  - `E006` (Error) — опасная тройная комбинация имеет реальную
+    жертву: `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` И
+    `DEBUG=False` И как минимум один зарегистрированный
+    `backchannel_logout_uri`. Подавляется явным opt-in
+    `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True`.
+  - `W001` (Warning) — `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True`
+    при `DEBUG=False`. Masked-fragment logging — инструмент для
+    разработки; в продакшене утекают узнаваемые фрагменты
+    токенов и секретов в хранилище логов.
+  - `W002` (Warning) — JWT-режим включён наполовину: default
+    формат `jwt` без dispatching `ACCESS_TOKEN_GENERATOR`, или
+    генератор подключён без выставленного `jwt` дефолта. Обе
+    половинки должны быть выставлены, чтобы JWT стал глобальным
+    дефолтом.
+  - `W003` (Warning) — `OIDC_RP_INITIATED_LOGOUT_ENABLED=False`
+    при наличии приложений с `backchannel_logout_uri`. Single-
+    Logout chain рвётся на первом hop'е, потому что RP-init logout
+    endpoint — точка входа, которая триггерит BCL fan-out.
+  - `W004` (Warning) — активное приложение хранит
+    `backchannel_logout_uri` со схемой `http://` при `DEBUG=False`.
+    Legacy-строки, сохранённые под `DEBUG=True`, переживают
+    переключение; worker перепроверяет DNS, но не схему.
+  - `W005` (Warning) —
+    `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` при
+    `DEBUG=False` без зарегистрированного
+    `backchannel_logout_uri` (иначе срабатывает `E006`). SSRF-гейт
+    на BCL-целях отключён.
 
 - Сигнал аудита `oidc_token_introspected` для RFC 7662 introspect
   endpoint. Срабатывает на каждый вызов `/o/introspect/` с
@@ -164,6 +192,13 @@
   опциональная произвольная audit-строка, попадающая в body
   ревокации `oidc_token_issued` и в trigger BCL fan-out.
 
+- `manage.py oidc_jwks_rotate` — операторская команда для ротации
+  ключа подписи JWKS. Генерирует свежий RSA-ключ, выводит из
+  активного оборота текущий ключ (строки, закреплённые за старым
+  `signing_kid`, продолжают давать байт-в-байт идентичные ретраи
+  до своего истечения), обновляет JWKS endpoint. Принимает
+  `--dry-run` для предпросмотра без персиста.
+
 - Admin: bulk-action "Send test back-channel logout" в changelist'е
   `AllianceAuthApplication`. Эмитит `oidc_logout_required` с
   `reason="admin_test"` на no-op пользователя — прогоняет полный
@@ -178,11 +213,31 @@
   по умолчанию.
 
 - Prometheus-счётчик `aa_oidc_policy_rejections_total`, размеченный
-  по `stage` (`authorize` / `validate_code` / `validate_refresh` /
-  `save_bearer`) и `reason` (`global` / `app_state` / `app_group`
-  / `inactive_app`). Перекрывает все три layer'а policy
+  по `stage` (`authorize` / `validate_silent_auth` /
+  `validate_code` / `validate_refresh` / `validate_bearer` /
+  `save_bearer`) и `reason` (`global` / `app` / `app_unusable`
+  / `no_client` / `unknown`). Перекрывает все три layer'а policy
   enforcement, поэтому одним счётчиком dashboard отвечает на вопрос
   "какой гейт срабатывает чаще всего и на каком stage".
+
+- Prometheus-счётчик `aa_oidc_code_reuse_audit_misses_total`,
+  размеченный по `client_id`. `_handle_potential_code_reuse`
+  инкрементируется при попадании на reuse-путь для кода без
+  совпадающей строки в `IssuedCodeAudit`. После атомарной обёртки
+  `save_bearer_token` + audit insert race-окно закрыто, поэтому
+  счётчик теперь срабатывает исключительно на never-issued коды
+  (fuzzers / replay'ы с чужого provider'а). Операторы коррелируют
+  с сигналом `oidc_code_reuse_detected` — две метрики должны быть
+  непересекающимися.
+
+- Prometheus-счётчик `aa_oidc_audit_receiver_failures_total`,
+  размеченный по `signal` и `receiver_dispatch_uid`.
+  Инкрементируется на каждый receiver, который выбросил исключение
+  во время `send_robust`-диспатча любого audit-сигнала
+  (`oidc_token_issued`, `oidc_code_reuse_detected`,
+  `oidc_token_introspected`, `oidc_logout_dispatched`). Ненулевая
+  частота означает, что audit-пайплайн молча роняет события для
+  хотя бы одного downstream-потребителя.
 
 - Discovery (`/o/.well-known/openid-configuration/`) публикует
   девять дополнительных полей из OIDC Discovery 1.0 §3 / RFC 8414
@@ -199,10 +254,13 @@
 ### Изменено
 
 - В `tests/test_migrations.py` константа `MIGRATION_TARGET` обновлена
-  до `"0012_allianceauthapplication_access_token_format"` — иначе
-  post-migrate `objects.create(...)` через live-модель промахивается
-  мимо схемы. PKCE-проверки продолжают покрывать data-шаг `0011`,
-  потому что он по-прежнему запускается как часть цепочки до `0012`.
+  до `"0015_backchannellogoutattempt"` — иначе post-migrate
+  `objects.create(...)` через live-модель промахивается мимо схемы с
+  каждым полем, добавленным в этом цикле (`pkce_required`,
+  `access_token_format`, `backchannel_logout_uri`,
+  `backchannel_logout_on_revoke_only`, `BackChannelLogoutAttempt`).
+  PKCE-проверки продолжают покрывать data-шаг `0011`, потому что
+  цепочка идёт вперёд.
 
 ## [0.2.0b2] - 2026-05-09
 
@@ -601,3 +659,11 @@ cache-poisoning vector между release-прогонами).
 ## История апстрима
 
 Что было до точки расхождения форка — смотрите `git log` и страницу релизов оригинала.
+
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...HEAD
+[0.2.0b2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b1...v0.2.0b2
+[0.2.0b1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b6...v0.2.0b1
+[0.1.0b6]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b5...v0.1.0b6
+[0.1.0b5]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b4...v0.1.0b5
+[0.1.0b4]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b3...v0.1.0b4
+[0.1.0b3]: https://github.com/6RUN0/allianceauth-oidc-provider/releases/tag/v0.1.0b3

@@ -291,11 +291,11 @@ against unauthorised re-runs.
 |---|---|---|
 | Authorization | `/o/authorize/` | Policy-aware (three-layer gate). Overridden in this app. |
 | Token | `/o/token/` | Audit signal + safe debug logging. Overridden in this app. |
-| UserInfo | `/o/userinfo/` | DOT default. |
-| Discovery | `/o/.well-known/openid-configuration/` | DOT default. |
-| JWKS | `/o/.well-known/jwks.json` | DOT default. |
+| UserInfo | `/o/userinfo/` | OIDC Core §5.3. Overridden in this app — adds `Cache-Control: no-store` and `Pragma: no-cache` per §5.3.2. |
+| Discovery | `/o/.well-known/openid-configuration/` | OIDC Discovery 1.0 §3 / RFC 8414. Overridden in this app — emits the §3 RECOMMENDED fields DOT omits plus `backchannel_logout_supported`. |
+| JWKS | `/o/.well-known/jwks.json` | RFC 7517. Overridden in this app — adds `Access-Control-Allow-Origin: *` so browser-based RPs can fetch the JWKS. |
 | Token revocation | `/o/revoke_token/` | RFC 7009. DOT default. |
-| Token introspection | `/o/introspect/` | RFC 7662. DOT default. |
+| Token introspection | `/o/introspect/` | RFC 7662. Overridden in this app — adds per-app gating plus the `oidc_token_introspected` audit signal. |
 | RP-initiated logout | `/o/logout/` | DOT view; default-on via AppConfig (`OIDC_RP_INITIATED_LOGOUT_ENABLED=True` set if absent). |
 | Issuer (`iss` claim) | `https://your.host/o/` | Whatever your discovery URL resolves to. |
 
@@ -318,6 +318,9 @@ already request `openid profile` get them without extra setup.
 | `eve_character_id` | `main_character.character_id` | `profile` (set by `ALLIANCEAUTH_OIDC_EVE_CLAIM_SCOPE`) |
 | `eve_corporation_id` / `_name` / `_ticker` | `main_character.corporation_*` | same |
 | `eve_alliance_id` / `_name` / `_ticker` | `main_character.alliance_*` (omitted for NPC corps without an alliance) | same |
+| `eve_faction_id` / `_name` | `main_character.faction_*` (omitted when the character has no faction) | same |
+| `eve_main_character_id` | Alias of `eve_character_id` to disambiguate when RPs also pull authenticated-character claims | same |
+| `eve_affiliation` | Composite `"<corp_ticker>[ / <alliance_ticker>]"` rendered for human-readable logs | same |
 
 The `eve_*` prefix is configurable. Empty values are **omitted** from the payload, not emitted as
 `null`, so RPs that key off `claim in payload` behave consistently.
@@ -652,7 +655,7 @@ Per-application `Debug Mode` (toggled in the admin) escalates token-flow logs fr
 When debugging an app, look for lines like:
 
 ```text
-[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views:78] OIDC DEBUG token issued
+[01/Jan/2099 00:00:00] INFO [extensions.allianceauth_oidc.views_token:204] OIDC DEBUG token issued
 app_id=1 client_id=abc123 user_id=42
 meta={'grant_type': 'authorization_code', ..., 'access_token': '<redacted>', 'id_token': '<redacted>'}
 ```
