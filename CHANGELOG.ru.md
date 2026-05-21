@@ -14,6 +14,18 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-21 [YANKED]
+
+Тэгнут, но не опубликован на PyPI. Release-pipeline race'нулся с
+`main.yml` на первом запуске после добавления cross-workflow CI
+gate (коммит `663c22f`). Git-тэг `v0.3.0` остался на репозитории
+и не может быть удалён (защита тэгов), но артефакт на PyPI не
+загружен.
+
+Ставьте `0.3.1` — она содержит идентичный функциональный payload,
+перетэгнутый после фикса gate'а (коммит `6407535`,
+`ci(release): bounded polling instead of single-shot CI gate`).
+
 ## [0.3.1] - 2026-05-21
 
 > ⚠️ **Изменение поведения, видимое оператору**: OIDC RP-Initiated
@@ -662,7 +674,9 @@ cache-poisoning vector между release-прогонами).
 
 Что было до точки расхождения форка — смотрите `git log` и страницу релизов оригинала.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.1
+[0.3.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.0
 [0.2.0b2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b1...v0.2.0b2
 [0.2.0b1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b6...v0.2.0b1
 [0.1.0b6]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b5...v0.1.0b6

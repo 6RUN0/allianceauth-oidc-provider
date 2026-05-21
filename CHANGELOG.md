@@ -14,6 +14,18 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-21 [YANKED]
+
+Tagged but never published to PyPI. The release pipeline raced
+against `main.yml` on the first run after the cross-workflow CI gate
+was added (commit `663c22f`). The git tag `v0.3.0` exists on the
+repository and cannot be deleted (tag protection rules), but no
+artefact was uploaded to PyPI.
+
+Install `0.3.1` instead — it contains the identical functional
+payload re-tagged after the gate was fixed (commit `6407535`,
+`ci(release): bounded polling instead of single-shot CI gate`).
+
 ## [0.3.1] - 2026-05-21
 
 > ⚠️ **Operator-visible behavior change**: OIDC RP-Initiated Logout is now
@@ -635,7 +647,9 @@ latter to mitigate cache-poisoning across release runs).
 
 For changes prior to this fork's divergence, see `git log` and the upstream releases page.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.1
+[0.3.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.0
 [0.2.0b2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b1...v0.2.0b2
 [0.2.0b1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b6...v0.2.0b1
 [0.1.0b6]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.1.0b5...v0.1.0b6
