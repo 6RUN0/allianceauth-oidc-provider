@@ -177,7 +177,7 @@ edits below to those.
 Greenfield installs follow [Install](#install) — the ordering caveats below do not apply. This
 section is for operators carrying live OAuth applications across an upgrade.
 
-### RP-Initiated Logout default-on (0.3.0)
+### RP-Initiated Logout default-on (0.3.1)
 
 `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` now defaults to `True` via the AppConfig —
 the `/o/logout/` route and the `end_session_endpoint` field in

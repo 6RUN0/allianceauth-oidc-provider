@@ -178,7 +178,7 @@ myauth/
 ниже к ним не относятся. Этот раздел — для операторов с живыми OAuth-приложениями, которые
 переезжают на новую версию.
 
-### RP-Initiated Logout по умолчанию on (0.3.0)
+### RP-Initiated Logout по умолчанию on (0.3.1)
 
 `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` теперь по умолчанию `True` через
 AppConfig — маршрут `/o/logout/` и поле `end_session_endpoint` в
