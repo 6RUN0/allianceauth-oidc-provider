@@ -14,6 +14,8 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-21
+
 > ⚠️ **Operator-visible behavior change**: OIDC RP-Initiated Logout is now
 > enabled by default. `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']`
 > defaults to `True` via AppConfig; the `/o/logout/` route and the

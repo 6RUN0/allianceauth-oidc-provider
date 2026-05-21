@@ -14,6 +14,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-21
+
 > ⚠️ **Изменение поведения, видимое оператору**: OIDC RP-Initiated
 > Logout теперь включён по умолчанию.
 > `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` принимает
