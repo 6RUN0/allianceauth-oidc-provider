@@ -88,50 +88,109 @@ jobs:
 
       # The release comment header says "A tag is expected to point at
       # a commit that already passed the full CI matrix". Make that an
-      # enforced precondition, not an expectation: query the Check Runs
-      # API for the tagged SHA and fail the build job if main CI did
-      # not complete with conclusion == success.
-      - name: Verify main CI is green for the tagged commit
+      # enforced precondition, not an expectation: poll the Check Runs
+      # API for the tagged SHA and proceed only after main CI completes
+      # with conclusion == success.
+      #
+      # The previous implementation single-shot ``checks.listForRef``
+      # 14 s after the tag arrived and treated ``in_progress`` as a
+      # failure. ``git push --follow-tags`` (industry standard) sends
+      # commit + tag as two near-simultaneous push events on the same
+      # SHA; ``main.yml`` runs on the branch event while ``release.yml``
+      # runs on the tag event. The naive gate raced and fail-closed on
+      # the first release after the gate was added (v0.3.0). Polling
+      # closes the race window without changing the human-side push
+      # contract.
+      - name: Wait for main CI to be green on the tagged commit
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
         with:
           script: |
             const sha = context.sha;
-            const { data } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha,
-              filter: 'latest',
-              per_page: 100,
-            });
-            const ciChecks = data.check_runs.filter(
-              c => c.name === 'test'
-                || c.name === 'lint'
-                || c.name === 'typecheck'
-                || c.name === 'package'
-                || c.name.startsWith('test (')
+            const TIMEOUT_MS = 30 * 60 * 1000;             // 30 min
+            const INTERVAL_MS = 30 * 1000;                 // 30 s
+            const FIRST_SIGHTING_GRACE_MS = 2 * 60 * 1000; // 2 min
+            const TERMINAL_OK = new Set(
+              ['success', 'neutral', 'skipped'],
             );
-            if (ciChecks.length === 0) {
-              core.setFailed(
-                `No CI check runs found for ${sha}; refusing to ` +
-                `release. Push to a branch first so main.yml runs.`,
+            const start = Date.now();
+            let lastReport = '';
+            const sleep = (ms) =>
+              new Promise((r) => setTimeout(r, ms));
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+              const { data } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: sha,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const ciChecks = data.check_runs.filter(
+                c => c.name === 'test'
+                  || c.name === 'lint'
+                  || c.name === 'typecheck'
+                  || c.name === 'package'
+                  || c.name.startsWith('test (')
               );
-              return;
+              const elapsed = Date.now() - start;
+              const elapsedSec = Math.floor(elapsed / 1000);
+              if (ciChecks.length === 0) {
+                if (elapsed > FIRST_SIGHTING_GRACE_MS) {
+                  core.setFailed(
+                    `No CI check runs found for ${sha} after ` +
+                    `${elapsedSec}s; refusing to release. ` +
+                    `Push to a branch first so main.yml runs.`,
+                  );
+                  return;
+                }
+                const report = `no checks visible yet (${elapsedSec}s)`;
+                if (report !== lastReport) {
+                  core.info(report);
+                  lastReport = report;
+                }
+              } else {
+                const failed = ciChecks.filter(
+                  c => c.status === 'completed'
+                    && !TERMINAL_OK.has(c.conclusion),
+                );
+                if (failed.length > 0) {
+                  const summary = failed
+                    .map(c => `${c.name}: ${c.conclusion}`)
+                    .join('; ');
+                  core.setFailed(
+                    `CI checks for ${sha} have terminal failure(s): ` +
+                    `${summary}`,
+                  );
+                  return;
+                }
+                const pending = ciChecks.filter(
+                  c => c.status !== 'completed',
+                );
+                if (pending.length === 0) {
+                  core.info(
+                    `Verified ${ciChecks.length} CI check runs ` +
+                    `green for ${sha} after ${elapsedSec}s`,
+                  );
+                  return;
+                }
+                const report =
+                  `${ciChecks.length} checks seen, ` +
+                  `${pending.length} pending (${elapsedSec}s)`;
+                if (report !== lastReport) {
+                  core.info(report);
+                  lastReport = report;
+                }
+              }
+              if (elapsed > TIMEOUT_MS) {
+                core.setFailed(
+                  `Timed out after ${elapsedSec}s waiting for CI ` +
+                  `on ${sha}. Last state: ` +
+                  `${lastReport || 'no checks visible'}.`,
+                );
+                return;
+              }
+              await sleep(INTERVAL_MS);
             }
-            const failed = ciChecks.filter(
-              c => c.status !== 'completed' || c.conclusion !== 'success',
-            );
-            if (failed.length > 0) {
-              const summary = failed
-                .map(c => `${c.name}: ${c.status}/${c.conclusion}`)
-                .join('; ');
-              core.setFailed(
-                `CI checks for ${sha} not all green: ${summary}`,
-              );
-              return;
-            }
-            core.info(
-              `Verified ${ciChecks.length} CI check runs green for ${sha}`,
-            );
 
       - name: Install GNU gettext
         # ``django-admin compilemessages`` shells out to ``msgfmt`` from
