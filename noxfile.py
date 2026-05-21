@@ -3,29 +3,20 @@ Nox sessions — run via ``uv run nox``.
 
 Default (no args): lint + tests.
 
+Full session inventory: ``uv run nox -l``. The catalogue below shows
+the most-used invocations and the conventions specific to this repo
+(posargs forwarding, env-var overrides). Domain-specific sessions
+(matrix, mutation, conformance, dist) are documented in their
+respective ``_nox/<module>.py`` docstrings.
+
 Examples::
 
     uv run nox                                  # default (lint + tests)
-    uv run nox -s preflight                     # lint+typecheck+tests
-    uv run nox -s lint                          # pre-commit hooks
-    uv run nox -s tests                         # Django test suite
+    uv run nox -l                               # list every session
+    uv run nox -s preflight                     # all push-gate checks
     uv run nox -s tests -- tests.test_token     # subset of tests
     uv run nox -s tests -- --keepdb             # forward extra args
     uv run nox -s tests -- --parallel 1         # disable parallelism
-    uv run nox -s typecheck                     # mypy + basedpyright
-    uv run nox -s coverage                      # tests + coverage reports
-    uv run nox -s audit                         # pip-audit
-    uv run nox -s makemessages                  # extract -> .po + .pot
-    uv run nox -s compilemessages               # compile .po -> .mo
-    uv run nox -s makemigrations                # generate Django migrations
-    uv run nox -s migrations_check              # makemigrations --check
-    uv run nox -s markdown_lint                 # rumdl + lychee + vale
-    uv run nox -s tests_matrix                  # tests on every Python
-    uv run nox -s tests_aa4                     # tests against AA 4.x stack
-    uv run nox -s mutation                      # cosmic-ray mutation sweep
-    uv run nox -s mutation_parallel -- 4        # parallel workers (resume)
-    uv run nox -s mutation_parallel -- --reinit 8  # fresh sweep, N workers
-    uv run nox -s mutation_html                 # render mutation report
     AA_USE_FAKE_REDIS=0 uv run nox -s tests     # run against real Redis
 """
 
@@ -184,6 +175,8 @@ def audit(session: nox.Session) -> None:
       ESI flow is the only consumer. Revisit when django-esi migrates
       off python-jose (tracked upstream).
     """
+    # TODO(2026-Q4): drop PYSEC-2025-185 suppression once django-esi
+    # migrates off python-jose; revisit upstream status next quarter.
     ignored = ["--ignore-vuln", "PYSEC-2025-185"]
     session.run("pip-audit", *ignored, *session.posargs)
 
