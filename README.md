@@ -237,6 +237,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `OAUTH2_PROVIDER_APPLICATION_MODEL` | `"allianceauth_oidc.AllianceAuthApplication"` | **Required.** Without this the state / group access policy is silently bypassed. Set as a top-level Django setting, not inside `OAUTH2_PROVIDER`. |
 | `OIDC_ENABLED` | `True` | **Required.** Turns on DOT's OIDC layer (discovery, JWKS, id_token signing). |
 | `OIDC_RSA_PRIVATE_KEY` | `Path("/path/to/key").read_text()` | **Required.** RSA key DOT uses to sign id_tokens. See [DOT docs](https://django-oauth-toolkit.readthedocs.io/en/stable/oidc.html#creating-rsa-private-key) for generation. |
+| `OIDC_RSA_PRIVATE_KEYS_INACTIVE` | `[]` (or list of retiring PEMs) | Optional. PEMs of previously-active signing keys still published in JWKS so already-issued tokens validate during the rotation window. Used by `manage.py oidc_jwks_rotate` workflow: mint a fresh key with the command, append the old PEM here, swap `OIDC_RSA_PRIVATE_KEY` to the new one, drop entries from this list after `ACCESS_TOKEN_EXPIRE_SECONDS + clockTolerance` has elapsed. |
 | `OAUTH2_VALIDATOR_CLASS` | `"allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"` | **Required.** Implements the three-layer policy and AA-specific claims. |
 | `APPLICATION_ADMIN_CLASS` | `"allianceauth_oidc.admin.ApplicationAdmin"` | **Required.** AA-aware admin for the custom `Application` model. |
 | `SCOPES` | `{"openid": "...", "email": "...", "profile": "..."}` | **Required.** Scopes shown on the consent screen. Strings are user-facing labels. |
@@ -247,7 +248,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. **Do not copy the test-suite literal `60`** — that value is test-only (used by `tests/test_settingsAA4.py` to exercise expiry paths without sleeps) and races against real RP login flows that need at least one /userinfo round-trip plus client-side `clockTolerance` (~5 s). The `passport-openidconnect` strategy used by Wiki.js, Outline, and similar reject sub-minute lifetimes outright. `3600` (1 hour) matches the production defaults of Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
 | `OIDC_ISS_ENDPOINT` | unset | **Required when ANY application has `backchannel_logout_uri` set.** Absolute issuer URL (e.g. `"https://auth.example.org/o"`). The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime — `oidc_issuer(None)` falls through to this setting. A Django system check (`allianceauth_oidc.E001`) fires at `manage.py check` if a back-channel logout is configured without this setting; CI fails loudly instead of crashing the first end-user logout. See [OIDC Back-Channel Logout 1.0](docs/BACK_CHANNEL_LOGOUT.md). |
-| `OIDC_RP_INITIATED_LOGOUT_ENABLED` | `True` (default-on) | OIDC RP-Initiated Logout 1.0 — `/o/logout/` + `end_session_endpoint` in discovery. DOT's upstream default is `False`; the AppConfig's `_apply_default_oauth2_provider_settings` flips it to `True` only when the key is absent, so an explicit `False` opt-out is preserved. Pair with `OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT` (DOT default `True`) — DOT renders `oauth2_provider/logout_confirm.html` on logout requests; set to `False` to skip the confirm step for headless flows. |
+| `OIDC_RP_INITIATED_LOGOUT_ENABLED` | `True` (default-on) | OIDC RP-Initiated Logout 1.0 — `/o/logout/` + `end_session_endpoint` in discovery. DOT's upstream default is `False`; the AppConfig's `_apply_default_oauth2_provider_settings` flips it to `True` only when the key is absent, so an explicit `False` opt-out is preserved. Pair with `OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT` (DOT default `True`) — DOT renders `oauth2_provider/logout_confirm.html` on logout requests; this app ships an AA-themed override under `allianceauth_oidc/templates/allianceauth_oidc/logout_confirm.html` (resolved by Django via template precedence). Set the prompt setting to `False` to skip the confirm step for headless flows. |
 
 ### Custom settings (ALLIANCEAUTH_OIDC_*)
 
@@ -265,6 +266,9 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `ALLIANCEAUTH_OIDC_JWT_SIZE_WARN_BYTES` | `4096` | Soft size guard for issued JWT access tokens. The generator emits `logger.warning` if a token exceeds this length (likely cause: a fixture user with hundreds of groups). The token is **not** mutated or rejected — operators decide whether to slim claims, raise upstream proxy `Authorization`-header limits (Apache `LimitRequestFieldSize`, nginx `large_client_header_buffers`, HAProxy `tune.bufsize`), or reduce group churn. Effective only under JWT mode. |
 | `ALLIANCEAUTH_OIDC_POLICY_URI` | unset | OIDC Discovery 1.0 §3 `op_policy_uri`. Absolute URL of the Authorization Server's privacy policy; surfaced in `.well-known/openid-configuration` when set. Some compliance frameworks (GDPR Art. 13, NIS2) require RPs to link back to AS-side privacy policies — advertising the URL here lets RP login pages auto-link without per-RP static configuration. Omit the key (or set to empty string) to leave it out of discovery. |
 | `ALLIANCEAUTH_OIDC_TOS_URI` | unset | OIDC Discovery 1.0 §3 `op_tos_uri`. Absolute URL of the Authorization Server's terms-of-service page; surfaced in `.well-known/openid-configuration` when set. Independent from `ALLIANCEAUTH_OIDC_POLICY_URI` — emit either or both. Omit the key (or set to empty string) to leave it out of discovery. |
+| `ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS` | `False` | Persist successful back-channel-logout attempts to `BackChannelLogoutAttempt` in addition to failures. Default keeps the table strictly a dead-letter store (failures only) — flip to `True` when SIEM needs proof-of-delivery rows. Failures are always recorded regardless. |
+| `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE` | `False` | Bypass the private / loopback / link-local / multicast / CGNAT DNS gate (both admin-save and worker dispatch-time re-check) on `backchannel_logout_uri`. Required for dev / staging against RPs on `192.168.x.x`, `10.x.x.x`, k8s overlay, etc. With `DEBUG=False` raises `W005`; with `DEBUG=True` stays quiet. See [Local testing on a private network](#local-testing-on-a-private-network). |
+| `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION` | `False` | Production-only acknowledgement that pairing `DEBUG=False` with `_LOGOUT_URI_ALLOW_PRIVATE=True` is intentional. Without this opt-in, the same combination triggers `E006` and `manage.py check` fails — a safety net so dev-time SSRF-bypass settings don't leak into prod by accident. |
 
 ### Periodic cleanup of expired tokens (Celery Beat)
 
@@ -283,6 +287,39 @@ CELERYBEAT_SCHEDULE["allianceauth_oidc_clear_expired_tokens"] = {
 The task is idempotent (deletes only already-expired rows); broker authentication is the defence
 against unauthorised re-runs.
 
+### Observability — Prometheus metrics
+
+The provider ships an **opt-in** Prometheus surface that cooperates with
+[`django-prometheus`](https://github.com/korfuri/django-prometheus). Operators install the
+extra to activate it:
+
+```sh
+pip install allianceauth-oidc-provider-eveo7[metrics]
+```
+
+Without the extra, the receiver chain still wires (every signal hits a no-op stub), so install
+or test paths are byte-identical with or without metrics enabled. The provider **never** mounts
+its own `/metrics` view or middleware — exposing the shared `prometheus_client.REGISTRY` is
+`django-prometheus`'s job; operators control where `/metrics` becomes reachable.
+
+All metric names use the `aa_oidc_*` prefix so a Grafana dashboard built around it cleanly
+composes with sibling AA modules that adopt the same convention. Published metrics:
+
+| Metric | Type | What it counts |
+|---|---|---|
+| `aa_oidc_tokens_issued_total` | Counter | Successful access/refresh/id-token issuances (labelled by `grant_type`, `format`) |
+| `aa_oidc_authorize_denied_total` | Counter | Authorize-endpoint rejections (labelled by `reason`) |
+| `aa_oidc_bcl_delivery_seconds` | Histogram | End-to-end latency of a BCL `logout_token` POST attempt |
+| `aa_oidc_bcl_dispatches_total` | Counter | BCL terminal-state outcomes (success / retry-exhausted / dead-letter) |
+| `aa_oidc_policy_rejections_total` | Counter | Three-layer policy denials (labelled by call-site: code / refresh / bearer / save) |
+| `aa_oidc_code_reuse_audit_misses_total` | Counter | Code-reuse audit-row inserts that lost a unique-index race |
+| `aa_oidc_code_audit_skipped_total` | Counter | Code-flow exchanges that proceeded without an audit row (skip path) |
+| `aa_oidc_tokens_cleaned_total` | Counter | Rows deleted by `clear_expired_tokens` (DOT tokens + audit GC) |
+| `aa_oidc_audit_receiver_failures_total` | Counter | Audit-receiver exceptions swallowed before they would have broken the signal chain |
+
+See [docs/METRICS.md](docs/METRICS.md) for the full contract: label cardinality, histogram
+bucket layout, the no-op stub API, and the cross-module `aa_<module>_*` namespacing rules.
+
 ## Reference
 
 ### Endpoints
@@ -296,6 +333,7 @@ against unauthorised re-runs.
 | JWKS | `/o/.well-known/jwks.json` | RFC 7517. Overridden in this app — adds `Access-Control-Allow-Origin: *` so browser-based RPs can fetch the JWKS. |
 | Token revocation | `/o/revoke_token/` | RFC 7009. DOT default. |
 | Token introspection | `/o/introspect/` | RFC 7662. Overridden in this app — adds per-app gating plus the `oidc_token_introspected` audit signal. |
+| Token management UI | `/o/authorized_tokens/` (+ `/o/authorized_tokens/<pk>/delete/`) | DOT default. Lets a signed-in user list and revoke their own outstanding tokens. No customisation needed; mounted as-is. |
 | RP-initiated logout | `/o/logout/` | DOT view; default-on via AppConfig (`OIDC_RP_INITIATED_LOGOUT_ENABLED=True` set if absent). |
 | Issuer (`iss` claim) | `https://your.host/o/` | Whatever your discovery URL resolves to. |
 
@@ -339,12 +377,22 @@ needs them in the id_token specifically must opt in via the OIDC `claims` reques
 `claims={"id_token": {"email": null, "groups": null}}`. This keeps id_tokens lean and avoids the
 "every claim everywhere" anti-pattern that breaks header / cookie size budgets.
 
-### Audit signal
+### Audit signals
 
-Every successful token-issuance fires the `oidc_token_issued` Django signal
-(`allianceauth_oidc.signals`). The default receiver writes a redacted audit log entry; connect
-your own receiver to forward to a SIEM, write to a separate audit table, or push into an alerting
-pipeline:
+`allianceauth_oidc.signals` exposes **five** Django signals (all wired
+`use_caching=True`). Default receivers are auto-connected in `AppConfig.ready()` under stable
+`dispatch_uid`s so test suites and operators can `disconnect()` them cleanly:
+
+| Signal | Fires on | Default receiver |
+|---|---|---|
+| `oidc_token_issued` | Every successful access/refresh/id token issuance | `audit_oidc_token_issued` |
+| `oidc_code_reuse_detected` | Replay of a previously-exchanged authorization code | `audit_oidc_code_reuse_detected` |
+| `oidc_token_introspected` | Every RFC 7662 introspection request | `audit_oidc_token_introspected` |
+| `oidc_logout_required` | A logout-relevant lifecycle event needs BCL fan-out (revoke / deactivate / group or state change / account delete) | (no audit receiver — consumed by the dispatch task) |
+| `oidc_logout_dispatched` | A back-channel `logout_token` POST attempt terminated (success, retry-exhausted, dead-letter) | `record_backchannel_logout_attempt` |
+
+Connect your own receivers to forward to a SIEM, write to a separate audit table, or push into
+an alerting pipeline:
 
 ```python
 from django.dispatch import receiver
@@ -386,7 +434,9 @@ def forward_introspect_sampled(sender, *, request, introspector, body, **kwargs)
 `oidc_token_issued` and `oidc_code_reuse_detected` are low-rate (issuance and an actual reuse
 incident respectively) — pass-through is fine for both.
 
-### Code-reuse audit table
+### Audit tables
+
+#### Code-reuse audit table
 
 RFC 6749 §10.5 SHOULD-clause defence-in-depth: every successful authorization-code exchange
 writes a row to `IssuedCodeAudit` (`code_hash`, `application`, `application_client_id_snapshot`,
@@ -409,6 +459,22 @@ populated at row insert and survives admin-driven RP deletion (the `application`
 The `oidc_code_reuse_detected` signal also fires on every replay, so SIEM correlation works
 in real time without polling the table. Connect a custom receiver under a unique
 `dispatch_uid` to route reuse events through the alerting pipeline.
+
+#### Back-channel logout audit table
+
+`BackChannelLogoutAttempt` is the dead-letter / proof-of-delivery store for the BCL dispatcher.
+Columns: `application` (FK, `SET_NULL`), `application_client_id_snapshot`,
+`application_name_snapshot`, `user_pk`, `jti`, `success`, `attempt_count`, `reason`,
+`created_at`. The snapshot columns survive admin-driven RP deletion, so per-RP forensic queries
+on historical rows keep working. Visible in `/admin/` under "Back channel logout attempts".
+
+By default only **failed** attempts land here — the table is strictly a dead-letter store. Set
+`ALLIANCEAUTH_OIDC_BCL_AUDIT_SUCCESS=True` to also persist successful deliveries (proof-of-fan-out
+for SIEM). The `oidc_logout_dispatched` signal fires on every terminal attempt regardless, so
+real-time SIEM correlation works without polling.
+
+See [docs/BACK_CHANNEL_LOGOUT.md](docs/BACK_CHANNEL_LOGOUT.md) for the retry / dead-letter
+contract.
 
 ### Application fields
 
@@ -438,7 +504,7 @@ accept `--format=table|json|csv` where output is structured; destructive command
 | `oidc_rotate_secret` | Rotate `client_secret` on an existing app. Existing tokens stay valid until expiry. | yes | `--client-id`, `--dry-run` |
 | `oidc_revoke_user_tokens` | Revoke every active access + refresh token for a user (off-boarding, compromise response). Idempotent. | yes | `--username`, `--reason`, `--dry-run` |
 | `oidc_audit_tokens` | Read-only listing of active tokens. | no | `--username`, `--client-id`, `--include-expired` |
-| `oidc_jwks_rotate` | Rotate the JWKS signing key — generate a fresh RSA key, retire the current active one. Rows pinned to the old `signing_kid` keep producing byte-identical retries until they expire. | yes | `--dry-run` |
+| `oidc_jwks_rotate` | Mint a fresh RSA private key for JWKS rotation; prints PEM + RFC 7638 thumbprint (`kid`) + a four-step rotation recipe. **Read-only** — never touches settings or DB; operator wires the new PEM into `OIDC_RSA_PRIVATE_KEY` and moves the previous one into `OIDC_RSA_PRIVATE_KEYS_INACTIVE` manually. | no | `--out`, `--key-size` |
 | `oidc_show_effective_policy` | Inspect the per-app state / group whitelist as it evaluates against a given user, including the global gate. Useful when triaging an unexpected `invalid_grant`. | no | `--username`, `--client-id` |
 
 ```sh
@@ -790,6 +856,21 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 | `makemigrations` | generate Django migrations under test settings | no |
 | `integration` | wire-level mock-RP via `LiveServerTestCase` | no |
 | `conformance` | OIDC Conformance Suite via docker-compose | no |
+| `preflight` | `lint` + `typecheck` + `tests` + `migrations_check` in one go (pre-PR gate) | no |
+| `tests_matrix` | Run the suite across every supported Python (off-lock, uv venv) | no |
+| `tests_aa4` | Run the suite against the Alliance Auth 4.x stack | no |
+| `tests_compat` | Run the suite against an arbitrary `allianceauth` pin | no |
+| `migrations_check` | Verify migrations are in sync and free of unsafe operations | no |
+| `actions_lint` | Lint GitHub Actions workflows (`actionlint`) | no |
+| `diagrams` | Render diagram-as-code under `assets/diagrams/` to SVG | no |
+| `verify_wheel` | Build the wheel into a tempdir and audit its file inventory | no |
+| `mutation` | Cosmic-ray mutation testing over production modules | no |
+| `mutation_parallel` | Resume a partial cosmic-ray sweep with N isolated workers | no |
+| `mutation_html` | Render the cosmic-ray HTML report from `mutation.sqlite` | no |
+| `mutation_check` | Gate CI on the mutation survival rate of `mutation.sqlite` | no |
+
+The `mutation*` sessions have their own setup / resume / report-rendering recipe in
+[docs/mutation-testing.md](docs/mutation-testing.md).
 
 ### Integration tests (`nox -s integration`)
 

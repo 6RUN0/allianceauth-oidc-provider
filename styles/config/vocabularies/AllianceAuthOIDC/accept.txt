@@ -180,6 +180,11 @@ vale
 actionlint
 zizmor
 envs
+venv
+tempdir
+PEMs
+issuances
+namespacing
 Makefile
 argparse
 repo
