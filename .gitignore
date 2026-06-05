@@ -143,6 +143,7 @@ desktop.ini
 .omc/
 .omx/
 .claude/
+.codegraph/
 
 # Vale: ``styles/`` holds project-shipped vocabularies under
 # ``config/vocabularies/`` (committed) plus any external packages

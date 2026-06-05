@@ -256,3 +256,22 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
   state/group/active/debug_mode set, the schema now also carries `pkce_required`,
   `access_token_format`, `backchannel_logout_uri`, `backchannel_logout_on_revoke_only`,
   `logo_url`, `allowed_origins`, plus the `IssuedCodeAudit` and `BackChannelLogoutAttempt` tables.
+
+## Tooling (MCP)
+
+Prefer these MCP servers over ad-hoc grep/read loops or manual note-taking. `codegraph`
+is wired in this repo's `.mcp.json`; `agentmemory` is provided by the environment's MCP
+setup (not committed here):
+
+- **`codegraph`** — code-intelligence over a pre-built SQLite knowledge graph of every
+  symbol, edge, and file. Consult it **before** writing or editing code. For "how does X
+  work", architecture, trace, where-is-X, or impact ("what would changing this break")
+  questions, query codegraph directly — usually one `codegraph_explore` call returns the
+  verbatim source grouped by file. Use `codegraph_callers` / `codegraph_callees` /
+  `codegraph_impact` for the three-layer policy enforcement and DOT validator call chains,
+  where dynamic dispatch makes grep unreliable. The index lags writes by ~1s.
+- **`agentmemory`** — persistent cross-session memory. Recall relevant lessons at the start
+  of non-trivial work (`memory_recall` / `memory_lesson_recall`) and save durable findings
+  (`memory_save` / `memory_lesson_save`) — e.g. release-flow constraints, the
+  fakeredis/test-settings boot order, or DOT-version migration gotchas — so they survive
+  context resets. Keep secrets and unrelated-project details out of saved memories.
