@@ -19,6 +19,9 @@ on import):
   the shipped ``.po`` / ``.pot`` / ``.mo`` catalogues).
 * ``_nox.matrix`` — cross-version test matrices (``tests_matrix``,
   ``tests_aa4``, ``tests_compat``).
+* ``_nox.migrations`` — the migration toolchain (``makemigrations``,
+  ``migrations_check``, and the ``migrations_concurrency_check``
+  online-DDL gate over raw ``RunSQL`` operations).
 * ``_nox.mutation`` — cosmic-ray mutation-testing lifecycle
   (``mutation``, ``mutation_parallel``, ``mutation_html``,
   ``mutation_check``).
@@ -34,6 +37,10 @@ above as standalone scripts or imported as plain Python):
   ``tests_matrix`` / ``tests_aa4`` / ``tests_compat`` sessions.
   Dependency-free of the nox runtime, so its token-order contract is
   unit-tested in ``tests/unit/test_nox_testing.py``.
+* ``_nox._migration_scan`` — pure AST scanner backing
+  ``migrations_concurrency_check`` (flags blocking raw ``RunSQL`` DDL).
+  Imports neither nox nor Django, so its classification logic is
+  unit-tested in ``tests/unit/test_nox_migration_scan.py``.
 * ``_nox.cr_filter_annotations`` — AST-based ``# pragma: no mutate``
   filter for cosmic-ray configs; invoked from ``mutation`` /
   ``mutation_parallel`` reinit branches.

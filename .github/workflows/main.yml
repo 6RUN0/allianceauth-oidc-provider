@@ -123,6 +123,15 @@ jobs:
         # error inside the longer test matrix.
         run: uv run nox -s migrations_check
 
+      - name: Check migrations for blocking raw DDL
+        # MySQL/MariaDB online-DDL gate over raw ``RunSQL`` operations:
+        # a pure-AST scan (no Django boot) that flags an ``ALTER TABLE``
+        # / ``CREATE INDEX`` without ``ALGORITHM=INPLACE, LOCK=NONE``.
+        # Disjoint from ``migrations_check`` above, which runs
+        # ``django-migration-linter`` over ORM operations but cannot read
+        # raw SQL. See ``_nox/_migration_scan.py``.
+        run: uv run nox -s migrations_concurrency_check
+
       - name: Install GNU gettext
         # ``messages_check`` shells out to ``msgfmt`` / ``msgcomm`` /
         # ``msgunfmt`` (GNU gettext) to validate the shipped catalogues.

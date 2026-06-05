@@ -36,10 +36,10 @@ import _nox.conformance
 import _nox.dist
 import _nox.i18n
 import _nox.matrix
+import _nox.migrations
 import _nox.mutation  # noqa: F401
 from _nox.shared import (
     TEST_ARGS_BASE,
-    TEST_SETTINGS,
     resolve_test_labels,
     test_env,
 )
@@ -70,16 +70,16 @@ def lint(session: nox.Session) -> None:
 @nox.session
 def preflight(session: nox.Session) -> None:
     """
-    Run lint + typecheck + tests + migrations_check + messages_check
+    Run lint + typecheck + tests + the migration gates + messages_check
     sequentially.
 
     The default ``uv run nox`` session set is ``lint + tests`` (fast
     local feedback loop). ``preflight`` is the heavier "ready to push"
-    pass that also enforces the type signature, the migrations sync, and
-    locale-catalogue integrity — the same set CI would otherwise run as
-    separate jobs. ``messages_check`` ``skip``s locally when GNU gettext
-    is absent, so it never blocks a push from a machine without the
-    toolchain.
+    pass that also enforces the type signature, the migrations sync and
+    raw-DDL concurrency, and locale-catalogue integrity — the same set
+    CI would otherwise run as separate jobs. ``messages_check`` ``skip``s
+    locally when GNU gettext is absent, so it never blocks a push from a
+    machine without the toolchain.
 
     Sessions are notified, not invoked inline, so nox stops at the
     first failure (a typecheck regression should not get masked by
@@ -89,10 +89,12 @@ def preflight(session: nox.Session) -> None:
     session.notify("typecheck")
     session.notify("tests")
     session.notify("migrations_check")
+    session.notify("migrations_concurrency_check")
     session.notify("messages_check")
     session.log(
         "preflight queued: lint -> typecheck -> tests -> "
-        "migrations_check -> messages_check"
+        "migrations_check -> migrations_concurrency_check -> "
+        "messages_check"
     )
 
 
@@ -336,80 +338,6 @@ def diagrams(session: nox.Session) -> None:
             str(out),
             external=True,
         )
-
-
-@nox.session
-def makemigrations(session: nox.Session) -> None:
-    """
-    Generate Django migrations for the ``allianceauth_oidc`` app.
-
-    Runs Django's ``makemigrations`` against the test settings module
-    so AA + DOT are wired up the same way they are in the test suite.
-    Pass extra args via ``--``: e.g.::
-
-        uv run nox -s makemigrations -- --name rename_logo_url --dry-run
-        uv run nox -s makemigrations -- --check
-
-    Resulting files land in ``allianceauth_oidc/migrations/`` and
-    should be reviewed before commit.
-    """
-    session.run(
-        "python",
-        "-m",
-        "django",
-        "makemigrations",
-        "allianceauth_oidc",
-        f"--settings={TEST_SETTINGS}",
-        *session.posargs,
-        env=test_env(session),
-    )
-
-
-@nox.session
-def migrations_check(session: nox.Session) -> None:
-    """
-    Verify migrations are in sync and free of unsafe operations.
-
-    Two checks run in sequence:
-
-    1. ``makemigrations --check --dry-run`` — writes nothing, exits
-       non-zero if the model layer would generate a fresh migration.
-       Catches an out-of-sync model change before it reaches CI.
-    2. ``django-migration-linter`` (lintmigrations) — flags unsafe
-       operations such as irreversible column drops, ``NOT NULL``
-       additions without defaults, renames that break running
-       deployments. Run via ``uv run --with`` so the linter does
-       not pollute the dev dependency group; the dedicated settings
-       module ``tests.test_settings_migration_linter`` pins ten
-       pre-existing migrations as baseline so the gate fires only on
-       new findings.
-    """
-    session.run(
-        "python",
-        "-m",
-        "django",
-        "makemigrations",
-        "allianceauth_oidc",
-        "--check",
-        "--dry-run",
-        f"--settings={TEST_SETTINGS}",
-        env=test_env(session),
-    )
-    session.run(
-        "uv",
-        "run",
-        "--with",
-        "django-migration-linter",
-        "python",
-        "-m",
-        "django",
-        "lintmigrations",
-        "--include-apps",
-        "allianceauth_oidc",
-        "--settings=tests.test_settings_migration_linter",
-        env=test_env(session),
-        external=True,
-    )
 
 
 @nox.session
