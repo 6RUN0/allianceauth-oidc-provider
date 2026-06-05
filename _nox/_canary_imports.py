@@ -43,9 +43,18 @@ def main() -> int:
     django.setup()
 
     errors: list[str] = []
-    module_stems = sorted(p.stem for p in tests_dir.glob("test_*.py"))
-    for stem in module_stems:
-        name = f"tests.{stem}"
+    # Top-level suite modules plus the ORM-free unit tier under
+    # tests/unit/. ``tests/conformance/`` is deliberately excluded — its
+    # modules pull docker/orchestration deps the off-lock test venv does
+    # not (and should not) provision. The dotted module name is derived
+    # from the path relative to the repo root so a sub-package module
+    # (``tests/unit/test_x.py``) resolves to ``tests.unit.test_x`` rather
+    # than a bare ``tests.test_x``.
+    paths = sorted(
+        [*tests_dir.glob("test_*.py"), *tests_dir.glob("unit/test_*.py")]
+    )
+    for path in paths:
+        name = ".".join(path.relative_to(repo_root).with_suffix("").parts)
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001
@@ -61,10 +70,7 @@ def main() -> int:
         print("\n".join(errors), file=sys.stderr)
         return 1
 
-    print(
-        f"canary OK: {len(module_stems)} tests/test_*.py "
-        "modules importable in this venv"
-    )
+    print(f"canary OK: {len(paths)} test modules importable in this venv")
     return 0
 
 

@@ -26,10 +26,16 @@ above as standalone scripts or imported as plain Python):
 * ``_nox.shared`` — constants and helpers shared across noxfile.py
   and the session submodules (test settings, base argv, interpreter
   matrices, env builder, ``resolve_test_labels``).
+* ``_nox._testing`` — pure argv builder (``TestPlan`` ->
+  ``build_django_test_argv`` / ``build_canary_argv``) backing the
+  ``tests_matrix`` / ``tests_aa4`` / ``tests_compat`` sessions.
+  Dependency-free of the nox runtime, so its token-order contract is
+  unit-tested in ``tests/unit/test_nox_testing.py``.
 * ``_nox.cr_filter_annotations`` — AST-based ``# pragma: no mutate``
   filter for cosmic-ray configs; invoked from ``mutation`` /
   ``mutation_parallel`` reinit branches.
 * ``_nox._canary_imports`` — import-canary helper run before the
-  Django test loader in off-lock matrix sessions; catches
-  ``TEST_RUNTIME_DEPS`` drift cheaply.
+  Django test loader in off-lock matrix sessions; sweeps the top-level
+  suite plus the ``tests/unit/`` tier and catches missing-dependency
+  drift cheaply.
 """
