@@ -251,11 +251,25 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
   configured; new user-facing strings need to be wrapped in `gettext`.
 - **Migrations**: the migration set on `AllianceAuthApplication` grows over time — count
   `allianceauth_oidc/migrations/0*.py` rather than relying on a hard-coded number in this file
-  (which decays whenever a field is added). DOT periodically alters its `AbstractApplication`,
-  so new migrations may be needed when bumping the DOT version. Beyond the original
+  (which decays whenever a field is added). Beyond the original
   state/group/active/debug_mode set, the schema now also carries `pkce_required`,
   `access_token_format`, `backchannel_logout_uri`, `backchannel_logout_on_revoke_only`,
   `logo_url`, `allowed_origins`, plus the `IssuedCodeAudit` and `BackChannelLogoutAttempt` tables.
+- **Inherited-field drift across DOT versions**: `AllianceAuthApplication` subclasses DOT's
+  *abstract* `AbstractApplication`, so every inherited field — including ones the app never
+  touches, like `client_secret` — is materialised into this app's own migration history
+  (`0001`). DOT reworks those field definitions between releases (e.g. 3.2 → 3.3 changed
+  `client_secret`'s `help_text`), and because the project supports a *range*
+  (`django-oauth-toolkit>=3.2,<4`), the off-lock `tests_aa4` session installs the newest DOT
+  while the locked stack stays on the older one. That mismatch makes `makemigrations --check`
+  dirty on whichever DOT version differs from the one that froze the migration — surfaced as a
+  CI failure in `tests.test_back_channel_logout.TestBackChannelLogoutModel
+  .test_makemigrations_check_dry_run_clean`. **Fix pattern**: override the drifting field on
+  `AllianceAuthApplication` with attributes mirroring the frozen `0001` state (see the
+  `client_secret` override in `models.py`). Pinning the field to the app makes the model state
+  identical across the whole DOT range, so no per-DOT-version migration is needed. Only reach for
+  a real `AlterField` migration when the inherited change is a genuine *schema* change (column
+  type / length / index), not a metadata-only one like `help_text`.
 
 ## Tooling (MCP)
 

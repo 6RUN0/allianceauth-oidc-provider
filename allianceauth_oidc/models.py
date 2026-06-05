@@ -15,7 +15,8 @@ from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from oauth2_provider.models import AbstractApplication
+from oauth2_provider.generators import generate_client_secret
+from oauth2_provider.models import AbstractApplication, ClientSecretField
 from typing_extensions import override
 
 from . import _dns_safety
@@ -48,6 +49,24 @@ ACCESS_TOKEN_FORMAT_CHOICES = [
 class AllianceAuthApplication(AbstractApplication):
     """OAuth2 Application restricted by Alliance Auth states and groups."""
 
+    # ``client_secret`` is inherited from the abstract DOT parent, so its
+    # full definition -- including ``help_text`` -- is baked into this
+    # app's migration history (0001). ``django-oauth-toolkit`` reworks the
+    # parent's ``help_text`` between releases (3.2 "Hashed on Save..." ->
+    # 3.3 "Client secret for authentication"), which makes
+    # ``makemigrations --check`` dirty on whichever DOT version differs
+    # from the one that froze 0001 -- caught by
+    # ``test_makemigrations_check_dry_run_clean``. Overriding the field
+    # pins its state to this app, keeping the model identical across the
+    # supported DOT range (>=3.2,<4). Attributes mirror 0001 verbatim so
+    # the override is schema-neutral.
+    client_secret = ClientSecretField(
+        blank=True,
+        db_index=True,
+        default=generate_client_secret,
+        help_text=_("Hashed on Save. Copy it now if this is a new secret."),
+        max_length=255,
+    )
     logo_url = models.URLField(
         max_length=1024,
         blank=True,

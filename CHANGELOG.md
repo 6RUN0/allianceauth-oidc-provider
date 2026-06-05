@@ -16,8 +16,22 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [0.3.2] - 2026-06-05
 
-A documentation-and-tooling release: no functional or wire-protocol
-changes since `0.3.1`. Operators upgrading from `0.3.1` need no action.
+No wire-protocol or runtime-behaviour changes since `0.3.1`; operators
+upgrading need no action. The one code change is a `django-oauth-toolkit`
+3.3 compatibility fix (model-state only, no schema migration).
+
+### Fixed
+
+- Compatibility with `django-oauth-toolkit` 3.3. DOT 3.3 reworked the
+  `help_text` of the inherited `client_secret` field on its abstract
+  `AbstractApplication`; because that field is materialised into this
+  app's `0001` migration, `makemigrations --check` went dirty under DOT
+  3.3 (caught by `test_makemigrations_check_dry_run_clean` on the
+  off-lock AA4 matrix). `AllianceAuthApplication` now overrides
+  `client_secret` with attributes mirroring the frozen `0001` state,
+  pinning the model so `makemigrations --check` stays clean across the
+  whole supported range (`>=3.2,<4`). Metadata-only change — no schema
+  migration and no database effect.
 
 ### Documentation
 
