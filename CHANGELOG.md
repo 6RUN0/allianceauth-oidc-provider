@@ -14,6 +14,35 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-05
+
+A documentation-and-tooling release: no functional or wire-protocol
+changes since `0.3.1`. Operators upgrading from `0.3.1` need no action.
+
+### Documentation
+
+- Close 14 README/code drifts found in a two-critic review. Operators
+  were missing the entire Prometheus surface, two of five audit signals,
+  and the dead-letter table — all shipped, none documented. Now covered:
+  the `[metrics]` extra and the nine `aa_oidc_*` metrics (linking
+  `docs/METRICS{,.ru}.md`), the `OIDC_RSA_PRIVATE_KEYS_INACTIVE` rotation
+  window, all five audit signals with their default receiver names (was
+  three), and the `BackChannelLogoutAttempt` dead-letter table. Three
+  BCL / private-network settings move into the main settings table,
+  `/o/authorized_tokens/` joins the endpoints table, and `README.ru.md`
+  reaches parity (`logo_url`, `backchannel_logout_uri`,
+  `backchannel_logout_on_revoke_only`).
+
+### Tooling
+
+- CI: the `pip-audit` job now runs `actions/checkout` before its local
+  composite `./.github/actions/setup` step. Local action references
+  resolve against files already on the runner, so without the checkout
+  the runner could not find `action.yml` and the job failed.
+- Dev: wire the `codegraph` code-intelligence MCP server via `.mcp.json`
+  (its `.codegraph/` index directory is git-ignored) and document the
+  `codegraph` / `agentmemory` MCP workflow in `CLAUDE.md`.
+
 ## [0.3.0] - 2026-05-21 [YANKED]
 
 Tagged but never published to PyPI. The release pipeline raced

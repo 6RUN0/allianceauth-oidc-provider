@@ -14,6 +14,38 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-05
+
+Релиз документации и инструментария: с `0.3.1` нет функциональных
+изменений и изменений wire-протокола. При обновлении с `0.3.1`
+действий со стороны оператора не требуется.
+
+### Документация
+
+- Закрыты 14 расхождений README и кода, найденных в ревью двумя
+  критиками. Операторам не хватало всего слоя Prometheus, двух из пяти
+  audit-сигналов и dead-letter-таблицы — всё это уже поставлялось, но не
+  было задокументировано. Теперь описаны: extra `[metrics]` и девять
+  метрик `aa_oidc_*` (со ссылкой на `docs/METRICS{,.ru}.md`), окно
+  ротации `OIDC_RSA_PRIVATE_KEYS_INACTIVE`, все пять audit-сигналов с
+  именами получателей по умолчанию (было три) и dead-letter-таблица
+  `BackChannelLogoutAttempt`. Три настройки BCL / приватной сети
+  перенесены в основную таблицу настроек, `/o/authorized_tokens/`
+  добавлен в таблицу эндпоинтов, а `README.ru.md` приведён к паритету
+  (`logo_url`, `backchannel_logout_uri`,
+  `backchannel_logout_on_revoke_only`).
+
+### Инструментарий
+
+- CI: задача `pip-audit` теперь выполняет `actions/checkout` перед
+  локальным composite-шагом `./.github/actions/setup`. Ссылки на
+  локальные action'ы разрешаются по файлам, уже выложенным на runner, —
+  без checkout'а runner не находил `action.yml` и задача падала.
+- Dev: подключён MCP-сервер code-intelligence `codegraph` через
+  `.mcp.json` (его каталог индекса `.codegraph/` добавлен в gitignore) и
+  задокументирован рабочий процесс MCP `codegraph` / `agentmemory` в
+  `CLAUDE.md`.
+
 ## [0.3.0] - 2026-05-21 [YANKED]
 
 Тэгнут, но не опубликован на PyPI. Release-pipeline race'нулся с

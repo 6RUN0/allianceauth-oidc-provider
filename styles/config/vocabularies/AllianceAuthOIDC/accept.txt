@@ -179,6 +179,8 @@ lychee
 vale
 actionlint
 zizmor
+codegraph
+agentmemory
 envs
 venv
 tempdir
