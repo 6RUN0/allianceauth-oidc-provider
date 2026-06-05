@@ -206,6 +206,53 @@ jobs:
             --markdown-report=diff-cover.md
           cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
 
+  mariadb:
+    # DB-backed smoke: run the suite against a real MariaDB (utf8mb4,
+    # ``mysql`` backend, online-DDL behaviour) instead of the
+    # sqlite-in-memory default, via the env contract in
+    # ``tests/_mariadb_container.py``. A single AA-5 cell on the newest
+    # interpreter keeps it a smoke rather than a full Python fan-out;
+    # ``AA_OIDC_TEST_DB_HOST`` points the session at the service below,
+    # so it reuses it and starts no ``testcontainers`` container.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mariadb:
+        # Pinned to a digest (not the bare ``11.4`` tag) for the same
+        # supply-chain reason the actions above are SHA-pinned; zizmor's
+        # ``unpinned-images`` audit enforces it. Refresh the digest when
+        # bumping the MariaDB minor.
+        image: mariadb:11.4@sha256:1b46b73d4b629022dfa29e6db3bb0d63b5df714fc3bfbe5057d63d76d8f6054b
+        env:
+          MARIADB_ROOT_PASSWORD: oidc  # pragma: allowlist secret
+          MARIADB_DATABASE: oidc
+        ports:
+          - 3306:3306
+        # ``healthcheck.sh`` ships in the mariadb image; gate the job's
+        # steps on it so the suite never races a half-initialised server.
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Run MariaDB smoke (AA5)
+        # The session sees ``AA_OIDC_TEST_DB_HOST`` already set, so it
+        # skips Docker / testcontainers and connects to the service on
+        # localhost (the ``ports:`` mapping publishes 3306 to the runner).
+        env:
+          AA_OIDC_TEST_DB: mariadb
+          AA_OIDC_TEST_DB_HOST: 127.0.0.1
+          AA_OIDC_TEST_DB_PORT: "3306"
+          AA_OIDC_TEST_DB_NAME: oidc
+          AA_OIDC_TEST_DB_USER: root
+          AA_OIDC_TEST_DB_PASSWORD: oidc  # pragma: allowlist secret
+        run: uv run nox -s "tests_mariadb(aa5)"
+
   package:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

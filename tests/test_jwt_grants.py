@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.test import override_settings
+from django.test import override_settings, tag
 
 from allianceauth_oidc.signals import oidc_token_issued
 
@@ -19,10 +19,12 @@ from ._jwt_helpers import (
     _opaque_mode_oauth2_provider,
     split_jwt,
 )
+from ._mariadb_container import MYSQL_WIDE_REFRESH_TOKEN_TAG
 from ._oidc_testcase import GrantedOIDCTestCase
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestAuditSignal(GrantedOIDCTestCase):
     """
     Verify ``oidc_token_issued`` payload includes ``format="jwt"`` so
@@ -163,6 +165,7 @@ class TestClientCredentials(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestPasswordGrant(GrantedOIDCTestCase):
     """
     Password grant under JWT mode: should produce a JWT with
@@ -213,6 +216,7 @@ class TestPasswordGrant(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestRefreshRotation(GrantedOIDCTestCase):
     """
     Refresh-token rotation under JWT mode: the rotated AT must also
@@ -235,6 +239,7 @@ class TestRefreshRotation(GrantedOIDCTestCase):
         self.assertEqual("RS256", header.get("alg"))
 
 
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestRefreshFormatFlip(GrantedOIDCTestCase):
     """
     Format-flip-on-refresh: tokens are issued anew per request, so
@@ -299,6 +304,7 @@ class TestBackcompatLifecycle(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestJWTRevocation(GrantedOIDCTestCase):
     """
     RFC 7009 ``/o/revoke_token/`` works on the persisted ``AccessToken``

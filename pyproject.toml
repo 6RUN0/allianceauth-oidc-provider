@@ -98,6 +98,13 @@ dev = [
     # input that broke without re-rolling.
     "hypothesis>=6.118",
     "mypy>=1.19",
+    # MariaDB/MySQL integration-test backend, opt-in via the
+    # ``AA_OIDC_TEST_DB`` env gate (see ``tests/_mariadb_container.py`` and
+    # the ``tests_mariadb`` session). ``mysqlclient`` is the DB driver the
+    # test process connects through; it builds against the libmariadb /
+    # libmysqlclient headers (``mariadb_config`` / ``mysql_config`` on
+    # PATH), which CI provisions with ``default-libmysqlclient-dev``.
+    "mysqlclient>=2.2",
     "nox>=2026.2.9",
     "parameterized>=0.9",
     "pip-audit>=2.10",
@@ -105,6 +112,12 @@ dev = [
     "pre-commit>=4.5.1",
     "requests>=2.32",
     "ruff>=0.15",
+    # Throwaway MariaDB for the ``tests_mariadb`` session: ``testcontainers``
+    # starts a disposable server in the nox-session (parent) process and
+    # the session exports its connection params as ``AA_OIDC_TEST_DB_*``.
+    # Needs a running Docker daemon; the gate degrades to a skip when one
+    # is absent so the default suite never depends on it.
+    "testcontainers[mysql]>=4.8",
     # Dead-code detector. Complements ruff F401 (unused imports) by also
     # finding unused functions, classes, and class attributes. ``min_confidence``
     # and Django ignore_names live in [tool.vulture].

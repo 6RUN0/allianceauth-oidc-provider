@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import os
 import pathlib
+import shutil
 import socket
+import subprocess
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -114,6 +116,30 @@ def is_ci() -> bool:
     (e.g. ``messages_check`` requires GNU gettext).
     """
     return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
+
+
+def is_docker_available() -> bool:
+    """
+    Return ``True`` when a usable Docker daemon is reachable.
+
+    Probes ``docker info`` (not just the binary on ``PATH``) because a
+    present client with a stopped daemon is the common local failure
+    mode. Used by container-backed sessions (e.g. ``tests_mariadb``) to
+    degrade to a ``session.skip`` rather than erroring out when Docker
+    is unavailable.
+    """
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:

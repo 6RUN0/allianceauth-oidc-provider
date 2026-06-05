@@ -55,6 +55,18 @@ runs:
         PY_VERSION: ${{ inputs.python-version }}
       run: uv python install "${PY_VERSION}"
 
+    - name: Install libmysqlclient headers (mysqlclient build dep)
+      # ``mysqlclient`` (dev group) ships no manylinux wheel, so every
+      # ``uv sync`` builds it from sdist and needs the libmariadb /
+      # libmysqlclient headers plus ``pkg-config`` on the runner. Gated
+      # on ``install-deps`` so a caller that skips the sync skips this too.
+      if: ${{ inputs.install-deps == 'true' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          default-libmysqlclient-dev pkg-config
+
     - name: Install dependencies
       if: ${{ inputs.install-deps == 'true' }}
       shell: bash

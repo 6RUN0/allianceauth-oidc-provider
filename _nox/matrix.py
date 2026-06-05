@@ -15,6 +15,9 @@ Python/AA version combinations the dev environment does not pin:
   ``allianceauth`` pin supplied via the ``AA_PIN`` env var (e.g. a beta
   / RC release, a point release between the two pinned matrices, or a
   downgrade test).
+* ``tests_mariadb`` — DB-backed smoke against a real MariaDB (one AA-5
+  and one AA-4 cell) instead of sqlite-in-memory, provisioned from a
+  ``testcontainers`` container locally or a CI ``services:`` server.
 
 All three render their command through the pure builder in
 ``_nox/_testing.py`` (``TestPlan`` -> ``build_django_test_argv`` /
@@ -41,6 +44,7 @@ import os
 import nox
 
 from _nox._testing import (
+    MARIADB_SMOKE_PYTHON,
     TestPlan,
     build_canary_argv,
     build_django_test_argv,
@@ -49,6 +53,7 @@ from _nox.shared import (
     PYTHON_VERSIONS,
     PYTHON_VERSIONS_AA4,
     TEST_RUNTIME_DEPS,
+    is_docker_available,
     test_env,
 )
 
@@ -62,6 +67,15 @@ from _nox.shared import (
 # outweighs the per-CPU speedup. The default ``tests`` session keeps
 # ``--parallel=auto`` (locked stack, expected green).
 _MATRIX_PARALLEL = "1"
+
+# DB-backed smoke matrix: one ``(AA group, interpreter)`` cell each. The
+# AA 5 cell runs the newest interpreter; the AA 4 cell drops to the newest
+# AA-4-compatible one (AA 4.13.x caps ``requires-python`` below 3.13, so
+# ``MARIADB_SMOKE_PYTHON`` would not resolve an AA-4 venv).
+_MARIADB_CELLS = [
+    ("aa5", MARIADB_SMOKE_PYTHON),
+    ("aa4", PYTHON_VERSIONS_AA4[-1]),
+]
 
 
 @nox.session(venv_backend="none")
@@ -153,7 +167,66 @@ def tests_compat(session: nox.Session, python_version: str) -> None:
     _run_offlock(session, plan)
 
 
-def _run_offlock(session: nox.Session, plan: TestPlan) -> None:
+@nox.session(venv_backend="none")
+@nox.parametrize(
+    "aa_group, python_version",
+    _MARIADB_CELLS,
+    ids=[cell[0] for cell in _MARIADB_CELLS],
+)
+def tests_mariadb(
+    session: nox.Session, aa_group: str, python_version: str
+) -> None:
+    """
+    Run the suite against a real MariaDB instead of sqlite-in-memory.
+
+    Exercises the MySQL-family code paths (utf8mb4, ``mysql`` backend
+    quoting, online-DDL behaviour) the sqlite default never reaches.
+    Off-lock like the other matrices, with ``mysqlclient`` added to the
+    venv; ``--parallel=1`` because the single shared MariaDB cannot be
+    forked per worker the way sqlite-in-memory is.
+
+    Two cells only — ``tests_mariadb(aa5)`` / ``tests_mariadb(aa4)`` — so
+    the DB axis stays a smoke rather than a full Python fan-out. The
+    database comes from a throwaway ``testcontainers`` MariaDB locally, or
+    from ``AA_OIDC_TEST_DB_HOST`` when set (a CI ``services:`` server).
+    Skips cleanly when neither Docker nor an external server is available.
+    """
+    have_external = bool(os.environ.get("AA_OIDC_TEST_DB_HOST"))
+    if not have_external and not is_docker_available():
+        session.skip(
+            "tests_mariadb needs Docker (local throwaway container) or "
+            "AA_OIDC_TEST_DB_HOST pointing at a MariaDB server."
+        )
+
+    from tests._mariadb_container import (
+        MYSQL_WIDE_REFRESH_TOKEN_TAG,
+        mariadb_test_env,
+    )
+
+    # Exclude the JWT cases that persist a > 255-char refresh token into
+    # DOT's RefreshToken.token column, which overflows on MySQL/MariaDB
+    # until the column is widened (see docs/MARIADB.md). Passed as a
+    # leading ``--exclude-tag`` option ahead of any posarg test label.
+    labels = (
+        f"--exclude-tag={MYSQL_WIDE_REFRESH_TOKEN_TAG}",
+        *session.posargs,
+    )
+    plan = TestPlan(
+        python=python_version,
+        aa_group=aa_group,
+        extra_deps=(*TEST_RUNTIME_DEPS, "mysqlclient>=2.2"),
+        parallel=_MATRIX_PARALLEL,
+        labels=labels,
+    )
+    with mariadb_test_env() as db_env:
+        _run_offlock(session, plan, extra_env=db_env)
+
+
+def _run_offlock(
+    session: nox.Session,
+    plan: TestPlan,
+    extra_env: dict[str, str] | None = None,
+) -> None:
     """
     Run the import canary then the Django suite for an off-lock plan.
 
@@ -163,7 +236,12 @@ def _run_offlock(session: nox.Session, plan: TestPlan) -> None:
     reported as a list of broken module names rather than a
     unittest-loader traceback halfway through discovery. ``external=True``
     because ``uv`` lives outside the (``none``-backend) session venv.
+
+    ``extra_env`` augments the base test env (the ``tests_mariadb`` cell
+    threads the ``AA_OIDC_TEST_DB_*`` connection parameters through here).
     """
     env = test_env(session)
+    if extra_env:
+        env = {**env, **extra_env}
     session.run(*build_canary_argv(plan), env=env, external=True)
     session.run(*build_django_test_argv(plan), env=env, external=True)

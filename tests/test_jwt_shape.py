@@ -13,17 +13,22 @@ import json
 from types import SimpleNamespace
 
 from django.conf import settings as django_settings
-from django.test import TestCase, override_settings
+from django.test import TestCase, override_settings, tag
 
 from ._jwt_helpers import (
     _jwt_mode_oauth2_provider,
     _opaque_mode_oauth2_provider,
     split_jwt,
 )
-from ._oidc_testcase import SCOPE_FULL, GrantedOIDCTestCase
+from ._mariadb_container import MYSQL_WIDE_REFRESH_TOKEN_TAG
+from ._oidc_testcase import (
+    SCOPE_FULL,
+    GrantedOIDCTestCase,
+)
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestJWTAccessTokenShape(GrantedOIDCTestCase):
     """RFC 9068 §2.1 / §2.2 shape conformance for issued AT."""
 
@@ -85,6 +90,7 @@ class TestJWTAccessTokenShape(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestJWTClaimMatrix(GrantedOIDCTestCase):
     """
     Spec line 85 enforcement: AT and id_token claim sets are
@@ -129,6 +135,7 @@ class TestJWTClaimMatrix(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestSignatureVerification(GrantedOIDCTestCase):
     """
     End-to-end signature verification using ``jwcrypto`` against the
@@ -223,6 +230,7 @@ class TestForwardCompat(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestSizeGuard(GrantedOIDCTestCase):
     """
     The size-guard threshold is operator-configurable via
@@ -280,6 +288,7 @@ class TestSizeGuard(GrantedOIDCTestCase):
             )
 
 
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestKeyRotationOverlap(GrantedOIDCTestCase):
     """
     RFC 7517 / DOT key-rotation idiom: during the overlap window,

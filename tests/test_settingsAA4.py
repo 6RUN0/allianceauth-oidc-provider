@@ -108,3 +108,14 @@ OAUTH2_PROVIDER = {
     # required once any application registers a ``backchannel_logout_uri``.
     "OIDC_ISS_ENDPOINT": "https://auth.example.test/o",
 }
+
+# Opt-in MariaDB backend (see ``tests/_mariadb_container.py``). Off by
+# default: with ``AA_OIDC_TEST_DB`` unset this is a no-op that asserts the
+# inherited default is still sqlite, so the swap can never silently change
+# the backend. The ``tests_mariadb`` nox session sets the gate and the
+# connection env before invoking the runner.
+from tests._mariadb_container import (  # noqa: E402
+    apply_mariadb_database_if_enabled,
+)
+
+apply_mariadb_database_if_enabled(DATABASES)  # noqa: F405

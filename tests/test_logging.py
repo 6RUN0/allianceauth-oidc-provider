@@ -6,12 +6,13 @@ enabled.
 
 import logging
 
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings, tag
 from oauth2_provider.models import get_access_token_model
 
 from allianceauth_oidc.views_token import TokenView
 
 from ._jwt_helpers import _jwt_mode_oauth2_provider, split_jwt
+from ._mariadb_container import MYSQL_WIDE_REFRESH_TOKEN_TAG
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
@@ -157,6 +158,7 @@ class TestDebugLogging(GrantedOIDCTestCase):
 
 
 @override_settings(OAUTH2_PROVIDER=_jwt_mode_oauth2_provider())
+@tag(MYSQL_WIDE_REFRESH_TOKEN_TAG)
 class TestDebugLoggingJWTMode(GrantedOIDCTestCase):
     """
     Same no-leak contract as :class:`TestDebugLogging`, but exercised
