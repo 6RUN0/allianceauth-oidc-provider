@@ -67,19 +67,20 @@ jobs:
       - name: Run tests
         # ``tests`` is not nox-parametrised — it runs under whichever
         # Python ``uv sync`` provisioned. ``tests_aa4`` IS parametrised
-        # via ``@nox.session(python=PYTHON_VERSIONS_AA4)`` and bare
+        # via ``@nox.parametrize("python_version", ...)`` and bare
         # ``-s tests_aa4`` would fan out to every AA4 Python inside one
         # cell, hiding which interpreter failed. Selecting the explicit
-        # sub-session (``tests_aa4-<py>``) keeps one matrix cell = one
-        # interpreter. Matrix values are trusted (no PR-controlled
-        # input), but the env passthrough still keeps run-block hygiene
-        # aligned with release.yml's shell-injection guard pattern.
+        # sub-session (``tests_aa4(python_version='<py>')``) keeps one
+        # matrix cell = one interpreter. Matrix values are trusted (no
+        # PR-controlled input), but the env passthrough still keeps
+        # run-block hygiene aligned with release.yml's shell-injection
+        # guard pattern.
         env:
           AA_VERSION: ${{ matrix.aa-version }}
           PY_VERSION: ${{ matrix.python-version }}
         run: |
           if [ "$AA_VERSION" = "4" ]; then
-            uv run nox -s "tests_aa4-${PY_VERSION}"
+            uv run nox -s "tests_aa4(python_version='${PY_VERSION}')"
           else
             uv run nox -s tests
           fi
@@ -121,6 +122,24 @@ jobs:
         # in ~3s rather than masquerading as a confusing Django startup
         # error inside the longer test matrix.
         run: uv run nox -s migrations_check
+
+      - name: Install GNU gettext
+        # ``messages_check`` shells out to ``msgfmt`` / ``msgcomm`` /
+        # ``msgunfmt`` (GNU gettext) to validate the shipped catalogues.
+        # The session hard-fails in CI when the toolchain is absent
+        # (``_nox.shared.is_ci``), so install it before the step runs —
+        # ubuntu runner images do not ship gettext by default. Mirrors
+        # the install step the ``package`` job runs before
+        # ``compilemessages``.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+
+      - name: Check message catalogue integrity
+        # Format-string safety, ``.po`` <-> ``.pot`` structural parity,
+        # and ``.mo`` freshness across every shipped locale. Translation
+        # completeness is intentionally not gated (Transifex-driven).
+        run: uv run nox -s messages_check
 
       - name: Run linters (pre-commit)
         run: uv run nox -s lint

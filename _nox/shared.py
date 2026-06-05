@@ -14,6 +14,8 @@ than duplicating the values.
 
 from __future__ import annotations
 
+import os
+import pathlib
 import socket
 from typing import TYPE_CHECKING
 
@@ -44,6 +46,17 @@ TEST_ARGS_BASE = [
     "2",
     "--debug-mode",
 ]
+
+# Locales we ship translations for. ``en`` is the source language —
+# we keep the catalogue inside the tree because the Transifex config
+# (``.tx/transifex.yml``) treats it as the source-of-truth file. Add
+# new locales here as translations land; the lists are honoured by
+# ``makemessages`` (extract), ``compilemessages`` (compile), and the
+# ``messages_check`` integrity gate (all in ``_nox/i18n.py``).
+LOCALES = ["en", "ru", "uk"]
+
+# Package root — the locale tree lives under ``<PACKAGE_DIR>/locale``.
+PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
 
 # Per-version Python interpreters used by ``tests_matrix``. Mirrors
 # ``pyproject.toml::requires-python = ">=3.10,<3.14"``: 3.10 is the
@@ -88,6 +101,19 @@ TEST_RUNTIME_DEPS = [
     # AA4 venv built by ``uv pip install -e . --group aa4`` does not.
     "hypothesis>=6.118",
 ]
+
+
+def is_ci() -> bool:
+    """
+    Return ``True`` when running under a CI runner.
+
+    GitHub Actions (and most CI providers) set ``CI=true``; honour the
+    common truthy spellings. Used by gates that degrade to a local
+    ``session.skip`` when an optional system tool is absent but must
+    hard-fail in CI, where the tool is provisioned by an earlier step
+    (e.g. ``messages_check`` requires GNU gettext).
+    """
+    return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
 
 
 def resolve_test_labels(posargs: tuple[str, ...]) -> list[str]:

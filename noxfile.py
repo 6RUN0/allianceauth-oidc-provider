@@ -34,6 +34,7 @@ import nox
 # conformance suite, cross-version matrices) live in their own files.
 import _nox.conformance
 import _nox.dist
+import _nox.i18n
 import _nox.matrix
 import _nox.mutation  # noqa: F401
 from _nox.shared import (
@@ -59,14 +60,6 @@ nox.options.default_venv_backend = "none"
 # explicitly via ``--group aa4`` (off-lock) or by leaving ``aa5`` to
 # the lock's default resolution.
 
-# Locales we ship translations for. ``en`` is the source language —
-# we keep the catalogue inside the tree because the Transifex config
-# (``.tx/transifex.yml``) treats it as the source-of-truth file. Add
-# new locales here as translations land; the lists are honoured by
-# both ``makemessages`` (extract) and ``compilemessages`` (compile).
-LOCALES = ["en", "ru", "uk"]
-PACKAGE_DIR = pathlib.Path("allianceauth_oidc")
-
 
 @nox.session
 def lint(session: nox.Session) -> None:
@@ -77,12 +70,16 @@ def lint(session: nox.Session) -> None:
 @nox.session
 def preflight(session: nox.Session) -> None:
     """
-    Run lint + typecheck + tests + migrations_check sequentially.
+    Run lint + typecheck + tests + migrations_check + messages_check
+    sequentially.
 
     The default ``uv run nox`` session set is ``lint + tests`` (fast
     local feedback loop). ``preflight`` is the heavier "ready to push"
-    pass that also enforces the type signature and the migrations
-    sync — the same set CI would otherwise run as four jobs.
+    pass that also enforces the type signature, the migrations sync, and
+    locale-catalogue integrity — the same set CI would otherwise run as
+    separate jobs. ``messages_check`` ``skip``s locally when GNU gettext
+    is absent, so it never blocks a push from a machine without the
+    toolchain.
 
     Sessions are notified, not invoked inline, so nox stops at the
     first failure (a typecheck regression should not get masked by
@@ -92,8 +89,10 @@ def preflight(session: nox.Session) -> None:
     session.notify("typecheck")
     session.notify("tests")
     session.notify("migrations_check")
+    session.notify("messages_check")
     session.log(
-        "preflight queued: lint -> typecheck -> tests -> migrations_check"
+        "preflight queued: lint -> typecheck -> tests -> "
+        "migrations_check -> messages_check"
     )
 
 
@@ -179,46 +178,6 @@ def audit(session: nox.Session) -> None:
     # migrates off python-jose; revisit upstream status next quarter.
     ignored = ["--ignore-vuln", "PYSEC-2025-185"]
     session.run("pip-audit", *ignored, *session.posargs)
-
-
-@nox.session
-def makemessages(session: nox.Session) -> None:
-    """
-    Extract translatable strings into the locale tree.
-
-    Runs Django's ``makemessages`` once per locale, writing
-    ``locale/<locale>/LC_MESSAGES/django.po`` plus a top-level
-    ``django.pot`` template. ``--no-location`` keeps the .po diffs
-    stable (no ``source.py:42`` refs that churn on every refactor);
-    ``--keep-pot`` retains the template alongside the locale
-    catalogues for translation-platform workflows. Invoked from
-    inside ``allianceauth_oidc/`` so the catalogues land next to the
-    package source, not in the host AA project's ``LOCALE_PATHS``.
-    """
-    locale_dir = PACKAGE_DIR / "locale"
-    locale_dir.mkdir(exist_ok=True)
-    with session.chdir(PACKAGE_DIR):
-        for locale in LOCALES:
-            session.run(
-                "django-admin",
-                "makemessages",
-                "--locale",
-                locale,
-                "--no-location",
-                "--keep-pot",
-                env=test_env(session),
-            )
-
-
-@nox.session
-def compilemessages(session: nox.Session) -> None:
-    """Compile shipped ``.po`` catalogues into ``.mo`` binaries."""
-    with session.chdir(PACKAGE_DIR):
-        session.run(
-            "django-admin",
-            "compilemessages",
-            env=test_env(session),
-        )
 
 
 @nox.session

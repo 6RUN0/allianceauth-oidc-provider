@@ -14,6 +14,9 @@ on import):
 * ``_nox.dist`` — release-artefact gates (``verify_wheel``: audit the
   built wheel's file inventory against pinned must-have /
   must-not-have patterns).
+* ``_nox.i18n`` — the locale toolchain (``makemessages``,
+  ``compilemessages``, and the ``messages_check`` integrity gate over
+  the shipped ``.po`` / ``.pot`` / ``.mo`` catalogues).
 * ``_nox.matrix`` — cross-version test matrices (``tests_matrix``,
   ``tests_aa4``, ``tests_compat``).
 * ``_nox.mutation`` — cosmic-ray mutation-testing lifecycle
