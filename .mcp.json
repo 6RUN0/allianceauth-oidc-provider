@@ -1,12 +1,13 @@
 {
   "mcpServers": {
     "codegraph": {
-        "type": "stdio",
-        "command": "codegraph",
-        "args": [
-            "serve",
-            "--mcp"
-        ]
+      "type": "stdio",
+      "command": "codegraph",
+      "args": ["serve", "--mcp"]
+    },
+    "local_1mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:18050/mcp?tags=agentmemory"
     }
   }
 }

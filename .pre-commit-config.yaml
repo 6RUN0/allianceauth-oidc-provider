@@ -226,6 +226,23 @@ repos:
         files: ^(pyproject\.toml|uv\.lock)$
         args: ["lock", "--check"]
 
+  # Generated-Makefile drift detection. The Makefile is rendered from
+  # the ``TARGETS`` table in ``_nox/makefile.py``; this gate runs the
+  # three drift checks (content matches the render, every nox session
+  # has a target, no target names a dead session). Triggers on the
+  # Makefile, its generator / template, and any ``_nox`` / ``noxfile``
+  # change that could add or rename a session. See ``makefile_check``
+  # in noxfile.py.
+  - repo: local
+    hooks:
+      - id: makefile-check
+        name: makefile (generated; sync with nox sessions)
+        entry: uv
+        language: system
+        pass_filenames: false
+        files: ^(Makefile|noxfile\.py|_nox/.*\.py|_nox/Makefile\.tmpl)$
+        args: ["run", "nox", "-s", "makefile_check"]
+
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4
     hooks:

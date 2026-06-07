@@ -22,10 +22,12 @@ Examples::
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 
 import nox
+import nox.registry
 
 # Importing the submodules is enough to register their sessions with
 # nox — each ``@nox.session`` decorator runs at import time and adds
@@ -38,11 +40,24 @@ import _nox.i18n
 import _nox.matrix
 import _nox.migrations
 import _nox.mutation  # noqa: F401
+from _nox.makefile import (
+    TARGETS,
+    find_dangling_targets,
+    find_uncovered_sessions,
+    render_makefile,
+)
 from _nox.shared import (
     TEST_ARGS_BASE,
     resolve_test_labels,
     test_env,
 )
+
+# Path of the generated ``Makefile`` (repo root). The ``makefile``
+# session writes it; ``makefile_check`` diffs against it. ``_nox.makefile``
+# stays nox-free (so the off-lock test venvs can import its pure render /
+# diff logic) — the sessions that touch the filesystem and the live nox
+# registry live here.
+_MAKEFILE_PATH = pathlib.Path("Makefile")
 
 nox.options.sessions = ["lint", "tests"]
 # `none`: nox does not create its own venv; it runs sessions in the active
@@ -71,15 +86,15 @@ def lint(session: nox.Session) -> None:
 def preflight(session: nox.Session) -> None:
     """
     Run lint + typecheck + tests + the migration gates + messages_check
-    sequentially.
+    + makefile_check sequentially.
 
     The default ``uv run nox`` session set is ``lint + tests`` (fast
     local feedback loop). ``preflight`` is the heavier "ready to push"
     pass that also enforces the type signature, the migrations sync and
-    raw-DDL concurrency, and locale-catalogue integrity — the same set
-    CI would otherwise run as separate jobs. ``messages_check`` ``skip``s
-    locally when GNU gettext is absent, so it never blocks a push from a
-    machine without the toolchain.
+    raw-DDL concurrency, locale-catalogue integrity, and Makefile/session
+    sync — the same set CI would otherwise run as separate jobs.
+    ``messages_check`` ``skip``s locally when GNU gettext is absent, so it
+    never blocks a push from a machine without the toolchain.
 
     Sessions are notified, not invoked inline, so nox stops at the
     first failure (a typecheck regression should not get masked by
@@ -91,10 +106,11 @@ def preflight(session: nox.Session) -> None:
     session.notify("migrations_check")
     session.notify("migrations_concurrency_check")
     session.notify("messages_check")
+    session.notify("makefile_check")
     session.log(
         "preflight queued: lint -> typecheck -> tests -> "
         "migrations_check -> migrations_concurrency_check -> "
-        "messages_check"
+        "messages_check -> makefile_check"
     )
 
 
@@ -115,6 +131,35 @@ def tests(session: nox.Session) -> None:
         "test",
         *TEST_ARGS_BASE,
         "--parallel=auto",
+        *resolve_test_labels(tuple(session.posargs)),
+        env=test_env(session),
+    )
+
+
+@nox.session
+def tests_timing(session: nox.Session) -> None:
+    """
+    Run the suite single-process and report the slowest test cases.
+
+    Surfaces per-test wall-clock so a newly-slow test (an un-mocked
+    network call, a forgotten per-test fixture rebuild) is visible
+    before it bloats the whole suite. ``--durations=N`` is Django's
+    passthrough to unittest's duration reporting (N=0 for all); ``N``
+    comes from the ``OIDC_TIMING_DURATIONS`` env var (default 25).
+
+    Forced ``--parallel=1`` so the durations table is one clean
+    aggregate rather than one fragment per forked worker. A subset of
+    tests can still be passed after ``--`` like with ``tests``.
+    """
+    durations = os.environ.get("OIDC_TIMING_DURATIONS", "25")
+    session.run(
+        "python",
+        "-m",
+        "django",
+        "test",
+        *TEST_ARGS_BASE,
+        "--parallel=1",
+        f"--durations={durations}",
         *resolve_test_labels(tuple(session.posargs)),
         env=test_env(session),
     )
@@ -371,3 +416,72 @@ def integration(session: nox.Session) -> None:
         *labels,
         env=test_env(session),
     )
+
+
+@nox.session
+def makefile(session: nox.Session) -> None:
+    """
+    Regenerate ``./Makefile`` from the ``_nox/makefile.py`` table.
+
+    The Makefile is generated, not hand-edited: change a target's wiring
+    or help text in ``_nox.makefile.TARGETS`` (or add a target for a new
+    session) and run this session to rewrite the file. ``makefile_check``
+    gates the two staying in sync.
+    """
+    _MAKEFILE_PATH.write_text(render_makefile(), encoding="utf-8")
+    session.log(f"regenerated {_MAKEFILE_PATH} from _nox/makefile.py")
+
+
+@nox.session
+def makefile_check(session: nox.Session) -> None:
+    """
+    Gate the generated ``Makefile`` against the session registry.
+
+    Three independent drift checks, each reported together so one run
+    surfaces every problem:
+
+    #. **content** — the committed ``Makefile`` byte-matches
+       ``render_makefile()`` (else: someone hand-edited it, or forgot to
+       rerun ``nox -s makefile`` after editing the table).
+    #. **coverage** — every registered nox session is wrapped by a
+       target (else: a session was added with no ``make`` entry).
+    #. **dangling** — every target naming a session names a real one
+       (else: a session was renamed / removed and a target now points at
+       nothing).
+
+    The live session set comes from ``nox.registry`` (fully populated:
+    importing this noxfile imported every ``_nox`` session module); the
+    pure diff logic lives in the nox-free ``_nox.makefile``.
+    """
+    registered = set(nox.registry.get())
+    problems: list[str] = []
+
+    if not _MAKEFILE_PATH.exists():
+        problems.append(
+            f"{_MAKEFILE_PATH} is missing — run `uv run nox -s makefile`"
+        )
+    elif _MAKEFILE_PATH.read_text(encoding="utf-8") != render_makefile():
+        problems.append(
+            f"{_MAKEFILE_PATH} is out of sync with _nox/makefile.py — "
+            "run `uv run nox -s makefile`"
+        )
+
+    uncovered = find_uncovered_sessions(registered, TARGETS)
+    if uncovered:
+        problems.append(
+            "nox sessions with no Makefile target (add one to "
+            "_nox/makefile.py::TARGETS or SESSIONS_WITHOUT_TARGET): "
+            + ", ".join(sorted(uncovered))
+        )
+
+    dangling = find_dangling_targets(registered, TARGETS)
+    if dangling:
+        problems.append(
+            "Makefile targets naming a non-existent session "
+            "(fix the `session=` field in _nox/makefile.py::TARGETS): "
+            + ", ".join(sorted(dangling))
+        )
+
+    if problems:
+        session.error("\n".join(problems))
+    session.log("Makefile is in sync with the nox session registry")

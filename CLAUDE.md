@@ -20,8 +20,9 @@ runs it.
 ## Common commands
 
 The project uses `nox` (per-Python-version sessions against Django 4.2 and 5.2) plus a Makefile shim.
-Test data is loaded from Alliance Auth migrations, and Redis is replaced by `fakeredis` so no external
-services are required.
+The `Makefile` is **generated** from the `TARGETS` table in `_nox/makefile.py` (it is not
+hand-edited); see "Generated Makefile" under Conventions. Test data is loaded from Alliance Auth
+migrations, and Redis is replaced by `fakeredis` so no external services are required.
 
 ```sh
 # install dev environment (uv-managed venv + pre-commit)
@@ -44,6 +45,10 @@ AA_USE_FAKE_REDIS=0 uv run nox -s tests
 # type checking and coverage
 make typecheck                        # mypy + basedpyright
 make coverage                         # term + html + xml report
+make timing                           # slowest test cases (OIDC_TIMING_DURATIONS=N, default 25)
+
+# regenerate the Makefile after editing _nox/makefile.py::TARGETS
+make makefile                         # == uv run nox -s makefile (drift-gated by makefile_check)
 
 # pip-audit is opt-in (manual stage) because Alliance Auth pins old deps
 make audit                            # == uv run nox -s audit
@@ -249,6 +254,14 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
   access.
 - **Translations**: `allianceauth_oidc/locale/` + `.tx/transifex.yml`. The Transifex project is
   configured; new user-facing strings need to be wrapped in `gettext`.
+- **Generated Makefile**: the root `Makefile` is rendered from the `TARGETS` table in
+  `_nox/makefile.py` (kept nox-free so the off-lock test venvs can import its pure render / diff
+  logic; the `makefile` / `makefile_check` sessions live in `noxfile.py`). Never hand-edit the
+  `Makefile` — change the table and run `nox -s makefile`. The `makefile_check` gate (in
+  `preflight`, pre-commit, and the CI lint job) enforces three invariants: the committed file
+  matches the render, every registered nox session has a `make` target, and no target names a
+  session that no longer exists. So **adding a nox session means adding a `Target` to the table**
+  (or, rarely, listing it in `SESSIONS_WITHOUT_TARGET`) — otherwise the coverage gate fails.
 - **Migrations**: the migration set on `AllianceAuthApplication` grows over time — count
   `allianceauth_oidc/migrations/0*.py` rather than relying on a hard-coded number in this file
   (which decays whenever a field is added). Beyond the original

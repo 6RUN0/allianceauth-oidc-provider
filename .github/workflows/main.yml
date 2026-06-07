@@ -132,6 +132,15 @@ jobs:
         # raw SQL. See ``_nox/_migration_scan.py``.
         run: uv run nox -s migrations_concurrency_check
 
+      - name: Check the generated Makefile is in sync
+        # The Makefile is rendered from the ``TARGETS`` table in
+        # ``_nox/makefile.py``; this gate fails if the committed file
+        # drifted from the render, if a nox session has no ``make``
+        # target, or if a target names a session that no longer exists.
+        # Runs before pre-commit so a forgotten ``nox -s makefile`` fails
+        # fast with a targeted message. See ``_nox/makefile.py``.
+        run: uv run nox -s makefile_check
+
       - name: Install GNU gettext
         # ``messages_check`` shells out to ``msgfmt`` / ``msgcomm`` /
         # ``msgunfmt`` (GNU gettext) to validate the shipped catalogues.

@@ -41,6 +41,11 @@ above as standalone scripts or imported as plain Python):
   ``migrations_concurrency_check`` (flags blocking raw ``RunSQL`` DDL).
   Imports neither nox nor Django, so its classification logic is
   unit-tested in ``tests/unit/test_nox_migration_scan.py``.
+* ``_nox.makefile`` — single source of truth for the generated
+  ``Makefile`` (the ``TARGETS`` table, ``render_makefile``, and the two
+  drift detectors). nox-free, so its render / diff logic is unit-tested
+  in ``tests/unit/test_nox_makefile.py``; the ``makefile`` /
+  ``makefile_check`` sessions that drive it live in ``noxfile.py``.
 * ``_nox.cr_filter_annotations`` — AST-based ``# pragma: no mutate``
   filter for cosmic-ray configs; invoked from ``mutation`` /
   ``mutation_parallel`` reinit branches.

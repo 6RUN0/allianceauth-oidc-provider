@@ -870,20 +870,25 @@ api_url = https://<your.auth.url>/o/userinfo/
 | `lint` | pre-commit (ruff, mypy, basedpyright, …) | да |
 | `tests` | Django-тесты (параллельно) | да |
 | `coverage` | тесты + term / HTML / XML coverage | нет |
+| `tests_timing` | тесты в один процесс с отчётом о самых медленных кейсах (`--durations`) | нет |
 | `typecheck` | mypy + basedpyright (подмножество `lint`, отдельно — для быстрой обратной связи) | нет |
 | `audit` | pip-audit | нет |
 | `markdown_lint` | rumdl + lychee + vale (каждый инструмент опционален) | нет |
 | `makemessages` / `compilemessages` | i18n: обновление .po и компиляция в .mo | нет |
+| `messages_check` | гейт целостности каталогов `.po` / `.pot` / `.mo` | нет |
 | `makemigrations` | генерация миграций Django под тестовыми settings | нет |
 | `integration` | mock-RP по проводу через `LiveServerTestCase` | нет |
-| `conformance` | OIDC Conformance Suite через docker-compose | нет |
-| `preflight` | `lint` + `typecheck` + `tests` + `migrations_check` подряд (pre-PR-гейт) | нет |
+| `conformance` / `conformance_basic` | OIDC Conformance Suite через docker-compose | нет |
+| `preflight` | `lint` + `typecheck` + `tests` + гейты миграций / каталогов / Makefile подряд (pre-PR-гейт) | нет |
 | `tests_matrix` | прогон тестов по всем поддерживаемым Python (off-lock, uv venv) | нет |
 | `tests_aa4` | прогон тестов на стеке Alliance Auth 4.x | нет |
 | `tests_compat` | прогон тестов с произвольным пином `allianceauth` | нет |
+| `tests_mariadb` | прогон тестов на реальной MariaDB вместо sqlite (см. [docs/MARIADB.md](docs/MARIADB.md)) | нет |
 | `migrations_check` | проверка, что миграции согласованы и не содержат опасных операций | нет |
-| `actions_lint` | линт GitHub Actions workflows (`actionlint`) | нет |
+| `migrations_concurrency_check` | поиск блокирующего (не-online) DDL в сырых `RunSQL`-миграциях | нет |
+| `actions_lint` | линт GitHub Actions workflows (`actionlint` + `zizmor`) | нет |
 | `diagrams` | рендер diagram-as-code из `assets/diagrams/` в SVG | нет |
+| `makefile` / `makefile_check` | регенерация / drift-проверка `Makefile` по реестру сессий | нет |
 | `verify_wheel` | сборка wheel во временный каталог и аудит содержимого | нет |
 | `mutation` | мутационное тестирование production-модулей через cosmic-ray | нет |
 | `mutation_parallel` | возобновление частичного прогона cosmic-ray в N воркеров | нет |
@@ -892,6 +897,16 @@ api_url = https://<your.auth.url>/o/userinfo/
 
 У сессий `mutation*` свой setup / resume / report-rendering recipe в
 [docs/mutation-testing.md](docs/mutation-testing.md).
+
+### `Makefile` генерируется
+
+`Makefile` — тонкий шим над этими сессиями (`make test` → `nox -s tests` и т. д.); он
+**генерируется, а не правится руками**. Единственный источник истины — таблица `TARGETS` в
+[`_nox/makefile.py`](_nox/makefile.py); поменяйте таргет там (или добавьте новый под сессию) и
+перегенерируйте через `make makefile` (`nox -s makefile`). Гейт `makefile_check` — вшит в
+`preflight`, pre-commit и CI — держит их согласованными тремя проверками: закоммиченный файл
+совпадает с рендером, у каждой сессии nox есть `make`-таргет, и ни один таргет не ссылается на
+исчезнувшую сессию. Полный список целей — `make help`.
 
 ### Интеграционные тесты (`nox -s integration`)
 

@@ -849,20 +849,25 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 | `lint` | pre-commit (ruff, mypy, basedpyright, …) | yes |
 | `tests` | Django test suite (parallel) | yes |
 | `coverage` | tests + term / HTML / XML coverage reports | no |
+| `tests_timing` | tests single-process with the slowest-cases (`--durations`) report | no |
 | `typecheck` | mypy + basedpyright (subset of `lint`, run separately for fast feedback) | no |
 | `audit` | pip-audit | no |
 | `markdown_lint` | rumdl + lychee + vale (each tool optional) | no |
 | `makemessages` / `compilemessages` | i18n catalogue refresh + compile | no |
+| `messages_check` | `.po` / `.pot` / `.mo` catalogue integrity gate | no |
 | `makemigrations` | generate Django migrations under test settings | no |
 | `integration` | wire-level mock-RP via `LiveServerTestCase` | no |
-| `conformance` | OIDC Conformance Suite via docker-compose | no |
-| `preflight` | `lint` + `typecheck` + `tests` + `migrations_check` in one go (pre-PR gate) | no |
+| `conformance` / `conformance_basic` | OIDC Conformance Suite via docker-compose | no |
+| `preflight` | `lint` + `typecheck` + `tests` + the migration / messages / Makefile gates in one go (pre-PR gate) | no |
 | `tests_matrix` | Run the suite across every supported Python (off-lock, uv venv) | no |
 | `tests_aa4` | Run the suite against the Alliance Auth 4.x stack | no |
 | `tests_compat` | Run the suite against an arbitrary `allianceauth` pin | no |
+| `tests_mariadb` | Run the suite against a real MariaDB instead of sqlite (see [docs/MARIADB.md](docs/MARIADB.md)) | no |
 | `migrations_check` | Verify migrations are in sync and free of unsafe operations | no |
-| `actions_lint` | Lint GitHub Actions workflows (`actionlint`) | no |
+| `migrations_concurrency_check` | Scan raw `RunSQL` migrations for blocking (non-online) DDL | no |
+| `actions_lint` | Lint GitHub Actions workflows (`actionlint` + `zizmor`) | no |
 | `diagrams` | Render diagram-as-code under `assets/diagrams/` to SVG | no |
+| `makefile` / `makefile_check` | Regenerate / drift-check the `Makefile` against the session registry | no |
 | `verify_wheel` | Build the wheel into a tempdir and audit its file inventory | no |
 | `mutation` | Cosmic-ray mutation testing over production modules | no |
 | `mutation_parallel` | Resume a partial cosmic-ray sweep with N isolated workers | no |
@@ -871,6 +876,16 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 
 The `mutation*` sessions have their own setup / resume / report-rendering recipe in
 [docs/mutation-testing.md](docs/mutation-testing.md).
+
+### The `Makefile` is generated
+
+The `Makefile` is a thin shim over these sessions (`make test` → `nox -s tests`, etc.)
+and is **generated, not hand-edited**. Its single source of truth is the `TARGETS` table in
+[`_nox/makefile.py`](_nox/makefile.py); edit a target there (or add one for a new session) and
+regenerate with `make makefile` (`nox -s makefile`). A `makefile_check` gate — wired into
+`preflight`, pre-commit, and CI — keeps the two honest with three drift checks: the committed
+file matches the render, every nox session has a `make` target, and no target names a session
+that no longer exists. Run `make help` for the full target list.
 
 ### Integration tests (`nox -s integration`)
 
