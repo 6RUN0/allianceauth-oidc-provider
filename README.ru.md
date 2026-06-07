@@ -339,7 +339,7 @@ cross-module namespacing `aa_<module>_*` — лежит в [docs/METRICS.ru.md](
 | Token introspection | `/o/introspect/` | RFC 7662. Перекрыт у нас — добавляет per-app gating и audit-сигнал `oidc_token_introspected`. |
 | Token management UI | `/o/authorized_tokens/` (+ `/o/authorized_tokens/<pk>/delete/`) | Из DOT как есть. Позволяет залогиненному пользователю посмотреть свои активные токены и отозвать их. Без кастомизации. |
 | RP-initiated logout | `/o/logout/` | DOT view; по умолчанию on через AppConfig (`OIDC_RP_INITIATED_LOGOUT_ENABLED=True` ставится, если ключ отсутствует). |
-| Issuer (claim `iss`) | `https://your.host/o/` | Что отдаёт ваш discovery URL. |
+| Issuer (claim `iss`) | `https://your.host/o` | **Без хвостового слэша.** Без `OIDC_ISS_ENDPOINT` DOT выводит его, отрезая `/.well-known/openid-configuration` от discovery-URL — слэш уходит вместе с суффиксом, поэтому каноничный issuer — это префикс монтирования без своего слэша. RP сверяют `iss` с полем `issuer` из discovery байт-в-байт; если задаёте `OIDC_ISS_ENDPOINT` вручную, повторите это значение точь-в-точь. |
 
 ### Claim'ы
 

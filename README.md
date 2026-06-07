@@ -335,7 +335,7 @@ bucket layout, the no-op stub API, and the cross-module `aa_<module>_*` namespac
 | Token introspection | `/o/introspect/` | RFC 7662. Overridden in this app — adds per-app gating plus the `oidc_token_introspected` audit signal. |
 | Token management UI | `/o/authorized_tokens/` (+ `/o/authorized_tokens/<pk>/delete/`) | DOT default. Lets a signed-in user list and revoke their own outstanding tokens. No customisation needed; mounted as-is. |
 | RP-initiated logout | `/o/logout/` | DOT view; default-on via AppConfig (`OIDC_RP_INITIATED_LOGOUT_ENABLED=True` set if absent). |
-| Issuer (`iss` claim) | `https://your.host/o/` | Whatever your discovery URL resolves to. |
+| Issuer (`iss` claim) | `https://your.host/o` | **No trailing slash.** Without `OIDC_ISS_ENDPOINT`, DOT derives it by stripping `/.well-known/openid-configuration` from the discovery URL — the slash goes with the suffix, so the canonical issuer is the mount prefix minus its slash. RPs validate `iss` byte-for-byte against discovery's `issuer`; if you pin `OIDC_ISS_ENDPOINT`, match this exactly. |
 
 ### Claims
 

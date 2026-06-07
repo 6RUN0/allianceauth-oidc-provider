@@ -22,6 +22,7 @@ import base64
 import json
 from typing import Any
 
+from django.conf import settings as django_settings
 from django.test import override_settings
 from jwcrypto import jwk, jwt
 
@@ -316,6 +317,30 @@ class TestDiscoveryAndJWKS(GrantedOIDCTestCase):
         claims = json.loads(verified.claims)
         self.assertEqual(nonce, claims.get("nonce"))
 
+    def test_id_token_iss_matches_discovery_issuer(self):
+        """
+        OIDC Core §2 / §3.1.3.7: the ``iss`` an RP reads off the
+        id_token MUST equal the ``issuer`` it discovered, byte-for-byte
+        — trailing slash included. Divergence between the two surfaces
+        is exactly the ``/o`` vs ``/o/`` footgun this guards: discovery
+        advertises one value, the token carries another, and a strict
+        RP rejects the login. Locks the canonical no-slash issuer.
+        """
+        disco = self.client.get("/o/.well-known/openid-configuration/")
+        issuer = self.json_body(disco, expected_status=None)["issuer"]
+
+        tokens = self.run_code_flow(self.user1, state="iss-consistency")
+        jwks_resp = self.client.get("/o/.well-known/jwks.json")
+        keyset = jwk.JWKSet.from_json(jwks_resp.content.decode("utf-8"))
+        verified = jwt.JWT(jwt=tokens["id_token"], key=keyset)
+        claims = json.loads(verified.claims)
+
+        self.assertEqual(issuer, claims.get("iss"))
+        self.assertFalse(
+            issuer.endswith("/"),
+            f"issuer must have no trailing slash, got {issuer!r}",
+        )
+
 
 class TestDiscoveryPolicyAndTosUris(OIDCTestCase):
     """
@@ -442,6 +467,55 @@ class TestDiscoveryFieldTypes(OIDCTestCase):
         issuer = doc.get("issuer")
         self.assertIsInstance(issuer, str)
         self.assertRegex(issuer, r"^https?://")
+
+    def test_issuer_has_no_trailing_slash(self) -> None:
+        """
+        The canonical issuer is the mount prefix MINUS its slash
+        (``…/o``, never ``…/o/``). Without ``OIDC_ISS_ENDPOINT`` DOT
+        derives it by stripping ``/.well-known/openid-configuration``
+        off the discovery URL, so the slash leaves with the suffix;
+        when pinned, the value must match that no-slash form or strict
+        RP ``iss`` validation rejects every token. Guards the README
+        endpoints table against re-introducing the slash.
+        """
+        doc = self._doc()
+        issuer = doc.get("issuer")
+        self.assertIsInstance(issuer, str)
+        self.assertFalse(
+            issuer.endswith("/"),
+            f"issuer must have no trailing slash, got {issuer!r}",
+        )
+
+
+class TestIssuerDerivation(OIDCTestCase):
+    """
+    Pin DOT's request-derived issuer when ``OIDC_ISS_ENDPOINT`` is
+    unset — the ``/o`` vs ``/o/`` distinction the README documents.
+
+    The URL conf mounts under ``o/`` (so endpoints live at ``/o/…``),
+    but DOT builds the issuer by reversing the discovery URL and
+    stripping the fixed ``/.well-known/openid-configuration`` suffix.
+    The slash separating the prefix from the suffix is part of what's
+    stripped, so the derived issuer is ``…/o`` with NO trailing slash.
+    """
+
+    def _provider_without_iss_endpoint(self) -> dict[str, Any]:
+        # Snapshot the live OAUTH2_PROVIDER and blank only the issuer
+        # override, leaving VALIDATOR_CLASS / PKCE / etc. intact so the
+        # derivation path (not the pinned-endpoint path) is exercised.
+        base = dict(django_settings.OAUTH2_PROVIDER)
+        base["OIDC_ISS_ENDPOINT"] = ""
+        return base
+
+    def test_derived_issuer_drops_the_mount_prefix_slash(self) -> None:
+        with override_settings(
+            OAUTH2_PROVIDER=self._provider_without_iss_endpoint()
+        ):
+            resp = self.client.get("/o/.well-known/openid-configuration/")
+            issuer = self.json_body(resp, expected_status=None)["issuer"]
+        # Test client serves http://testserver; mount prefix is ``o/``.
+        self.assertEqual("http://testserver/o", issuer)
+        self.assertFalse(issuer.endswith("/"))
 
 
 class TestDiscoveryPkceAcrSilentAuthMetadata(OIDCTestCase):

@@ -53,6 +53,17 @@ is preserved in `git log`; this file documents fork-specific changes only.
   audit column on MySQL/MariaDB with error 1406 while passing silently
   on sqlite. 255 matches DOT's string-column convention and covers
   every realistic jti format.
+- Documented issuer in the README endpoints table corrected from
+  `https://your.host/o/` to `https://your.host/o` (no trailing slash).
+  Without `OIDC_ISS_ENDPOINT`, DOT derives the issuer by stripping
+  `/.well-known/openid-configuration` off the discovery URL, so the
+  mount-prefix slash leaves with the suffix and the canonical `iss` has
+  no trailing slash. RPs validate `iss` against discovery's `issuer`
+  byte-for-byte, so the slash mattered. New regression tests in
+  `tests/test_discovery.py` pin it: discovery `issuer` carries no
+  trailing slash, the id_token `iss` equals discovery's `issuer`, and
+  the request-derived issuer (no `OIDC_ISS_ENDPOINT`) resolves to the
+  mount prefix minus its slash.
 
 ### Tooling
 
