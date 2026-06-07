@@ -969,3 +969,75 @@ class TestPkceRequiredWiringCheck(TestCase):
             msgs = check_pkce_required_wiring(None)
         self.assertEqual(len(msgs), 1, msgs)
         self.assertEqual(msgs[0].id, E005_ID)
+
+
+class TestW006IdtokenJtiColumnCheck(TestCase):
+    """
+    W006 fires only on MariaDB >= 10.7 whose ``oauth2_provider_idtoken
+    .jti`` column is still ``char(32)`` — the native-uuid overflow.
+    """
+
+    @staticmethod
+    def _fake_connection(
+        data_type: str | None,
+        *,
+        vendor: str = "mysql",
+        is_mariadb: bool = True,
+        version: tuple = (10, 11),
+    ) -> Any:
+        from unittest import mock
+
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = (
+            (data_type,) if data_type is not None else None
+        )
+        cm = mock.MagicMock()
+        cm.__enter__.return_value = cursor
+        cm.__exit__.return_value = False
+        conn = mock.MagicMock()
+        conn.vendor = vendor
+        conn.mysql_is_mariadb = is_mariadb
+        conn.mysql_version = version
+        conn.cursor.return_value = cm
+        return conn
+
+    def _run_with(self, conn: Any) -> list:
+        from unittest import mock
+
+        from allianceauth_oidc.checks import (
+            check_idtoken_jti_native_uuid_column,
+        )
+
+        with (
+            mock.patch("django.db.connections", {"default": conn}),
+            mock.patch(
+                "django.db.router.db_for_write", return_value="default"
+            ),
+        ):
+            return check_idtoken_jti_native_uuid_column(None)
+
+    def test_fires_on_legacy_char_column(self) -> None:
+        from allianceauth_oidc.checks import W006_ID
+
+        msgs = self._run_with(self._fake_connection("char"))
+        self.assertEqual([m.id for m in msgs], [W006_ID])
+
+    def test_clean_when_column_already_uuid(self) -> None:
+        self.assertEqual(self._run_with(self._fake_connection("uuid")), [])
+
+    def test_clean_on_mariadb_below_10_7(self) -> None:
+        conn = self._fake_connection("char", version=(10, 6))
+        self.assertEqual(self._run_with(conn), [])
+
+    def test_clean_on_non_mysql_backend(self) -> None:
+        conn = self._fake_connection("char", vendor="postgresql")
+        self.assertEqual(self._run_with(conn), [])
+
+    def test_clean_on_current_backend(self) -> None:
+        # No mocks: on the sqlite suite the vendor guard returns []; on
+        # the MariaDB smoke the fresh schema already created jti native.
+        from allianceauth_oidc.checks import (
+            check_idtoken_jti_native_uuid_column,
+        )
+
+        self.assertEqual(check_idtoken_jti_native_uuid_column(None), [])

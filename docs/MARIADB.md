@@ -69,3 +69,53 @@ fixed-length checksum column and widens `token` to `LONGTEXT`.
 Tracked as `TODO(allianceauth-oidc:refresh-token-jwt-mysql)` in
 `tests/_mariadb_container.py`. Until then the smoke excludes the tagged
 cases; they still run on the sqlite suite.
+
+## Operator note: native UUID columns on MariaDB >= 10.7
+
+Django 5.x detects MariaDB's native `uuid` type (MariaDB >= 10.7) and
+sets `has_native_uuid_field = True`. From then on every `UUIDField` is
+written in the canonical 36-character dashed form (for example
+`a4995e86-529d-402c-a247-fc329e47b293`), and its column type becomes the
+native `uuid` instead of `char(32)`.
+
+`django-oauth-toolkit`'s `oauth2_provider_idtoken.jti` is a `UUIDField`.
+On a deployment whose schema was created under an older stack (MariaDB
+< 10.7, or a Django/DOT version that rendered `UUIDField` as `char(32)`),
+that column stays `char(32)`. After the database is later upgraded to
+MariaDB >= 10.7, Django starts sending the 36-character value into the
+32-character column and **every id_token issuance fails on `/o/token/`**
+with:
+
+```text
+MySQLdb.DataError: (1406, "Data too long for column 'jti' at row 1")
+```
+
+This is a schema/backend mismatch, not an application or DOT-logic bug:
+the column did not follow the backend across the MariaDB upgrade. A fresh
+schema is immune, because the migration creates the column to match the
+running backend (`uuid` on >= 10.7) — which is also why the
+`tests_mariadb` smoke (default image `mariadb:11.4`) does not catch it.
+
+Diagnose by confirming the backend feature flag in a Django shell:
+
+```python
+from django.db import connection
+connection.mysql_version                   # (10, 7, ...) or higher
+connection.features.has_native_uuid_field  # True
+```
+
+Fix (operator, one-off — DOT owns the table, so this app ships no
+migration for it):
+
+```sql
+-- Align the column with the type Django now expects.
+ALTER TABLE oauth2_provider_idtoken MODIFY jti UUID;
+```
+
+id_tokens are short-lived, so converting existing rows is low-risk; run
+`DELETE FROM oauth2_provider_idtoken;` first if you prefer a clean cast
+(clients simply re-authenticate). A lower-risk text shim is
+`MODIFY jti VARCHAR(36)`, but Django's migration state still expects
+`uuid`, so the native type is the cleaner alignment. The same mismatch
+can hit any `UUIDField` column created before the MariaDB >= 10.7
+upgrade.
