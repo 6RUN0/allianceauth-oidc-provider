@@ -4,7 +4,7 @@ Django system checks for the OIDC provider — fail-loud-fail-early.
 Structurally-required configurations are guarded here as
 ``Error``-level checks (``E001``-``E006``); misconfigurations that
 are not fatal but routinely cause incident-class confusion are
-surfaced as ``Warning``-level checks (``W001``-``W005``). Each ID
+surfaced as ``Warning``-level checks (``W001``-``W006``). Each ID
 is part of the public API: operators grep for it in CI logs and
 the README references the migration path. ``Error``-severity is
 intentional — demoting any of them to ``Warning`` would let CI and
@@ -37,7 +37,7 @@ startup succeed and crash much later in production.
   ``invalid_scope`` or receives a token response without an
   ``id_token`` member.
 
-The remaining checks (``E005``, ``E006``, ``W001``-``W005``) are
+The remaining checks (``E005``, ``E006``, ``W001``-``W006``) are
 defined below — see each ``@register`` block for its trigger
 condition and remediation. The ``Warning``-level overlay covers:
 

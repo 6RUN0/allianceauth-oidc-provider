@@ -506,7 +506,7 @@ SIEM работает без polling'а таблицы. Подключите с�
 
 ### Сервисные команды
 
-Шесть `manage.py`-команд закрывают повседневные задачи обслуживания — без необходимости
+Семь `manage.py`-команд закрывают повседневные задачи обслуживания — без необходимости
 лезть в admin-UI. Все, у которых вывод структурирован, понимают `--format=table|json|csv`;
 у деструктивных есть `--dry-run`.
 
@@ -518,6 +518,7 @@ SIEM работает без polling'а таблицы. Подключите с�
 | `oidc_audit_tokens` | Read-only список активных токенов. | нет | `--username`, `--client-id`, `--include-expired` |
 | `oidc_jwks_rotate` | Сгенерировать свежий RSA-ключ для ротации JWKS; печатает PEM + RFC 7638 thumbprint (`kid`) + четырёхшаговый recipe ротации. **Read-only** — не трогает ни settings, ни БД; оператор сам прописывает новый PEM в `OIDC_RSA_PRIVATE_KEY` и переносит предыдущий в `OIDC_RSA_PRIVATE_KEYS_INACTIVE`. | нет | `--out`, `--key-size` |
 | `oidc_show_effective_policy` | Посмотреть per-app state/group whitelist в том виде, в котором он применяется к конкретному пользователю, включая глобальный gate. Полезно при триаже неожиданного `invalid_grant`. | нет | `--username`, `--client-id` |
+| `oidc_fix_idtoken_jti` | Привести колонку `oauth2_provider_idtoken.jti` из DOT к нативному типу `uuid`, который Django ожидает на MariaDB `>= 10.7` (чинит ошибку `1406 Data too long for column 'jti'` на `/o/token/` после апгрейда MariaDB через границу 10.7). No-op на всех остальных бэкендах / уже сконвертированной колонке. См. [docs/MARIADB.md](docs/MARIADB.ru.md). | да | `--dry-run`, `--format` |
 
 ```sh
 python manage.py oidc_create_app \
@@ -678,7 +679,7 @@ Celery worker'а нет HTTP request context. Django system check
 
 ### System checks (`manage.py check`)
 
-Провайдер регистрирует шесть ошибок и пять предупреждений во
+Провайдер регистрирует шесть ошибок и шесть предупреждений во
 фреймворке системных проверок Django. CI должен падать на ошибках и
 обращать внимание на предупреждения как на configuration smells.
 
@@ -695,6 +696,7 @@ Celery worker'а нет HTTP request context. Django system check
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` явно `False`, при том что у одного или нескольких приложений выставлен `backchannel_logout_uri`. Single-Logout chain рвётся на первом hop'е, потому что RP-initiated logout — точка входа, которая триггерит back-channel fan-out. | Либо снимите `backchannel_logout_uri` с затронутых приложений (перечислены в тексте warning'а), либо включите RP-initiated logout обратно (по умолчанию он on — задайте `True` или уберите явный `False`). |
 | `allianceauth_oidc.W004` | Warning | У одного или нескольких **активных** приложений `backchannel_logout_uri` использует `http://` при `DEBUG=False`. Admin-форма блокирует новые `http://` URI в проде, но legacy-строки, сохранённые при `DEBUG=True`, переживают переключение. Воркер re-checks DNS, но не схему — `logout_token` JWT (с `iss`/`aud`/`sub`/`jti`) продолжает уходить cleartext'ом. | Замените URI на `https://` либо деактивируйте строку, если RP уже выведен из эксплуатации. |
 | `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` при `DEBUG=False` (но без зарегистрированного `backchannel_logout_uri`, который триггерит E006). SSRF-гейт на back-channel logout target'ы отключён — если private-IP URI будет зарегистрирован позже, воркер POST'нет подписанные `logout_token`'ы на `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IP. | Поставьте флаг `False` (или удалите) в проде. Оставляйте `True` только на dev / staging хостах, которые осознанно указывают на private RP. |
+| `allianceauth_oidc.W006` | Warning | Колонка `oauth2_provider_idtoken.jti` из DOT всё ещё `char(32)` на бэкенде MariaDB `>= 10.7`. Django 5.x считает такую MariaDB носителем нативного типа `uuid` и пишет значение в 36-символьной форме с дефисами, что переполняет legacy-колонку и валит каждую выдачу id_token на `/o/token/` с `1406 Data too long for column 'jti'`. Помечена как database (выполняется на `migrate` / `check --database`). | Запустите `manage.py oidc_fix_idtoken_jti`, чтобы сконвертировать колонку к нативному типу `uuid`, который Django теперь ожидает. См. [docs/MARIADB.md](docs/MARIADB.ru.md). |
 
 ID проверок стабильны между релизами; mute через
 `SILENCED_SYSTEM_CHECKS` поддерживается, но не рекомендуется — лучше

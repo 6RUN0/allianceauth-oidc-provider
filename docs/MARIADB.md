@@ -104,8 +104,20 @@ connection.mysql_version                   # (10, 7, ...) or higher
 connection.features.has_native_uuid_field  # True
 ```
 
-Fix (operator, one-off — DOT owns the table, so this app ships no
-migration for it):
+Fix (operator, one-off). DOT owns the table, so this app ships no
+migration for it; the corrective is a management command instead:
+
+```sh
+# Preview the ALTER without touching the database.
+python manage.py oidc_fix_idtoken_jti --dry-run
+
+# Apply it. No-op on sqlite / PostgreSQL / MySQL / MariaDB < 10.7
+# or an already-converted column, so it is safe to run unconditionally.
+python manage.py oidc_fix_idtoken_jti
+```
+
+The command runs the equivalent of the SQL below, which you can also
+apply by hand:
 
 ```sql
 -- Align the column with the type Django now expects.
@@ -119,3 +131,7 @@ id_tokens are short-lived, so converting existing rows is low-risk; run
 `uuid`, so the native type is the cleaner alignment. The same mismatch
 can hit any `UUIDField` column created before the MariaDB >= 10.7
 upgrade.
+
+The Django system check `allianceauth_oidc.W006` (database-tagged, so
+it runs at `migrate` / `check --database`) flags this exact mismatch at
+deploy time, pointing the operator at `oidc_fix_idtoken_jti`.

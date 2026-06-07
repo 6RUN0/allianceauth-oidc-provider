@@ -14,6 +14,72 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- Защитная сетка для нативного `uuid` на MariaDB `>= 10.7` под колонку
+  `jti` idtoken'а из DOT. Django 5.x считает MariaDB `>= 10.7`
+  носителем нативного типа `uuid` и пишет значения `UUIDField` в
+  36-символьной форме с дефисами; колонка `oauth2_provider_idtoken.jti`,
+  оставшаяся в legacy-`char(32)` после апгрейда через границу 10.7,
+  затем переполняется и валит каждую выдачу id_token на `/o/token/` с
+  `1406 Data too long for column 'jti'`. Это закрывают две новые
+  поверхности: системная проверка `allianceauth_oidc.W006` (помечена
+  как database) ловит рассогласование на `manage.py check --database` /
+  `migrate`, а команда `manage.py oidc_fix_idtoken_jti` конвертирует
+  колонку к нативному типу `uuid` (no-op на всех остальных бэкендах /
+  уже сконвертированной колонке; понимает `--dry-run` / `--format`).
+  Таблица принадлежит DOT, поэтому корректив поставляется командой, а не
+  миграцией. Руководство оператора:
+  [docs/MARIADB.md](docs/MARIADB.ru.md).
+
+### Исправлено
+
+- Страница подтверждения RP-initiated logout снова рендерится. Override
+  `logout_confirm.html` лежал в `templates/allianceauth_oidc/`, но
+  `RPInitiatedLogoutView` из DOT грузит
+  `oauth2_provider/logout_confirm.html`, поэтому override никогда не
+  рендерился и страница откатывалась к нестилизованному дефолту DOT.
+  Шаблон перенесён в `templates/oauth2_provider/`, чтобы перекрывать
+  копию DOT, и теперь наследует `allianceauth/base-bs5.html` — страница
+  logout'а совпадает с оболочкой Alliance Auth. Заодно шаблоны
+  `authorize.html` / `denied.html` переведены на классы Bootstrap 5.
+  Новый `tests/test_templates_render.py` прогоняет каждый шаблон через
+  его view, страхуя от молчаливой поломки override'ов.
+- `BackChannelLogoutAttempt.jti` расширен с `char(32)` до `varchar(255)`
+  (миграция `0020`). Колонка была размечена ровно под наш собственный
+  jti (`uuid4().hex`, 32 символа), но сигнал `oidc_logout_dispatched`
+  принимает сторонних отправителей, а jti по RFC 7519 — произвольная
+  строка (каноничный UUID с дефисами — 36 символов, hex-дайджест
+  SHA-256 — 64). Любое более длинное значение переполняло audit-колонку
+  на MySQL/MariaDB с ошибкой 1406, молча проходя на sqlite. 255
+  соответствует строковой колоночной конвенции DOT и покрывает все
+  реалистичные форматы jti.
+
+### Инструментарий
+
+- `Makefile` теперь генерируется из таблицы `TARGETS` в
+  `_nox/makefile.py`, а не редактируется руками. Новые nox-сессии
+  `makefile` / `makefile_check` пересобирают его и проверяют на дрейф;
+  гейт `makefile_check` подключён в `preflight`, pre-commit и CI и
+  следит, что закоммиченный файл совпадает с рендером, у каждой
+  nox-сессии есть `make`-таргет, и ни один таргет не ссылается на
+  исчезнувшую сессию.
+- Новые nox-сессия `tests_mariadb` и CI-задача прогоняют набор против
+  реальной MariaDB (локально через testcontainers, в CI — через
+  service-контейнер), чтобы покрывались кодовые пути семейства MySQL, а
+  не только бестиповый sqlite. Чисто пропускается, когда недоступны ни
+  Docker, ни база. Руководство: [docs/MARIADB.md](docs/MARIADB.ru.md).
+- Новые pre-commit-гейты: `pygrep-hooks` (отклоняет опечатки в
+  Mock-методах, `logger.warn`, `eval()`, U+FFFD и сплошной
+  `type: ignore`), `name-tests-test` и `djlint` (lint/format
+  Django-шаблонов).
+- Новый nox/CI-гейт `migrations_concurrency_check` сканирует миграции с
+  сырым `RunSQL` на блокирующий (non-online) DDL для MySQL/MariaDB.
+- Новый nox/CI-гейт `messages_check` проверяет целостность каталогов
+  `.po` / `.pot` / `.mo`, не требуя полноты переводов.
+- Кросс-версионный прогон AA 5.x (`tests_matrix`) теперь строит свой
+  argv через чистый, покрытый юнит-тестами помощник в `_nox/matrix.py`.
+
 ## [0.3.2] - 2026-06-05
 
 С `0.3.1` нет изменений wire-протокола и поведения в рантайме; при
@@ -720,7 +786,8 @@ cache-poisoning vector между release-прогонами).
 
 Что было до точки расхождения форка — смотрите `git log` и страницу релизов оригинала.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.1
 [0.3.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.0
 [0.2.0b2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b1...v0.2.0b2

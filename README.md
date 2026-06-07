@@ -494,7 +494,7 @@ Beyond DOT's `AbstractApplication` schema, `AllianceAuthApplication` adds:
 
 ### Operator commands
 
-Six `manage.py` commands cover the day-2 operational tasks without opening the admin UI. All
+Seven `manage.py` commands cover the day-2 operational tasks without opening the admin UI. All
 accept `--format=table|json|csv` where output is structured; destructive commands honour
 `--dry-run`.
 
@@ -506,6 +506,7 @@ accept `--format=table|json|csv` where output is structured; destructive command
 | `oidc_audit_tokens` | Read-only listing of active tokens. | no | `--username`, `--client-id`, `--include-expired` |
 | `oidc_jwks_rotate` | Mint a fresh RSA private key for JWKS rotation; prints PEM + RFC 7638 thumbprint (`kid`) + a four-step rotation recipe. **Read-only** — never touches settings or DB; operator wires the new PEM into `OIDC_RSA_PRIVATE_KEY` and moves the previous one into `OIDC_RSA_PRIVATE_KEYS_INACTIVE` manually. | no | `--out`, `--key-size` |
 | `oidc_show_effective_policy` | Inspect the per-app state / group whitelist as it evaluates against a given user, including the global gate. Useful when triaging an unexpected `invalid_grant`. | no | `--username`, `--client-id` |
+| `oidc_fix_idtoken_jti` | Realign DOT's `oauth2_provider_idtoken.jti` column with Django's native-`uuid` type on MariaDB `>= 10.7` (fixes the `1406 Data too long for column 'jti'` failure on `/o/token/` after a cross-10.7 MariaDB upgrade). No-op on every other backend / already-converted column. See [docs/MARIADB.md](docs/MARIADB.md). | yes | `--dry-run`, `--format` |
 
 ```sh
 python manage.py oidc_create_app \
@@ -657,7 +658,7 @@ at deploy time if the setting is missing.
 
 ### System checks (`manage.py check`)
 
-The provider registers six errors and five warnings against Django's
+The provider registers six errors and six warnings against Django's
 system-check framework. CI should fail on errors and surface warnings
 as configuration smells worth investigating.
 
@@ -674,6 +675,7 @@ as configuration smells worth investigating.
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` is explicitly `False` while one or more applications carry a `backchannel_logout_uri`. The Single-Logout chain breaks at the first hop because RP-initiated logout is the entry-point that triggers back-channel fan-out. | Either remove `backchannel_logout_uri` from the affected applications (listed in the warning text), or re-enable RP-initiated logout (it is on by default — set the key to `True` or remove the explicit `False`). |
 | `allianceauth_oidc.W004` | Warning | One or more **active** applications have a `backchannel_logout_uri` using `http://` while `DEBUG=False`. The admin form rejects new `http://` URIs in production, but legacy rows persisted under `DEBUG=True` survive a flip. The worker re-checks DNS but not scheme, so `logout_token` JWTs (carrying `iss`/`aud`/`sub`/`jti`) keep flowing in cleartext. | Edit each affected application to use `https://`, or deactivate the row if the RP has been retired. |
 | `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` while `DEBUG=False` (without a registered `backchannel_logout_uri` to trigger E006). The SSRF gate on back-channel logout targets is disabled — if a private-IP URI is later registered, the worker will POST signed `logout_token`s to `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IPs. | Set the flag to `False` (or remove it) in production. Keep it `True` only on dev / staging hosts that intentionally point at private RPs. |
+| `allianceauth_oidc.W006` | Warning | DOT's `oauth2_provider_idtoken.jti` column is still `char(32)` on a MariaDB `>= 10.7` backend. Django 5.x treats that MariaDB as having a native `uuid` type and writes the 36-char dashed form, which overflows the legacy column and fails every id_token issuance on `/o/token/` with `1406 Data too long for column 'jti'`. Database-tagged (runs at `migrate` / `check --database`). | Run `manage.py oidc_fix_idtoken_jti` to convert the column to the native `uuid` type Django now expects. See [docs/MARIADB.md](docs/MARIADB.md). |
 
 The check ids are stable across releases; muting via Django's
 `SILENCED_SYSTEM_CHECKS` is supported but discouraged — fix the
