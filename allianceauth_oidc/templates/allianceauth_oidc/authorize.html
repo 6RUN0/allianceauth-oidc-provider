@@ -2,7 +2,7 @@
 
 {% load i18n %}
 {% load oidc_tags %}
-{% block page_title %}{{page_title}}{% endblock %}
+{% block page_title %}{{ page_title }}{% endblock %}
 {% block extra_css %}
 <style>
     .flex-container-main {
@@ -23,6 +23,21 @@
     .rounded-border {
         border-radius: 8px;
     }
+    .portrait-overlap-left {
+        margin-right: -10px;
+    }
+    .portrait-overlap-right {
+        margin-left: -10px;
+    }
+    .link-icon-dim {
+        opacity: 0.5;
+    }
+    .scope-heading {
+        text-transform: uppercase;
+    }
+    .icon-gap {
+        margin-right: 10px;
+    }
     </style>
 {% endblock %}
 
@@ -31,17 +46,17 @@
         <div id="app">
             <div class="flex-container-main">
                 {% if not error %}
-                    <div class="">
+                    <div>
                         <div class="panel-body">
                             <form id="authorizationForm" method="post">
                                 <div class="text-center">
-                                    <img class="rounded-border" width="128px" height="128px" style="margin-right: -10px" src="{{request.user.profile.main_character.portrait_url_256}}"/>
-                                    <i style="opacity:0.5;" class="fa-solid fa-link fa-fw"></i>
-                                    <img class="rounded-border" width="128px" height="128px" style="margin-left: -10px" src="{{ application.logo_url|safe_image_url }}"/>
+                                    <img class="rounded-border portrait-overlap-left" width="128px" height="128px" src="{{ request.user.profile.main_character.portrait_url_256 }}" alt="{% translate 'Character portrait' %}"/>
+                                    <i class="fa-solid fa-link fa-fw link-icon-dim"></i>
+                                    <img class="rounded-border portrait-overlap-right" width="128px" height="128px" src="{{ application.logo_url|safe_image_url }}" alt="{{ application.name }}"/>
                                 </div>
                                 <h3 class="text-center">{{ application.name }} </h3>
-                                <p class="text-center">{% translate 'is requesting access to your Alliance Auth User data'%}</p>
-                                <p class="small text-center">{% translate "Logged in as:" %} <span class="label label-default">{{request.user.profile.main_character}} [ {{request.user.profile.main_character.corporation_ticker}} ]</span></p>
+                                <p class="text-center">{% translate 'is requesting access to your Alliance Auth User data' %}</p>
+                                <p class="small text-center">{% translate "Logged in as:" %} <span class="label label-default">{{ request.user.profile.main_character }} [ {{ request.user.profile.main_character.corporation_ticker }} ]</span></p>
                                 <hr>
                                 {% csrf_token %}
 
@@ -50,17 +65,17 @@
                                         {{ field }}
                                     {% endif %}
                                 {% endfor %}
-                                    <p class="small text-bold text-center text-muted" style="text-transform: uppercase;">{% trans "The application is requesting the following" %}</p>
+                                    <p class="small text-bold text-center text-muted scope-heading">{% trans "The application is requesting the following" %}</p>
                                     {% for scope in scopes_descriptions %}
-                                        <p><i class="fas fa-check-circle text-success" style="margin-right:10px"></i> {{ scope }}</p>
+                                        <p><i class="fas fa-check-circle text-success icon-gap"></i> {{ scope }}</p>
                                     {% endfor %}
                                     <!--<div class="flex-container-controls"><p><i class="fas fa-times-circle text-danger"></i></p><p>Characters and Alts</p></div>-->
                                 {{ form.errors }}
                                 {{ form.non_field_errors }}
                                 <hr>
 
-                                <p class="small text-muted"><i class="fas fa-link fa-fw" style="margin-right:10px"></i>{% trans 'You will be redirected back to the application after authorization' %}</p>
-                                <p class="small text-muted"><i class="fas fa-user-shield fa-fw" style="margin-right:10px"></i>{% trans 'This Application cannot access other data within Alliance Auth!' %}</p>
+                                <p class="small text-muted"><i class="fas fa-link fa-fw icon-gap"></i>{% trans 'You will be redirected back to the application after authorization' %}</p>
+                                <p class="small text-muted"><i class="fas fa-user-shield fa-fw icon-gap"></i>{% trans 'This Application cannot access other data within Alliance Auth!' %}</p>
 
                                 <hr>
 

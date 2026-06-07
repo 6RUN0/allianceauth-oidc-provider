@@ -45,6 +45,41 @@ repos:
             \.po|
             \.mo
           )
+      # Enforce ``test_``-prefixed naming for the test suite. Excludes
+      # the shared helpers (``_*.py``, which also covers ``__init__.py``),
+      # the Django test wiring (``urls.py`` / ``views.py`` /
+      # ``celery.py``), and the whole ``tests/conformance/`` harness — a
+      # standalone runner package, not a unittest module set.
+      - id: name-tests-test
+        args: ["--pytest-test-first"]
+        exclude: |
+          (?x)(
+            ^tests/conformance/|
+            ^tests/(.*/)?(_[^/]*|urls|views|celery)\.py$
+          )
+
+  # Quick regex gotchas the linters cannot catch:
+  # * ``python-check-mock-methods`` — typos like
+  #   ``Mock.assret_called_with`` silently pass because ``Mock``
+  #   autogenerates any attribute access; a typo = silent green test.
+  # * ``python-no-log-warn`` — ``logger.warn`` is deprecated since
+  #   Python 3.5; ``logger.warning`` is canonical. ``noxfile.py`` and
+  #   ``_nox/`` are excluded because ``nox.Session.warn`` is the tool's
+  #   own API, not a logger.
+  # * ``python-no-eval`` — defence in depth on top of bandit.
+  # * ``text-unicode-replacement-char`` — U+FFFD in source usually
+  #   means encoding loss during a paste/migration.
+  # * ``python-check-blanket-type-ignore`` — require
+  #   ``# type: ignore[code]`` over the blanket form.
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-check-mock-methods
+      - id: python-no-log-warn
+        exclude: ^(noxfile\.py|_nox/)
+      - id: python-no-eval
+      - id: text-unicode-replacement-char
+      - id: python-check-blanket-type-ignore
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.6.0
@@ -151,6 +186,17 @@ repos:
     hooks:
       - id: django-upgrade
         args: [--target-version=4.2]
+
+  # Django template linting for the operator-facing templates
+  # (authorize / denied / logout-confirm). Catches unclosed tags,
+  # broken attribute layout, missing block balance, and missing
+  # ``alt`` — gaps the Python test base does not cover because the
+  # view tests render only a curated fixture set. Config (profile,
+  # line caps, ignored stylistic rules) lives in ``[tool.djlint]``.
+  - repo: https://github.com/djlint/djLint
+    rev: v1.36.1
+    hooks:
+      - id: djlint-django
 
   - repo: local
     hooks:

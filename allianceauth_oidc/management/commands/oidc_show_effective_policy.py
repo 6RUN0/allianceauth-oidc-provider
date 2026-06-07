@@ -95,7 +95,7 @@ class Command(BaseCommand):
         # Protocol declares it as a settable ``bool``. Protocol member
         # invariance fails both mypy and basedpyright. ``cast(Any, ...)``
         # is the minimal-syntax cross-checker bypass — mypy-only
-        # ``# type: ignore`` is silently dropped by basedpyright,
+        # ``type: ignore`` comment is silently dropped by basedpyright,
         # ``cast("UserLike", ...)`` is rejected by basedpyright as
         # ``reportInvalidCast``.
         decision = DEFAULT_POLICY.decide(cast("Any", user), app)

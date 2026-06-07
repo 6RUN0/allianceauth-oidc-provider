@@ -543,6 +543,24 @@ skip = ".git,.venv,.nox,uv.lock,.secrets.baseline,tests/oidc-test.key,htmlcov,bu
 # a one-line reason in its header section.
 ignore-words = ".codespell-ignore.txt"
 
+[tool.djlint]
+# Django template profile for the operator-facing templates. The
+# ``max_line_length`` (120) matches the Markdown convention, separate
+# from the Python line length (79) because HTML attributes inflate
+# horizontal use more than Python statements do.
+profile = "django"
+max_line_length = 120
+max_attribute_length = 120
+max_blank_lines = 1
+# Stylistic rules excluded so the hook focuses on structural template
+# defects (unclosed tags, broken attribute lines, bad block balance,
+# missing ``alt``). These three render identically across the chosen
+# alternatives — they are taste, not correctness:
+# * T002 — single vs double quotes inside ``{% tag '…' %}``.
+# * T003 — named ``{% endblock body %}`` vs bare ``{% endblock %}``.
+# * H023 — HTML entity refs (``&mdash;``) vs the Unicode codepoints.
+ignore = "T002,T003,H023"
+
 [tool.deptry]
 # Tests + nox + migrations import dev / framework things that production
 # code does not — exclude them from the production-import scan.
