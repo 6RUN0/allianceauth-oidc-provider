@@ -2776,6 +2776,46 @@ class TestBackChannelLogoutAttemptModel(OIDCTestCase):
         self.assertNotIsInstance(field, ForeignKey)
         self.assertTrue(field.null)
 
+    def test_jti_column_holds_canonical_and_digest_jti(self) -> None:
+        """
+        Regression (migration 0020): the column was originally
+        ``varchar(32)``, sized to our own ``uuid4().hex`` (32 chars).
+        But ``oidc_logout_dispatched`` accepts third-party senders, and
+        a jti per RFC 7519 is an arbitrary string — a canonical dashed
+        UUID is 36 chars, a SHA-256 hex digest is 64. Anything longer
+        than 32 overflowed the column on MySQL/MariaDB (error 1406)
+        while passing on sqlite (which ignores VARCHAR length). The
+        field must hold at least a 64-char jti.
+        """
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        field = BackChannelLogoutAttempt._meta.get_field("jti")
+        self.assertGreaterEqual(field.max_length, 64)
+
+    def test_long_jti_persists_without_overflow(self) -> None:
+        """
+        DB-level companion to the schema guard above. On the MariaDB
+        smoke this would raise ``1406 Data too long for column 'jti'``
+        if the column ever regressed to ``varchar(32)``; on sqlite it
+        passes trivially since VARCHAR length is not enforced.
+        """
+        import uuid
+
+        from allianceauth_oidc.models import BackChannelLogoutAttempt
+
+        for jti in (str(uuid.uuid4()), "a" * 64):  # 36, then 64 chars
+            row = BackChannelLogoutAttempt.objects.create(
+                application=self.oauth_app,
+                user_pk=self.user1.pk,
+                jti=jti,
+                success=False,
+                attempt_count=0,
+                reason="jti-width-regression",
+            )
+            self.assertEqual(
+                jti, BackChannelLogoutAttempt.objects.get(pk=row.pk).jti
+            )
+
 
 class TestBackChannelLogoutAttemptReceiver(OIDCTestCase):
     """

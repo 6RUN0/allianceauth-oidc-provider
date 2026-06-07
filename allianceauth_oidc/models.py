@@ -451,11 +451,19 @@ class BackChannelLogoutAttempt(models.Model):
             "Integer primary key of the user whose session was being terminated. Not a ForeignKey because the ``user_deleted`` trigger fires after the row is removed."  # noqa: E501
         ),
     )
-    # ``uuid4().hex`` is 32 chars; blank string is intentional for the
-    # ``broker_unavailable`` / ``signing_kid_resolve_failed`` cases
-    # where the dispatcher never got far enough to mint a jti.
+    # Our own dispatch mints ``uuid4().hex`` (32 chars), but the
+    # ``oidc_logout_dispatched`` signal contract accepts third-party
+    # senders, and a jti per RFC 7519 is an arbitrary string with no
+    # length bound (canonical dashed UUID is 36, a SHA-256 hex digest
+    # is 64, etc.). Sizing the column to exactly our own 32-char value
+    # overflows on MySQL/MariaDB (error 1406) for any longer jti while
+    # passing silently on sqlite. 255 matches DOT's string-column
+    # convention and covers every realistic jti format. Blank string is
+    # intentional for the ``broker_unavailable`` /
+    # ``signing_kid_resolve_failed`` cases where the dispatcher never
+    # got far enough to mint a jti.
     jti = models.CharField(
-        max_length=32,
+        max_length=255,
         blank=True,
         default="",
         db_index=True,
