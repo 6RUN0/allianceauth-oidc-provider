@@ -1,0 +1,45 @@
+{% extends "allianceauth/base-bs5.html" %}
+{% comment %}
+Overrides DOT's bare ``oauth2_provider/logout_confirm.html`` so the
+RP-initiated logout confirmation renders inside the Alliance Auth shell
+(Bootstrap 5) instead of DOT's standalone Bootstrap 2 page. DOT's
+``RPInitiatedLogoutView`` (``template_name = "oauth2_provider/
+logout_confirm.html"``) resolves this copy first because
+``allianceauth_oidc`` precedes ``oauth2_provider`` in INSTALLED_APPS.
+The marker comment below is asserted by the render test to prove the
+override wins over DOT's own template.
+{% endcomment %}
+{% load i18n %}
+{% block page_title %}{% translate "Confirm Logout" %}{% endblock %}
+{% block content %}
+    <!-- allianceauth-oidc-logout-confirm-override -->
+    <div class="text-center">
+        {% if not error %}
+            <form id="authorizationForm" method="post">
+                {% if application %}
+                    <h3>{% translate "Confirm Logout requested by" %} {{ application.name }}</h3>
+                {% else %}
+                    <h3>{% translate "Confirm Logout" %}</h3>
+                {% endif %}
+                {% csrf_token %}
+
+                {% for field in form %}
+                    {% if field.is_hidden %}
+                        {{ field }}
+                    {% endif %}
+                {% endfor %}
+
+                {{ form.errors }}
+                {{ form.non_field_errors }}
+
+                <div class="d-flex justify-content-center gap-2 mt-3">
+                    <input type="submit" class="btn btn-lg btn-secondary" value="{% translate 'Cancel' %}"/>
+                    <input type="submit" class="btn btn-lg btn-primary" name="allow" value="{% translate 'Logout' %}"/>
+                </div>
+            </form>
+        {% else %}
+            <h2>{% translate "Error:" %} {{ error.error }}</h2>
+            <p>{{ error.description }}</p>
+        {% endif %}
+    </div>
+{% endblock %}
