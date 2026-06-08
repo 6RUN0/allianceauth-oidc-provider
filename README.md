@@ -1,4 +1,9 @@
-# allianceauth_oidc
+# allianceauth-oidc-provider-eveo7
+
+A thin policy / auditing layer on top of
+[`django-oauth-toolkit`](https://django-oauth-toolkit.readthedocs.io/) that turns an
+[Alliance Auth](https://gitlab.com/allianceauth/allianceauth) installation into an OpenID Connect /
+OAuth2 provider.
 
 > Fork of
 > [Solar-Helix-Independent-Transport/allianceauth-oidc-provider](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider)
@@ -6,12 +11,7 @@
 > [6RUN0/allianceauth-oidc-provider](https://github.com/6RUN0/allianceauth-oidc-provider) — adds
 > wire-level integration tests, an OIDC Conformance Suite harness, operator CLI commands,
 > EVE-specific claims, runtime localisation (en / ru / uk), and a Russian-language
-> [README.ru.md](README.ru.md).
-
-A thin policy / auditing layer on top of
-[`django-oauth-toolkit`](https://django-oauth-toolkit.readthedocs.io/) that turns an
-[Alliance Auth](https://gitlab.com/allianceauth/allianceauth) installation into an OpenID Connect /
-OAuth2 provider.
+> [README.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/README.ru.md).
 
 - [Overview](#overview)
 - [Requirements](#requirements)
@@ -21,7 +21,10 @@ OAuth2 provider.
 - [Reference](#reference)
 - [Operations](#operations)
 - [Integrations](#integrations)
+- [Limitations](#limitations)
 - [Development](#development)
+- [Links](#links)
+- [License](#license)
 
 ## Overview
 
@@ -81,6 +84,10 @@ edits below to those.
    ```sh
    pip install allianceauth-oidc-provider-eveo7
    ```
+
+   For Prometheus metrics, install the extra:
+   `pip install allianceauth-oidc-provider-eveo7[metrics]` (see the
+   [Observability section](#observability--prometheus-metrics)).
 
    Do **not** install both `allianceauth-oidc-provider` and
    `allianceauth-oidc-provider-eveo7` into the same environment — both
@@ -162,8 +169,16 @@ edits below to those.
    supervisorctl restart myauth:    # or your process supervisor's equivalent
    ```
 
-> [!NOTE]
-> If you customise the public login template
+6. Verify the provider responds:
+
+   ```sh
+   curl -s https://your.host/o/.well-known/openid-configuration | python -m json.tool
+   ```
+
+   You should see `issuer`, `authorization_endpoint`, `jwks_uri`, and
+   `backchannel_logout_supported`.
+
+> **Note:** If you customise the public login template
 > (`authentication/templates/public/login.html`), keep the SSO link's `next` parameter
 > URL-encoded — without it the OAuth flow drops query parameters after redirect (e.g.
 > `client_id` is lost):
@@ -247,7 +262,7 @@ Both go into `myauth/settings/local.py` next to the install snippet.
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Recommended. Replay-defence per RFC 6819 §5.2.2.3 — a refresh token presented twice revokes the entire token family. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Trade-off: shorter access-token TTL forces RPs to refresh more often (faster reaction to revocation, more token-endpoint round-trips); longer means slower revocation propagation but lighter traffic. **Do not copy the test-suite literal `60`** — that value is test-only (used by `tests/test_settingsAA4.py` to exercise expiry paths without sleeps) and races against real RP login flows that need at least one /userinfo round-trip plus client-side `clockTolerance` (~5 s). The `passport-openidconnect` strategy used by Wiki.js, Outline, and similar reject sub-minute lifetimes outright. `3600` (1 hour) matches the production defaults of Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | Per-deployment risk tolerance. |
-| `OIDC_ISS_ENDPOINT` | unset | **Required when ANY application has `backchannel_logout_uri` set.** Absolute issuer URL (e.g. `"https://auth.example.org/o"`). The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime — `oidc_issuer(None)` falls through to this setting. A Django system check (`allianceauth_oidc.E001`) fires at `manage.py check` if a back-channel logout is configured without this setting; CI fails loudly instead of crashing the first end-user logout. See [OIDC Back-Channel Logout 1.0](docs/BACK_CHANNEL_LOGOUT.md). |
+| `OIDC_ISS_ENDPOINT` | unset | **Required when ANY application has `backchannel_logout_uri` set.** Absolute issuer URL (e.g. `"https://auth.example.org/o"`). The Celery worker that POSTs `logout_token`s has no HTTP request context, so it cannot derive `iss` at runtime — `oidc_issuer(None)` falls through to this setting. A Django system check (`allianceauth_oidc.E001`) fires at `manage.py check` if a back-channel logout is configured without this setting; CI fails loudly instead of crashing the first end-user logout. See [OIDC Back-Channel Logout 1.0](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/BACK_CHANNEL_LOGOUT.md). |
 | `OIDC_RP_INITIATED_LOGOUT_ENABLED` | `True` (default-on) | OIDC RP-Initiated Logout 1.0 — `/o/logout/` + `end_session_endpoint` in discovery. DOT's upstream default is `False`; the AppConfig's `_apply_default_oauth2_provider_settings` flips it to `True` only when the key is absent, so an explicit `False` opt-out is preserved. Pair with `OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT` (DOT default `True`) — DOT renders `oauth2_provider/logout_confirm.html` on logout requests; this app ships an AA-themed override under `allianceauth_oidc/templates/allianceauth_oidc/logout_confirm.html` (resolved by Django via template precedence). Set the prompt setting to `False` to skip the confirm step for headless flows. |
 
 ### Custom settings (ALLIANCEAUTH_OIDC_*)
@@ -317,7 +332,7 @@ composes with sibling AA modules that adopt the same convention. Published metri
 | `aa_oidc_tokens_cleaned_total` | Counter | Rows deleted by `clear_expired_tokens` (DOT tokens + audit GC) |
 | `aa_oidc_audit_receiver_failures_total` | Counter | Audit-receiver exceptions swallowed before they would have broken the signal chain |
 
-See [docs/METRICS.md](docs/METRICS.md) for the full contract: label cardinality, histogram
+See [docs/METRICS.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/METRICS.md) for the full contract: label cardinality, histogram
 bucket layout, the no-op stub API, and the cross-module `aa_<module>_*` namespacing rules.
 
 ## Reference
@@ -473,7 +488,7 @@ By default only **failed** attempts land here — the table is strictly a dead-l
 for SIEM). The `oidc_logout_dispatched` signal fires on every terminal attempt regardless, so
 real-time SIEM correlation works without polling.
 
-See [docs/BACK_CHANNEL_LOGOUT.md](docs/BACK_CHANNEL_LOGOUT.md) for the retry / dead-letter
+See [docs/BACK_CHANNEL_LOGOUT.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/BACK_CHANNEL_LOGOUT.md) for the retry / dead-letter
 contract.
 
 ### Application fields
@@ -506,7 +521,7 @@ accept `--format=table|json|csv` where output is structured; destructive command
 | `oidc_audit_tokens` | Read-only listing of active tokens. | no | `--username`, `--client-id`, `--include-expired` |
 | `oidc_jwks_rotate` | Mint a fresh RSA private key for JWKS rotation; prints PEM + RFC 7638 thumbprint (`kid`) + a four-step rotation recipe. **Read-only** — never touches settings or DB; operator wires the new PEM into `OIDC_RSA_PRIVATE_KEY` and moves the previous one into `OIDC_RSA_PRIVATE_KEYS_INACTIVE` manually. | no | `--out`, `--key-size` |
 | `oidc_show_effective_policy` | Inspect the per-app state / group whitelist as it evaluates against a given user, including the global gate. Useful when triaging an unexpected `invalid_grant`. | no | `--username`, `--client-id` |
-| `oidc_fix_idtoken_jti` | Realign DOT's `oauth2_provider_idtoken.jti` column with Django's native-`uuid` type on MariaDB `>= 10.7` (fixes the `1406 Data too long for column 'jti'` failure on `/o/token/` after a cross-10.7 MariaDB upgrade). No-op on every other backend / already-converted column. See [docs/MARIADB.md](docs/MARIADB.md). | yes | `--dry-run`, `--format` |
+| `oidc_fix_idtoken_jti` | Realign DOT's `oauth2_provider_idtoken.jti` column with Django's native-`uuid` type on MariaDB `>= 10.7` (fixes the `1406 Data too long for column 'jti'` failure on `/o/token/` after a cross-10.7 MariaDB upgrade). No-op on every other backend / already-converted column. See [docs/MARIADB.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/MARIADB.md). | yes | `--dry-run`, `--format` |
 
 ```sh
 python manage.py oidc_create_app \
@@ -607,8 +622,7 @@ OAUTH2_PROVIDER = {
 }
 ```
 
-> [!IMPORTANT]
-> Both keys are needed. `ACCESS_TOKEN_GENERATOR` accepts the dotted-path string
+> **Important:** Both keys are needed. `ACCESS_TOKEN_GENERATOR` accepts the dotted-path string
 > because it IS in DOT's `IMPORT_STRINGS` tuple — DOT resolves it at startup.
 > `PKCE_REQUIRED` is NOT in `IMPORT_STRINGS` and therefore requires the function
 > reference. If you set `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT="jwt"`
@@ -632,14 +646,14 @@ thumbprint of the key.
 
 **Per-app → global migration sequence, RP cookbook, key rotation discipline,
 data-minimization, troubleshooting** — see
-[docs/JWT_ACCESS_TOKENS.md](docs/JWT_ACCESS_TOKENS.md). The recipe in §7
+[docs/JWT_ACCESS_TOKENS.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/JWT_ACCESS_TOKENS.md). The recipe in §7
 walks through the recommended rollout (per-app first, global last) and points
 at `manage.py oidc_audit_tokens --include-expired` whose `format` column
 makes the per-token wire format inspectable from the operator side.
 
 ### Back-channel logout (OIDC BCL 1.0)
 
-Sub-only [back-channel logout](docs/BACK_CHANNEL_LOGOUT.md) is wired
+Sub-only [back-channel logout](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/BACK_CHANNEL_LOGOUT.md) is wired
 in. Set `backchannel_logout_uri` on an application to enable per-RP
 fan-out; the AS POSTs a signed `logout_token` whenever a session
 ends (revoke / deactivate / group or state change / account delete).
@@ -675,7 +689,7 @@ as configuration smells worth investigating.
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` is explicitly `False` while one or more applications carry a `backchannel_logout_uri`. The Single-Logout chain breaks at the first hop because RP-initiated logout is the entry-point that triggers back-channel fan-out. | Either remove `backchannel_logout_uri` from the affected applications (listed in the warning text), or re-enable RP-initiated logout (it is on by default — set the key to `True` or remove the explicit `False`). |
 | `allianceauth_oidc.W004` | Warning | One or more **active** applications have a `backchannel_logout_uri` using `http://` while `DEBUG=False`. The admin form rejects new `http://` URIs in production, but legacy rows persisted under `DEBUG=True` survive a flip. The worker re-checks DNS but not scheme, so `logout_token` JWTs (carrying `iss`/`aud`/`sub`/`jti`) keep flowing in cleartext. | Edit each affected application to use `https://`, or deactivate the row if the RP has been retired. |
 | `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` while `DEBUG=False` (without a registered `backchannel_logout_uri` to trigger E006). The SSRF gate on back-channel logout targets is disabled — if a private-IP URI is later registered, the worker will POST signed `logout_token`s to `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IPs. | Set the flag to `False` (or remove it) in production. Keep it `True` only on dev / staging hosts that intentionally point at private RPs. |
-| `allianceauth_oidc.W006` | Warning | DOT's `oauth2_provider_idtoken.jti` column is still `char(32)` on a MariaDB `>= 10.7` backend. Django 5.x treats that MariaDB as having a native `uuid` type and writes the 36-char dashed form, which overflows the legacy column and fails every id_token issuance on `/o/token/` with `1406 Data too long for column 'jti'`. Database-tagged (runs at `migrate` / `check --database`). | Run `manage.py oidc_fix_idtoken_jti` to convert the column to the native `uuid` type Django now expects. See [docs/MARIADB.md](docs/MARIADB.md). |
+| `allianceauth_oidc.W006` | Warning | DOT's `oauth2_provider_idtoken.jti` column is still `char(32)` on a MariaDB `>= 10.7` backend. Django 5.x treats that MariaDB as having a native `uuid` type and writes the 36-char dashed form, which overflows the legacy column and fails every id_token issuance on `/o/token/` with `1406 Data too long for column 'jti'`. Database-tagged (runs at `migrate` / `check --database`). | Run `manage.py oidc_fix_idtoken_jti` to convert the column to the native `uuid` type Django now expects. See [docs/MARIADB.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/MARIADB.md). |
 
 The check ids are stable across releases; muting via Django's
 `SILENCED_SYSTEM_CHECKS` is supported but discouraged — fix the
@@ -817,7 +831,7 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 | Authorization Endpoint URL | `https://auth.example.com/o/authorize/` |
 | Token Endpoint URL | `https://auth.example.com/o/token/` |
 | User Info Endpoint URL | `https://auth.example.com/o/userinfo/` |
-| Issuer | exact value of `issuer` from `https://auth.example.com/o/.well-known/openid-configuration` (mind the trailing slash — strict validators reject mismatched issuers) |
+| Issuer | exact value of `issuer` from `https://auth.example.com/o/.well-known/openid-configuration` — canonical form has no trailing slash (`https://your.host/o`); copy it verbatim, strict validators reject mismatches (see [Endpoints](#endpoints)) |
 | Skip User Profile | **off** — see warning below |
 | Logout URL *(optional)* | `https://auth.example.com/o/logout/` |
 | Client ID | `<client_id>` from `AllianceAuthApplication` admin |
@@ -842,6 +856,15 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 > access token shorter than ~30 s is unsafe in practice. Stick to the recommended `3600` (see
 > [`OAUTH2_PROVIDER` keys](#oauth2_provider-keys)).
 
+## Limitations
+
+- Authorization-code flow only; public clients are out of scope.
+- Session-scoped (`sid`) back-channel logout deferred to feature v2 (sub-only today).
+- No built-in rate-limiting on `/o/token/` and `/o/authorize/` — operator
+  responsibility (see the
+  [operational hardening notes](#operational-hardening-operator-responsibility)).
+- Does not mount its own `/metrics` view (delegated to django-prometheus).
+
 ## Development
 
 ### Nox sessions
@@ -864,7 +887,7 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 | `tests_matrix` | Run the suite across every supported Python (off-lock, uv venv) | no |
 | `tests_aa4` | Run the suite against the Alliance Auth 4.x stack | no |
 | `tests_compat` | Run the suite against an arbitrary `allianceauth` pin | no |
-| `tests_mariadb` | Run the suite against a real MariaDB instead of sqlite (see [docs/MARIADB.md](docs/MARIADB.md)) | no |
+| `tests_mariadb` | Run the suite against a real MariaDB instead of sqlite (see [docs/MARIADB.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/MARIADB.md)) | no |
 | `migrations_check` | Verify migrations are in sync and free of unsafe operations | no |
 | `migrations_concurrency_check` | Scan raw `RunSQL` migrations for blocking (non-online) DDL | no |
 | `actions_lint` | Lint GitHub Actions workflows (`actionlint` + `zizmor`) | no |
@@ -877,13 +900,13 @@ login. (Create an `Administrators` group to grant the wiki admin pages.)
 | `mutation_check` | Gate CI on the mutation survival rate of `mutation.sqlite` | no |
 
 The `mutation*` sessions have their own setup / resume / report-rendering recipe in
-[docs/mutation-testing.md](docs/mutation-testing.md).
+[docs/mutation-testing.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/mutation-testing.md).
 
 ### The `Makefile` is generated
 
 The `Makefile` is a thin shim over these sessions (`make test` → `nox -s tests`, etc.)
 and is **generated, not hand-edited**. Its single source of truth is the `TARGETS` table in
-[`_nox/makefile.py`](_nox/makefile.py); edit a target there (or add one for a new session) and
+[`_nox/makefile.py`](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/_nox/makefile.py); edit a target there (or add one for a new session) and
 regenerate with `make makefile` (`nox -s makefile`). A `makefile_check` gate — wired into
 `preflight`, pre-commit, and CI — keeps the two honest with three drift checks: the committed
 file matches the render, every nox session has a `make` target, and no target names a session
@@ -908,6 +931,17 @@ plan is driven through the suite's REST API by `tests/conformance/run_plan.py`.
 
 This is the level above our own integration tests — it catches spec edge cases that our
 regression tests wouldn't think to check. Run before tagging a release. See
-[tests/conformance/README.md](tests/conformance/README.md) for prerequisites, the manual /
+[tests/conformance/README.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/tests/conformance/README.md) for prerequisites, the manual /
 iterative workflow, configuration overrides, and the list of known conformance findings to
 triage.
+
+## Links
+
+- Changelog: <https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/CHANGELOG.md>
+- Issue tracker: <https://github.com/6RUN0/allianceauth-oidc-provider/issues>
+- Upstream project:
+  <https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider>
+
+## License
+
+MIT — see [LICENSE](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/LICENSE).

@@ -1,12 +1,4 @@
-# allianceauth_oidc
-
-> Это форк
-> [Solar-Helix-Independent-Transport/allianceauth-oidc-provider](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider).
-> Живёт в
-> [6RUN0/allianceauth-oidc-provider](https://github.com/6RUN0/allianceauth-oidc-provider) и
-> добавляет: HTTP-уровень интеграционных тестов, обвязку OIDC Conformance Suite, сервисные
-> CLI-команды, EVE-специфичные claim'ы в id_token и userinfo, локализацию (en / ru / uk) и
-> английский [README.md](README.md).
+# allianceauth-oidc-provider-eveo7
 
 Тонкая прослойка над
 [`django-oauth-toolkit`](https://django-oauth-toolkit.readthedocs.io/), которая превращает
@@ -14,6 +6,14 @@
 Сама по протоколу ничего не делает: всё что касается OAuth / OIDC лежит на DOT, а здесь — только
 доменная access-политика, маппинг claim'ов, безопасное логирование и кастомная модель
 `Application`.
+
+> Это форк
+> [Solar-Helix-Independent-Transport/allianceauth-oidc-provider](https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider).
+> Живёт в
+> [6RUN0/allianceauth-oidc-provider](https://github.com/6RUN0/allianceauth-oidc-provider) и
+> добавляет: HTTP-уровень интеграционных тестов, обвязку OIDC Conformance Suite, сервисные
+> CLI-команды, EVE-специфичные claim'ы в id_token и userinfo, локализацию (en / ru / uk) и
+> английский [README.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/README.md).
 
 - [Обзор](#обзор)
 - [Требования](#требования)
@@ -23,7 +23,10 @@
 - [Справочник](#справочник)
 - [Эксплуатация](#эксплуатация)
 - [Интеграции с RP](#интеграции-с-rp)
+- [Ограничения](#ограничения)
 - [Разработка](#разработка)
+- [Ссылки](#ссылки)
+- [Лицензия](#лицензия)
 
 ## Обзор
 
@@ -36,7 +39,7 @@ whitelist'ом `state` / `group`.
 
 ![Трёхслойная проверка политики: dispatch затем validate_code затем save_bearer_token](https://raw.githubusercontent.com/6RUN0/allianceauth-oidc-provider/current/assets/diagrams/policy-flow.svg)
 
-Source диаграммы — `assets/diagrams/policy-flow.d2`; перерисовать через `make diagrams` после правок.
+Исходник диаграммы — `assets/diagrams/policy-flow.d2`; перерисовать через `make diagrams` после правок.
 
 ## Требования
 
@@ -82,10 +85,14 @@ myauth/
    pip install allianceauth-oidc-provider-eveo7
    ```
 
+   Для Prometheus-метрик поставьте extra:
+   `pip install allianceauth-oidc-provider-eveo7[metrics]` (см. раздел
+   [Наблюдаемость](#наблюдаемость--prometheus-метрики)).
+
    **Не ставьте** одновременно `allianceauth-oidc-provider` и
    `allianceauth-oidc-provider-eveo7` в одно окружение — оба
-   распаковываются в директорию `allianceauth_oidc/`, pip откажет на
-   втором установке с file-conflict'ом. Удалите апстримный пакет, если
+   распаковываются в директорию `allianceauth_oidc/`, pip откажет при
+   второй установке с конфликтом файлов. Удалите апстримный пакет, если
    он установлен.
 
    Если хочется отслеживать `current` напрямую — установка из git
@@ -163,8 +170,16 @@ myauth/
    supervisorctl restart myauth:    # или ваш аналог супервайзера
    ```
 
-> [!NOTE]
-> Если у вас кастомный шаблон логина (`authentication/templates/public/login.html`),
+6. Проверьте, что провайдер отвечает:
+
+   ```sh
+   curl -s https://your.host/o/.well-known/openid-configuration | python -m json.tool
+   ```
+
+   В ответе должны быть `issuer`, `authorization_endpoint`, `jwks_uri` и
+   `backchannel_logout_supported`.
+
+> **Примечание.** Если у вас кастомный шаблон логина (`authentication/templates/public/login.html`),
 > следите, чтобы SSO-ссылка URL-кодировала параметр `next`. Без этого query-параметры
 > обрезаются после редиректа — и OAuth-flow ломается на потерянном `client_id`:
 >
@@ -250,7 +265,7 @@ data-шаг видит non-boolean значение, переключается 
 | `REFRESH_TOKEN_REUSE_PROTECTION` | `True` | Рекомендуется. Защита от replay'я по RFC 6819 §5.2.2.3 — refresh-токен, предъявленный дважды, отзывает всё семейство токенов. |
 | `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` | Компромисс: чем короче срок жизни access-токена, тем чаще RP вынуждены ходить за refresh — быстрее реакция на отзыв, но больше запросов к token endpoint; чем длиннее — тем медленнее распространяется отзыв, зато трафик легче. **Не берите за основу тестовое `60`** — это значение из `tests/test_settingsAA4.py`, нужно лишь для того, чтобы expiry-сценарии в тестах гонялись без `sleep`-ов. В реальном логине RP токен должен прожить как минимум один запрос на `/userinfo` плюс запас на `clockTolerance` клиента (~5 секунд); `passport-openidconnect` (Wiki.js, Outline и им подобные) отвергает токены со сроком жизни меньше минуты сразу же. `3600` (1 час) — то же значение по умолчанию, что в Auth0 / Keycloak / Google. |
 | `REFRESH_TOKEN_EXPIRE_SECONDS` | `24*60*60` | На вкус деплоя — какая толерантность к риску. |
-| `OIDC_ISS_ENDPOINT` | unset | **Обязателен, если хотя бы у одного приложения задан `backchannel_logout_uri`.** Абсолютный URL issuer'а (например, `"https://auth.example.org/o"`). Celery worker, который POST'ит `logout_token`'ы, не имеет HTTP request context, поэтому не может вывести `iss` в runtime — `oidc_issuer(None)` падает на эту настройку. Если back-channel logout сконфигурирован, а настройка не задана, system check (`allianceauth_oidc.E001`) падает на `manage.py check`; CI ломается громко, а не первый end-user logout. См. [OIDC Back-Channel Logout 1.0](docs/BACK_CHANNEL_LOGOUT.ru.md). |
+| `OIDC_ISS_ENDPOINT` | unset | **Обязателен, если хотя бы у одного приложения задан `backchannel_logout_uri`.** Абсолютный URL issuer'а (например, `"https://auth.example.org/o"`). Celery worker, который POST'ит `logout_token`'ы, не имеет HTTP request context, поэтому не может вывести `iss` в runtime — `oidc_issuer(None)` падает на эту настройку. Если back-channel logout сконфигурирован, а настройка не задана, system check (`allianceauth_oidc.E001`) падает на `manage.py check`; CI ломается громко, а не первый end-user logout. См. [OIDC Back-Channel Logout 1.0](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/BACK_CHANNEL_LOGOUT.ru.md). |
 | `OIDC_RP_INITIATED_LOGOUT_ENABLED` | `True` (по умолчанию on) | OIDC RP-Initiated Logout 1.0 — `/o/logout/` + `end_session_endpoint` в discovery. Upstream DOT по умолчанию `False`; AppConfig `_apply_default_oauth2_provider_settings` переключает в `True`, только когда ключ отсутствует, поэтому явный `False` opt-out сохраняется. Пара к `OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT` (DOT default `True`) — DOT рендерит `oauth2_provider/logout_confirm.html` на logout-запросах; наше приложение поставляет свой AA-themed override под `allianceauth_oidc/templates/allianceauth_oidc/logout_confirm.html` (Django резолвит его по template precedence). Установите prompt-настройку в `False`, чтобы пропустить confirm-шаг для headless flow'ов. |
 
 ### Свои настройки (ALLIANCEAUTH_OIDC_*)
@@ -322,7 +337,7 @@ pip install allianceauth-oidc-provider-eveo7[metrics]
 | `aa_oidc_audit_receiver_failures_total` | Counter | Исключения в audit-receiver'ах, проглоченные до того, как они сломали бы signal chain |
 
 Полный контракт — cardinality лейблов, layout buckets гистограмм, API no-op-заглушки и правила
-cross-module namespacing `aa_<module>_*` — лежит в [docs/METRICS.ru.md](docs/METRICS.ru.md).
+cross-module namespacing `aa_<module>_*` — лежит в [docs/METRICS.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/METRICS.ru.md).
 
 ## Справочник
 
@@ -479,7 +494,7 @@ SIEM работает без polling'а таблицы. Подключите с�
 (proof-of-fan-out для SIEM). Сигнал `oidc_logout_dispatched` кидается на каждое терминальное
 состояние независимо, поэтому real-time SIEM-корреляция работает без polling'а.
 
-Контракт retry / dead-letter — в [docs/BACK_CHANNEL_LOGOUT.ru.md](docs/BACK_CHANNEL_LOGOUT.ru.md).
+Контракт retry / dead-letter — в [docs/BACK_CHANNEL_LOGOUT.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/BACK_CHANNEL_LOGOUT.ru.md).
 
 ### Поля приложения
 
@@ -518,7 +533,7 @@ SIEM работает без polling'а таблицы. Подключите с�
 | `oidc_audit_tokens` | Read-only список активных токенов. | нет | `--username`, `--client-id`, `--include-expired` |
 | `oidc_jwks_rotate` | Сгенерировать свежий RSA-ключ для ротации JWKS; печатает PEM + RFC 7638 thumbprint (`kid`) + четырёхшаговый recipe ротации. **Read-only** — не трогает ни settings, ни БД; оператор сам прописывает новый PEM в `OIDC_RSA_PRIVATE_KEY` и переносит предыдущий в `OIDC_RSA_PRIVATE_KEYS_INACTIVE`. | нет | `--out`, `--key-size` |
 | `oidc_show_effective_policy` | Посмотреть per-app state/group whitelist в том виде, в котором он применяется к конкретному пользователю, включая глобальный gate. Полезно при триаже неожиданного `invalid_grant`. | нет | `--username`, `--client-id` |
-| `oidc_fix_idtoken_jti` | Привести колонку `oauth2_provider_idtoken.jti` из DOT к нативному типу `uuid`, который Django ожидает на MariaDB `>= 10.7` (чинит ошибку `1406 Data too long for column 'jti'` на `/o/token/` после апгрейда MariaDB через границу 10.7). No-op на всех остальных бэкендах / уже сконвертированной колонке. См. [docs/MARIADB.md](docs/MARIADB.ru.md). | да | `--dry-run`, `--format` |
+| `oidc_fix_idtoken_jti` | Привести колонку `oauth2_provider_idtoken.jti` из DOT к нативному типу `uuid`, который Django ожидает на MariaDB `>= 10.7` (чинит ошибку `1406 Data too long for column 'jti'` на `/o/token/` после апгрейда MariaDB через границу 10.7). No-op на всех остальных бэкендах / уже сконвертированной колонке. См. [docs/MARIADB.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/MARIADB.ru.md). | да | `--dry-run`, `--format` |
 
 ```sh
 python manage.py oidc_create_app \
@@ -624,8 +639,7 @@ OAUTH2_PROVIDER = {
 }
 ```
 
-> [!IMPORTANT]
-> Нужны обе настройки. `ACCESS_TOKEN_GENERATOR` принимает dotted-path строку,
+> **Важно.** Нужны обе настройки. `ACCESS_TOKEN_GENERATOR` принимает dotted-path строку,
 > потому что эта настройка входит в `IMPORT_STRINGS` DOT — DOT резолвит путь
 > на старте. `PKCE_REQUIRED` НЕ входит в `IMPORT_STRINGS` и поэтому требует
 > ссылку на функцию. Если выставлен только
@@ -651,7 +665,7 @@ RFC 9068 (`typ="at+jwt"`, `aud=client_id`, `client_id`, `exp`, `iat`, `jti`,
 
 **Сценарий миграции per-app → глобал, RP cookbook, дисциплина ротации ключей,
 data-minimization, troubleshooting** — см.
-[docs/JWT_ACCESS_TOKENS.ru.md](docs/JWT_ACCESS_TOKENS.ru.md). Рецепт в §7
+[docs/JWT_ACCESS_TOKENS.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/JWT_ACCESS_TOKENS.ru.md). Рецепт в §7
 проводит по рекомендованной последовательности (сначала per-app, потом
 глобал) и указывает на `manage.py oidc_audit_tokens --include-expired`,
 где колонка `format` позволяет проверить wire-формат каждого токена со
@@ -659,7 +673,7 @@ data-minimization, troubleshooting** — см.
 
 ### Back-channel logout (OIDC BCL 1.0)
 
-Sub-only [back-channel logout](docs/BACK_CHANNEL_LOGOUT.ru.md)
+Sub-only [back-channel logout](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/BACK_CHANNEL_LOGOUT.ru.md)
 встроен. Задайте `backchannel_logout_uri` у приложения, чтобы
 включить per-RP fan-out; AS POST'ит подписанный `logout_token`
 каждый раз, когда сессия завершается (revoke / деактивация /
@@ -669,7 +683,7 @@ Sub-only [back-channel logout](docs/BACK_CHANNEL_LOGOUT.ru.md)
 `allow_redirects=False`), spec-compliant `events` URI и
 secret-pin регрессия на каждой log-строке держат dispatch-путь
 безопасным. Session-scoped logout (`sid`) намеренно отложен до
-следующей feature-итерации.
+feature v2.
 
 `OAUTH2_PROVIDER['OIDC_ISS_ENDPOINT']` обязателен, как только
 хотя бы у одного RP появляется `backchannel_logout_uri` — у
@@ -690,13 +704,13 @@ Celery worker'а нет HTTP request context. Django system check
 | `allianceauth_oidc.E003` | Error | `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS']` не разрешается в `AllianceAuthOAuth2Validator` (или подкласс). | Установите `OAUTH2_PROVIDER['OAUTH2_VALIDATOR_CLASS'] = "allianceauth_oidc.auth_provider.AllianceAuthOAuth2Validator"`. Stock DOT-валидатор пропускает слои 2 и 3 policy-gate'а (`validate_code` / `validate_refresh_token` / `save_bearer_token`) — code-flow обмены и refresh-grant перестают перепроверять state/group membership. |
 | `allianceauth_oidc.E004` | Error | `OAUTH2_PROVIDER['SCOPES']` не содержит scope `openid`. | Добавьте `"openid"` в словарь `SCOPES`. Дефолтная DOT-карта `{"read": ..., "write": ...}` молча выключает выдачу id_token — discovery всё ещё резолвится и access-токены всё ещё минтятся, но OIDC RP'и падают на token endpoint'е с `invalid_scope` или получают token response без `id_token`. |
 | `allianceauth_oidc.E005` | Error | `OAUTH2_PROVIDER['PKCE_REQUIRED']` не является (и не оборачивает) `allianceauth_oidc.pkce.per_app_pkce_required`. Без адаптера DOT использует собственный резолвер, и per-app override `pkce_required=False` молча no-op'ит. Public-клиенты, выпущенные через этот разрыв, уязвимы к перехвату auth-code (RFC 9700 PKCE BCP). | Поставьте `OAUTH2_PROVIDER['PKCE_REQUIRED'] = per_app_pkce_required` (именно **объект функции**, не dotted-путь — DOT не импортирует эту настройку). |
-| `allianceauth_oidc.E006` | Error | Опасная комбинация со конкретной жертвой: `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` И `DEBUG=False` И хотя бы у одного `AllianceAuthApplication` непустой `backchannel_logout_uri`. Подписанные `logout_token` JWT уходили бы на private-IP-таргеты в production-shaped окружении. | Установите `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=False` в проде. Чтобы явно принять trade-off на изолированном лабе / air-gapped staging'е, дополнительно установите `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True` — оба переключателя должны быть выставлены, чтобы опасный путь работал без ошибки. |
+| `allianceauth_oidc.E006` | Error | Опасная комбинация с конкретной жертвой: `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` И `DEBUG=False` И хотя бы у одного `AllianceAuthApplication` непустой `backchannel_logout_uri`. Подписанные `logout_token` JWT уходили бы на private-IP-таргеты в production-shaped окружении. | Установите `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=False` в проде. Чтобы явно принять trade-off на изолированном лабе / air-gapped staging'е, дополнительно установите `ALLIANCEAUTH_OIDC_ALLOW_PRIVATE_BCL_IN_PRODUCTION=True` — оба переключателя должны быть выставлены, чтобы опасный путь работал без ошибки. |
 | `allianceauth_oidc.W001` | Warning | `ALLIANCEAUTH_OIDC_LOG_MASKED_SECRETS=True` при `DEBUG=False`. Логирование маскированных фрагментов (`he…il`) — development aid; в production-shaped окружении это утекает в log-stream идентифицируемые префиксы/суффиксы access/refresh-токенов и клиентских secret'ов. | Установите флаг `False` (или удалите) в проде. Оставляйте `True` только на изолированных staging-хостах, где trade-off осознанный. |
 | `allianceauth_oidc.W002` | Warning | `ALLIANCEAUTH_OIDC_DEFAULT_ACCESS_TOKEN_FORMAT='jwt'`, но `ACCESS_TOKEN_GENERATOR` указывает не на наш dispatching generator (JWT-режим молча неактивен), ЛИБО dispatcher подключён, но default format не выставлен в `'jwt'` (per-app override работает, но глобальный default — нет). | Включите `OAUTH2_PROVIDER['ACCESS_TOKEN_GENERATOR'] = "allianceauth_oidc.tokens.dispatching_access_token_generator"`. Обе половины должны быть согласованы, чтобы JWT был глобальным дефолтом. |
 | `allianceauth_oidc.W003` | Warning | `OAUTH2_PROVIDER['OIDC_RP_INITIATED_LOGOUT_ENABLED']` явно `False`, при том что у одного или нескольких приложений выставлен `backchannel_logout_uri`. Single-Logout chain рвётся на первом hop'е, потому что RP-initiated logout — точка входа, которая триггерит back-channel fan-out. | Либо снимите `backchannel_logout_uri` с затронутых приложений (перечислены в тексте warning'а), либо включите RP-initiated logout обратно (по умолчанию он on — задайте `True` или уберите явный `False`). |
 | `allianceauth_oidc.W004` | Warning | У одного или нескольких **активных** приложений `backchannel_logout_uri` использует `http://` при `DEBUG=False`. Admin-форма блокирует новые `http://` URI в проде, но legacy-строки, сохранённые при `DEBUG=True`, переживают переключение. Воркер re-checks DNS, но не схему — `logout_token` JWT (с `iss`/`aud`/`sub`/`jti`) продолжает уходить cleartext'ом. | Замените URI на `https://` либо деактивируйте строку, если RP уже выведен из эксплуатации. |
 | `allianceauth_oidc.W005` | Warning | `ALLIANCEAUTH_OIDC_LOGOUT_URI_ALLOW_PRIVATE=True` при `DEBUG=False` (но без зарегистрированного `backchannel_logout_uri`, который триггерит E006). SSRF-гейт на back-channel logout target'ы отключён — если private-IP URI будет зарегистрирован позже, воркер POST'нет подписанные `logout_token`'ы на `127.0.0.1` / `169.254.169.254` / k8s overlay / CGNAT IP. | Поставьте флаг `False` (или удалите) в проде. Оставляйте `True` только на dev / staging хостах, которые осознанно указывают на private RP. |
-| `allianceauth_oidc.W006` | Warning | Колонка `oauth2_provider_idtoken.jti` из DOT всё ещё `char(32)` на бэкенде MariaDB `>= 10.7`. Django 5.x считает такую MariaDB носителем нативного типа `uuid` и пишет значение в 36-символьной форме с дефисами, что переполняет legacy-колонку и валит каждую выдачу id_token на `/o/token/` с `1406 Data too long for column 'jti'`. Помечена как database (выполняется на `migrate` / `check --database`). | Запустите `manage.py oidc_fix_idtoken_jti`, чтобы сконвертировать колонку к нативному типу `uuid`, который Django теперь ожидает. См. [docs/MARIADB.md](docs/MARIADB.ru.md). |
+| `allianceauth_oidc.W006` | Warning | Колонка `oauth2_provider_idtoken.jti` из DOT всё ещё `char(32)` на бэкенде MariaDB `>= 10.7`. Django 5.x считает такую MariaDB носителем нативного типа `uuid` и пишет значение в 36-символьной форме с дефисами, что переполняет legacy-колонку и валит каждую выдачу id_token на `/o/token/` с `1406 Data too long for column 'jti'`. Помечена как database (выполняется на `migrate` / `check --database`). | Запустите `manage.py oidc_fix_idtoken_jti`, чтобы сконвертировать колонку к нативному типу `uuid`, который Django теперь ожидает. См. [docs/MARIADB.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/MARIADB.ru.md). |
 
 ID проверок стабильны между релизами; mute через
 `SILENCED_SYSTEM_CHECKS` поддерживается, но не рекомендуется — лучше
@@ -836,7 +850,7 @@ api_url = https://<your.auth.url>/o/userinfo/
 | Authorization Endpoint URL | `https://auth.example.com/o/authorize/` |
 | Token Endpoint URL | `https://auth.example.com/o/token/` |
 | User Info Endpoint URL | `https://auth.example.com/o/userinfo/` |
-| Issuer | то, что отдаёт поле `issuer` из `https://auth.example.com/o/.well-known/openid-configuration` — копируйте дословно, включая или исключая слэш в конце; строгие валидаторы рубят запрос на любом расхождении |
+| Issuer | то, что отдаёт поле `issuer` из `https://auth.example.com/o/.well-known/openid-configuration` — каноническая форма без хвостового слэша (`https://your.host/o`); копируйте дословно, строгие валидаторы рубят запрос на любом расхождении (см. [Endpoint'ы](#endpointы)) |
 | Skip User Profile | **off** — см. предупреждение ниже |
 | Logout URL *(опционально)* | `https://auth.example.com/o/logout/` |
 | Client ID | `<client_id>` из админки `AllianceAuthApplication` |
@@ -863,6 +877,15 @@ api_url = https://<your.auth.url>/o/userinfo/
 > запроса, и `/userinfo` отвечает 401. Держите рекомендованные `3600` (см. таблицу
 > [ключей `OAUTH2_PROVIDER`](#ключи-oauth2_provider)).
 
+## Ограничения
+
+- Только authorization-code flow; public-клиенты вне scope'а.
+- Session-scoped (`sid`) back-channel logout отложен до feature v2 (сегодня только sub).
+- Встроенного rate-limiting на `/o/token/` и `/o/authorize/` нет — это
+  ответственность оператора (см.
+  [усиление безопасности на стороне деплоя](#усиление-безопасности--на-стороне-деплоя)).
+- Свой `/metrics` не монтируется (делегировано django-prometheus).
+
 ## Разработка
 
 ### Сессии nox
@@ -885,7 +908,7 @@ api_url = https://<your.auth.url>/o/userinfo/
 | `tests_matrix` | прогон тестов по всем поддерживаемым Python (off-lock, uv venv) | нет |
 | `tests_aa4` | прогон тестов на стеке Alliance Auth 4.x | нет |
 | `tests_compat` | прогон тестов с произвольным пином `allianceauth` | нет |
-| `tests_mariadb` | прогон тестов на реальной MariaDB вместо sqlite (см. [docs/MARIADB.md](docs/MARIADB.md)) | нет |
+| `tests_mariadb` | прогон тестов на реальной MariaDB вместо sqlite (см. [docs/MARIADB.ru.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/MARIADB.ru.md)) | нет |
 | `migrations_check` | проверка, что миграции согласованы и не содержат опасных операций | нет |
 | `migrations_concurrency_check` | поиск блокирующего (не-online) DDL в сырых `RunSQL`-миграциях | нет |
 | `actions_lint` | линт GitHub Actions workflows (`actionlint` + `zizmor`) | нет |
@@ -898,13 +921,13 @@ api_url = https://<your.auth.url>/o/userinfo/
 | `mutation_check` | gate CI по доле выживших мутантов в `mutation.sqlite` | нет |
 
 У сессий `mutation*` свой setup / resume / report-rendering recipe в
-[docs/mutation-testing.md](docs/mutation-testing.md).
+[docs/mutation-testing.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/docs/mutation-testing.md).
 
 ### `Makefile` генерируется
 
 `Makefile` — тонкий шим над этими сессиями (`make test` → `nox -s tests` и т. д.); он
 **генерируется, а не правится руками**. Единственный источник истины — таблица `TARGETS` в
-[`_nox/makefile.py`](_nox/makefile.py); поменяйте таргет там (или добавьте новый под сессию) и
+[`_nox/makefile.py`](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/_nox/makefile.py); поменяйте таргет там (или добавьте новый под сессию) и
 перегенерируйте через `make makefile` (`nox -s makefile`). Гейт `makefile_check` — вшит в
 `preflight`, pre-commit и CI — держит их согласованными тремя проверками: закоммиченный файл
 совпадает с рендером, у каждой сессии nox есть `make`-таргет, и ни один таргет не ссылается на
@@ -930,4 +953,15 @@ api_url = https://<your.auth.url>/o/userinfo/
 Это уровень выше наших регрессионных тестов: ловит ровно те edge-cases спецификации, до которых
 мы сами не додумаемся. Запускайте перед тегированием релиза. Детали — prerequisites, ручной /
 итеративный сценарий, override'ы настроек и список уже найденных conformance-проблем для
-триажа — лежат в [tests/conformance/README.md](tests/conformance/README.md).
+триажа — лежат в [tests/conformance/README.md](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/tests/conformance/README.md).
+
+## Ссылки
+
+- Changelog: <https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/CHANGELOG.md>
+- Баг-трекер: <https://github.com/6RUN0/allianceauth-oidc-provider/issues>
+- Upstream-проект:
+  <https://github.com/Solar-Helix-Independent-Transport/allianceauth-oidc-provider>
+
+## Лицензия
+
+MIT — см. [LICENSE](https://github.com/6RUN0/allianceauth-oidc-provider/blob/current/LICENSE).
