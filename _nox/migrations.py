@@ -73,9 +73,9 @@ def migrations_check(session: nox.Session) -> None:
        additions without defaults, renames that break running
        deployments. Run via ``uv run --with`` so the linter does
        not pollute the dev dependency group; the dedicated settings
-       module ``tests.test_settings_migration_linter`` pins ten
-       pre-existing migrations as baseline so the gate fires only on
-       new findings.
+       module ``tests.test_settings_migration_linter`` pins a baseline
+       of pre-existing migrations (plus one documented false positive)
+       so the gate fires only on new, genuinely unsafe findings.
 
     Raw-SQL concurrency is covered separately by
     ``migrations_concurrency_check`` (the linter does not read raw SQL).
