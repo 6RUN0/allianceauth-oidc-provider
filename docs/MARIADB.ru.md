@@ -81,16 +81,19 @@ Django 5.x определяет нативный тип `uuid` у MariaDB (Maria
 (например, `a4995e86-529d-402c-a247-fc329e47b293`), и тип его колонки
 становится нативным `uuid` вместо `char(32)`.
 
-`oauth2_provider_idtoken.jti` из `django-oauth-toolkit` — это
-`UUIDField`. На развёртывании, чья схема была создана под старым стеком
-(MariaDB < 10.7 либо версия Django/DOT, рендерившая `UUIDField` как
-`char(32)`), эта колонка остаётся `char(32)`. После того как базу позже
-обновят до MariaDB >= 10.7, Django начинает слать 36-символьное
-значение в 32-символьную колонку, и **каждая выдача id_token падает на
-`/o/token/`** с:
+Две колонки `django-oauth-toolkit` — это `UUIDField`:
+`oauth2_provider_idtoken.jti` и
+`oauth2_provider_refreshtoken.token_family`. На развёртывании, чья схема
+была создана под старым стеком (MariaDB < 10.7 либо версия Django/DOT,
+рендерившая `UUIDField` как `char(32)`), эти колонки остаются `char(32)`.
+После того как базу позже обновят до MariaDB >= 10.7, Django начинает
+слать 36-символьное значение в 32-символьную колонку, и запись падает с
+`1406 Data too long` — **`jti` ломает каждую выдачу id_token на
+`/o/token/`**, а **`token_family` ломает ротацию refresh-токенов**:
 
 ```text
 MySQLdb.DataError: (1406, "Data too long for column 'jti' at row 1")
+MySQLdb.DataError: (1406, "Data too long for column 'token_family' at row 1")
 ```
 
 Это рассогласование схемы и бэкенда, а не баг приложения или логики
@@ -111,32 +114,35 @@ connection.features.has_native_uuid_field  # True
 приложение не везёт под неё миграцию; корректив — management-команда:
 
 ```sh
-# Показать ALTER, не трогая базу.
-python manage.py oidc_fix_idtoken_jti --dry-run
+# Показать ALTER'ы, не трогая базу.
+python manage.py oidc_fix_uuid_columns --dry-run
 
 # Применить. No-op на sqlite / PostgreSQL / MySQL / MariaDB < 10.7
-# либо уже сконвертированной колонке — так что запускать можно безусловно.
-python manage.py oidc_fix_idtoken_jti
+# либо уже сконвертированных колонках — так что запускать можно безусловно.
+python manage.py oidc_fix_uuid_columns
 ```
 
 Команда выполняет эквивалент SQL ниже, который можно применить и
 вручную:
 
 ```sql
--- Привести колонку к типу, который Django теперь ожидает.
-ALTER TABLE oauth2_provider_idtoken MODIFY jti UUID;
+-- Привести каждую колонку к типу, который Django теперь ожидает,
+-- сохранив nullability (jti — NOT NULL, token_family — nullable).
+ALTER TABLE oauth2_provider_idtoken MODIFY jti UUID NOT NULL;
+ALTER TABLE oauth2_provider_refreshtoken MODIFY token_family UUID NULL;
 ```
 
-id_token'ы короткоживущие, так что конвертация существующих строк
+id_token'ы короткоживущие, так что конвертация существующих строк `jti`
 малорискованна; если предпочитаете чистый каст, сначала выполните
 `DELETE FROM oauth2_provider_idtoken;` (клиенты просто переаутентифи-
-цируются). Менее рискованный текстовый шим — `MODIFY jti VARCHAR(36)`,
-но миграционное состояние Django всё равно ожидает `uuid`, поэтому
-нативный тип — более чистое выравнивание. То же рассогласование может
-задеть любую колонку `UUIDField`, созданную до апгрейда на
-MariaDB >= 10.7.
+цируются). `token_family` в основном `NULL` (ставится только при
+ротации), так что её каст ещё дешевле. Менее рискованный текстовый шим —
+`MODIFY ... VARCHAR(36)`, но миграционное состояние Django всё равно
+ожидает `uuid`, поэтому нативный тип — более чистое выравнивание. То же
+рассогласование может задеть любую другую колонку `UUIDField`, созданную
+до апгрейда на MariaDB >= 10.7.
 
 Системная проверка Django `allianceauth_oidc.W006` (помечена как
 database, поэтому выполняется на `migrate` / `check --database`) ловит
-ровно это рассогласование на этапе деплоя и указывает оператору на
-`oidc_fix_idtoken_jti`.
+обе колонки на этапе деплоя и указывает оператору на
+`oidc_fix_uuid_columns`.

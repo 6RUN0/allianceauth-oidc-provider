@@ -14,6 +14,26 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Changed
+
+- The `oidc_fix_idtoken_jti` management command (shipped in 0.4.0) is
+  renamed `oidc_fix_uuid_columns` and now realigns **both** DOT
+  `UUIDField` columns affected by the MariaDB `>= 10.7` native-uuid
+  overflow, preserving each column's nullability. No backward-compatible
+  alias is kept — the old name shipped only one release prior.
+
+### Fixed
+
+- `oauth2_provider_refreshtoken.token_family` overflow on MariaDB
+  `>= 10.7`. Like `idtoken.jti`, `token_family` is a DOT `UUIDField`; on
+  a schema carried across the 10.7 boundary it stays `char(32)` and
+  overflows with `1406 Data too long` during refresh-token rotation.
+  `allianceauth_oidc.W006` now scans both DOT UUID columns (`jti` is
+  `NOT NULL`, `token_family` is nullable) and the renamed
+  `oidc_fix_uuid_columns` command converts both — emitting `UUID NULL`
+  for `token_family` so existing `NULL` rows are preserved. See
+  `docs/MARIADB.md`.
+
 ## [0.4.0] - 2026-06-08
 
 ### Added

@@ -973,8 +973,11 @@ class TestPkceRequiredWiringCheck(TestCase):
 
 class TestW006IdtokenJtiColumnCheck(TestCase):
     """
-    W006 fires only on MariaDB >= 10.7 whose ``oauth2_provider_idtoken
-    .jti`` column is still ``char(32)`` — the native-uuid overflow.
+    W006 fires only on MariaDB >= 10.7 whose DOT ``UUIDField`` columns
+    (``oauth2_provider_idtoken.jti`` and
+    ``oauth2_provider_refreshtoken.token_family``) are still ``char(32)``
+    — the native-uuid overflow. A single Warning lists every offending
+    column.
     """
 
     @staticmethod
@@ -1005,7 +1008,7 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
         from unittest import mock
 
         from allianceauth_oidc.checks import (
-            check_idtoken_jti_native_uuid_column,
+            check_dot_native_uuid_columns,
         )
 
         with (
@@ -1014,13 +1017,18 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
                 "django.db.router.db_for_write", return_value="default"
             ),
         ):
-            return check_idtoken_jti_native_uuid_column(None)
+            return check_dot_native_uuid_columns(None)
 
     def test_fires_on_legacy_char_column(self) -> None:
         from allianceauth_oidc.checks import W006_ID
 
         msgs = self._run_with(self._fake_connection("char"))
+        # A single Warning, even though two columns are legacy char.
         self.assertEqual([m.id for m in msgs], [W006_ID])
+        # Both offending columns must be named so the operator can act
+        # without grepping the schema.
+        self.assertIn("idtoken", msgs[0].msg)
+        self.assertIn("token_family", msgs[0].msg)
 
     def test_clean_when_column_already_uuid(self) -> None:
         self.assertEqual(self._run_with(self._fake_connection("uuid")), [])
@@ -1037,7 +1045,7 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
         # No mocks: on the sqlite suite the vendor guard returns []; on
         # the MariaDB smoke the fresh schema already created jti native.
         from allianceauth_oidc.checks import (
-            check_idtoken_jti_native_uuid_column,
+            check_dot_native_uuid_columns,
         )
 
-        self.assertEqual(check_idtoken_jti_native_uuid_column(None), [])
+        self.assertEqual(check_dot_native_uuid_columns(None), [])

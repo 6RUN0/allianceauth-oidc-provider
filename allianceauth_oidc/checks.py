@@ -93,16 +93,17 @@ condition and remediation. The ``Warning``-level overlay covers:
   Warning (not Error) symmetric with W001 — some operators
   legitimately accept the trade-off on isolated networks.
 
-* **W006** — DOT's ``oauth2_provider_idtoken.jti`` column is still
-  ``char(32)`` on a MariaDB ``>= 10.7`` backend. Django 5.x treats
-  that MariaDB as having a native ``uuid`` type, so it writes
-  ``UUIDField`` values in the 36-char dashed form, which overflows the
-  legacy 32-char column and fails every id_token issuance on
-  ``/o/token/`` with ``1406 Data too long for column 'jti'``. A
-  schema/backend mismatch from upgrading MariaDB across the 10.7
-  boundary; a fresh schema is immune. Database-tagged (runs at
-  ``migrate`` / ``check --database``). Fixed by
-  ``manage.py oidc_fix_idtoken_jti``; see ``docs/MARIADB.md``.
+* **W006** — a DOT ``UUIDField`` column is still ``char(32)`` on a
+  MariaDB ``>= 10.7`` backend. Django 5.x treats that MariaDB as having
+  a native ``uuid`` type, so it writes ``UUIDField`` values in the
+  36-char dashed form, which overflows the legacy 32-char column with
+  ``1406 Data too long``. Two columns are affected:
+  ``oauth2_provider_idtoken.jti`` (fails id_token issuance on
+  ``/o/token/``) and ``oauth2_provider_refreshtoken.token_family``
+  (fails refresh-token rotation). A schema/backend mismatch from
+  upgrading MariaDB across the 10.7 boundary; a fresh schema is immune.
+  Database-tagged (runs at ``migrate`` / ``check --database``). Fixed by
+  ``manage.py oidc_fix_uuid_columns``; see ``docs/MARIADB.md``.
 
 * **E005** — ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` is not
   :func:`allianceauth_oidc.pkce.per_app_pkce_required` (or a
@@ -940,67 +941,90 @@ def _e005(configured: Any) -> checks.Error:
     )
 
 
+# DOT ``UUIDField`` columns Django writes in the native 36-char form on
+# MariaDB >= 10.7, each of which overflows a legacy ``char(32)`` column
+# with error 1406. ``(model-getter name, field name)`` — resolved lazily
+# inside the check so import stays cheap and DOT's swappable models
+# resolve correctly. See ``NATIVE_UUID_TARGETS`` in the
+# ``oidc_fix_uuid_columns`` command, which fixes the same set.
+_NATIVE_UUID_TARGETS: tuple[tuple[str, str], ...] = (
+    ("get_id_token_model", "jti"),
+    ("get_refresh_token_model", "token_family"),
+)
+
+
 @checks.register(checks.Tags.database)
-def check_idtoken_jti_native_uuid_column(
+def check_dot_native_uuid_columns(
     app_configs: Any,
     **kwargs: Any,
 ) -> list[checks.CheckMessage]:
     """
-    Emit ``allianceauth_oidc.W006`` (Warning) when DOT's
-    ``oauth2_provider_idtoken.jti`` column is still ``char(32)`` on a
-    MariaDB ``>= 10.7`` backend.
+    Emit ``allianceauth_oidc.W006`` (Warning) when a DOT ``UUIDField``
+    column is still ``char(32)`` on a MariaDB ``>= 10.7`` backend.
 
     Django 5.x reports ``has_native_uuid_field = True`` for MariaDB
-    ``>= 10.7``, so ``UUIDField`` values go to the database in the
+    ``>= 10.7``, so every ``UUIDField`` goes to the database in the
     36-char dashed form. A legacy ``char(32)`` column (created before
-    the MariaDB upgrade) then overflows on every id_token issuance with
-    ``1406 Data too long for column 'jti'``. Database-tagged so it only
-    runs when the DB is reachable (``migrate`` / ``check --database``);
-    a no-op on any non-native backend or an already-converted column.
+    the MariaDB upgrade) then overflows with ``1406 Data too long``. Two
+    DOT columns are affected: ``oauth2_provider_idtoken.jti`` (id_token
+    issuance on ``/o/token/``) and
+    ``oauth2_provider_refreshtoken.token_family`` (refresh-token
+    rotation). Database-tagged so it only runs when the DB is reachable
+    (``migrate`` / ``check --database``); a no-op on any non-native
+    backend or already-converted columns.
     """
+    import oauth2_provider.models as dot_models
     from django.db import connections, router
-    from oauth2_provider.models import get_id_token_model
 
+    offenders: list[tuple[str, str, str]] = []
     try:
-        model = get_id_token_model()
-        connection = connections[router.db_for_write(model) or "default"]
-        mysql_version = getattr(connection, "mysql_version", None)
-        native_uuid_backend = (
-            connection.vendor == "mysql"
-            and getattr(connection, "mysql_is_mariadb", False)
-            and mysql_version is not None
-            and mysql_version >= (10, 7)
-        )
-        if not native_uuid_backend:
-            return []
-        table = model._meta.db_table
-        column = model._meta.get_field("jti").column
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT DATA_TYPE FROM information_schema.COLUMNS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s "
-                "AND COLUMN_NAME = %s",
-                [table, column],
+        for getter_name, field_name in _NATIVE_UUID_TARGETS:
+            model = getattr(dot_models, getter_name)()
+            connection = connections[router.db_for_write(model) or "default"]
+            mysql_version = getattr(connection, "mysql_version", None)
+            native_uuid_backend = (
+                connection.vendor == "mysql"
+                and getattr(connection, "mysql_is_mariadb", False)
+                and mysql_version is not None
+                and mysql_version >= (10, 7)
             )
-            row = cursor.fetchone()
+            # Every other backend already stores the consistent form, so
+            # a single non-native connection means nothing to flag.
+            if not native_uuid_backend:
+                return []
+            table = model._meta.db_table
+            column = model._meta.get_field(field_name).column
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s "
+                    "AND COLUMN_NAME = %s",
+                    [table, column],
+                )
+                row = cursor.fetchone()
+            if row is not None and str(row[0]).lower() != "uuid":
+                offenders.append((table, column, str(row[0])))
     except _BOOTSTRAP_EXCEPTIONS as exc:
         logger.debug("allianceauth_oidc.W006 deferred: %s", exc)
         return []
 
-    if row is None or str(row[0]).lower() == "uuid":
+    if not offenders:
         return []
+    listing = ", ".join(f"{t}.{c} ('{dt}')" for t, c, dt in offenders)
     return [
         checks.Warning(
             (
-                f"{table}.{column} is '{row[0]}' but this MariaDB "
-                ">= 10.7 makes Django write UUIDField values in the "
-                "36-char native form; id_token issuance fails with "
-                "\"1406 Data too long for column 'jti'\" on /o/token/."
+                f"DOT UUIDField columns are still legacy char on this "
+                f"MariaDB >= 10.7: {listing}. MariaDB >= 10.7 makes "
+                "Django write UUIDField values in the 36-char native "
+                'form; these overflow with "1406 Data too long" '
+                "(id_token issuance on /o/token/ for jti; refresh-token "
+                "rotation for token_family)."
             ),
             id=W006_ID,
             hint=(
-                "Run `manage.py oidc_fix_idtoken_jti` to convert the "
-                "column to the native uuid type Django expects "
+                "Run `manage.py oidc_fix_uuid_columns` to convert the "
+                "column(s) to the native uuid type Django expects "
                 "(see docs/MARIADB.md)."
             ),
         )

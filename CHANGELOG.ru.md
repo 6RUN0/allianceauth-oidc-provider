@@ -14,6 +14,26 @@
 
 ## [Unreleased]
 
+### Изменено
+
+- Management-команда `oidc_fix_idtoken_jti` (вышла в 0.4.0)
+  переименована в `oidc_fix_uuid_columns` и теперь выравнивает **обе**
+  колонки `UUIDField` из DOT, затронутые переполнением native-uuid на
+  MariaDB `>= 10.7`, сохраняя nullability каждой колонки. Обратно
+  совместимый алиас не оставлен — старое имя прожило лишь один релиз.
+
+### Исправлено
+
+- Переполнение `oauth2_provider_refreshtoken.token_family` на MariaDB
+  `>= 10.7`. Как и `idtoken.jti`, `token_family` — это `UUIDField` из
+  DOT; на схеме, перенесённой через границу 10.7, она остаётся
+  `char(32)` и переполняется с `1406 Data too long` при ротации
+  refresh-токенов. `allianceauth_oidc.W006` теперь сканирует обе
+  uuid-колонки DOT (`jti` — `NOT NULL`, `token_family` — nullable), а
+  переименованная команда `oidc_fix_uuid_columns` чинит обе — выдавая
+  `UUID NULL` для `token_family`, чтобы существующие строки с `NULL`
+  сохранились. См. `docs/MARIADB.md`.
+
 ## [0.4.0] - 2026-06-08
 
 ### Добавлено

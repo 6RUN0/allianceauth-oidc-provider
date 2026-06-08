@@ -78,16 +78,19 @@ written in the canonical 36-character dashed form (for example
 `a4995e86-529d-402c-a247-fc329e47b293`), and its column type becomes the
 native `uuid` instead of `char(32)`.
 
-`django-oauth-toolkit`'s `oauth2_provider_idtoken.jti` is a `UUIDField`.
-On a deployment whose schema was created under an older stack (MariaDB
-< 10.7, or a Django/DOT version that rendered `UUIDField` as `char(32)`),
-that column stays `char(32)`. After the database is later upgraded to
-MariaDB >= 10.7, Django starts sending the 36-character value into the
-32-character column and **every id_token issuance fails on `/o/token/`**
-with:
+Two `django-oauth-toolkit` columns are `UUIDField`s:
+`oauth2_provider_idtoken.jti` and
+`oauth2_provider_refreshtoken.token_family`. On a deployment whose schema
+was created under an older stack (MariaDB < 10.7, or a Django/DOT version
+that rendered `UUIDField` as `char(32)`), those columns stay `char(32)`.
+After the database is later upgraded to MariaDB >= 10.7, Django starts
+sending the 36-character value into the 32-character column and the write
+fails with `1406 Data too long` — **`jti` breaks every id_token issuance
+on `/o/token/`**, while **`token_family` breaks refresh-token rotation**:
 
 ```text
 MySQLdb.DataError: (1406, "Data too long for column 'jti' at row 1")
+MySQLdb.DataError: (1406, "Data too long for column 'token_family' at row 1")
 ```
 
 This is a schema/backend mismatch, not an application or DOT-logic bug:
@@ -108,30 +111,33 @@ Fix (operator, one-off). DOT owns the table, so this app ships no
 migration for it; the corrective is a management command instead:
 
 ```sh
-# Preview the ALTER without touching the database.
-python manage.py oidc_fix_idtoken_jti --dry-run
+# Preview the ALTERs without touching the database.
+python manage.py oidc_fix_uuid_columns --dry-run
 
-# Apply it. No-op on sqlite / PostgreSQL / MySQL / MariaDB < 10.7
-# or an already-converted column, so it is safe to run unconditionally.
-python manage.py oidc_fix_idtoken_jti
+# Apply them. No-op on sqlite / PostgreSQL / MySQL / MariaDB < 10.7
+# or already-converted columns, so it is safe to run unconditionally.
+python manage.py oidc_fix_uuid_columns
 ```
 
 The command runs the equivalent of the SQL below, which you can also
 apply by hand:
 
 ```sql
--- Align the column with the type Django now expects.
-ALTER TABLE oauth2_provider_idtoken MODIFY jti UUID;
+-- Align each column with the type Django now expects, preserving
+-- nullability (jti is NOT NULL, token_family is nullable).
+ALTER TABLE oauth2_provider_idtoken MODIFY jti UUID NOT NULL;
+ALTER TABLE oauth2_provider_refreshtoken MODIFY token_family UUID NULL;
 ```
 
-id_tokens are short-lived, so converting existing rows is low-risk; run
-`DELETE FROM oauth2_provider_idtoken;` first if you prefer a clean cast
-(clients simply re-authenticate). A lower-risk text shim is
-`MODIFY jti VARCHAR(36)`, but Django's migration state still expects
-`uuid`, so the native type is the cleaner alignment. The same mismatch
-can hit any `UUIDField` column created before the MariaDB >= 10.7
-upgrade.
+id_tokens are short-lived, so converting existing `jti` rows is low-risk;
+run `DELETE FROM oauth2_provider_idtoken;` first if you prefer a clean
+cast (clients simply re-authenticate). `token_family` is mostly `NULL`
+(set only on rotation) so its cast is cheaper still. A lower-risk text
+shim is `MODIFY ... VARCHAR(36)`, but Django's migration state still
+expects `uuid`, so the native type is the cleaner alignment. The same
+mismatch can hit any other `UUIDField` column created before the MariaDB
+>= 10.7 upgrade.
 
 The Django system check `allianceauth_oidc.W006` (database-tagged, so
-it runs at `migrate` / `check --database`) flags this exact mismatch at
-deploy time, pointing the operator at `oidc_fix_idtoken_jti`.
+it runs at `migrate` / `check --database`) flags both columns at deploy
+time, pointing the operator at `oidc_fix_uuid_columns`.
