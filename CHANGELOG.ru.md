@@ -14,6 +14,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-08
+
 ### Добавлено
 
 - Защитная сетка для нативного `uuid` на MariaDB `>= 10.7` под колонку
@@ -796,7 +798,8 @@ cache-poisoning vector между release-прогонами).
 
 Что было до точки расхождения форка — смотрите `git log` и страницу релизов оригинала.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.1
 [0.3.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.0
