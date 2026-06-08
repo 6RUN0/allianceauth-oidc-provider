@@ -14,6 +14,8 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-08
+
 ### Changed
 
 - The `oidc_fix_idtoken_jti` management command (shipped in 0.4.0) is
@@ -787,7 +789,8 @@ latter to mitigate cache-poisoning across release runs).
 
 For changes prior to this fork's divergence, see `git log` and the upstream releases page.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.2.0b2...v0.3.1
