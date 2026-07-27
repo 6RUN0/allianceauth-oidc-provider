@@ -110,6 +110,36 @@ class TestUserinfoClaims(GrantedOIDCTestCase):
         resp = self.client.get("/o/userinfo/")
         self.assertIn(resp.status_code, (401, 403))
 
+    def test_userinfo_post_with_bearer_header_bypasses_csrf(self):
+        """
+        POST userinfo must work for cookie-less RPs (§5.3.1).
+
+        Regression: overriding ``dispatch`` on DOT's view dropped the
+        parent's ``csrf_exempt`` marker, so an RP POSTing with only an
+        Authorization header got CsrfViewMiddleware's 403 HTML page.
+        Found by the conformance module ``oidcc-userinfo-post-header``;
+        the default test client masks the bug because it skips CSRF
+        checks, hence ``enforce_csrf_checks=True`` here.
+        """
+        tokens = self.run_code_flow(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state="userinfo-post-csrf",
+            expect_id_token=True,
+        )
+        csrf_client = self.client_class(enforce_csrf_checks=True)
+        resp = csrf_client.post(
+            "/o/userinfo/",
+            headers={"authorization": f"Bearer {tokens['access_token']}"},
+        )
+        self.assertEqual(200, resp.status_code)
+        self.assertEqual(
+            "application/json",
+            resp.headers["Content-Type"].split(";")[0],
+        )
+        body = self.json_body(resp, expected_status=None)
+        self.assertEqual(str(self.user1.pk), body["sub"])
+
     def test_email_claim_omitted_when_user_email_is_whitespace(self):
         """
         Regression: ``User.email = "   "`` is truthy and would have

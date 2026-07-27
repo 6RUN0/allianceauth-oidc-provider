@@ -21,12 +21,19 @@ from typing import TYPE_CHECKING, Any
 
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_control
+from django.views.decorators.csrf import csrf_exempt
 from oauth2_provider.views.oidc import UserInfoView
 
 if TYPE_CHECKING:
     from django.http import HttpRequest, HttpResponseBase
 
 
+# csrf_exempt must be re-applied here: Django's ``as_view()`` copies
+# the marker from ``cls.dispatch``, and overriding ``dispatch`` below
+# replaces DOT's decorated method with an unmarked one. Without it,
+# cookie-less RP POSTs to userinfo (OIDC Core 1.0 §5.3.1 requires the
+# POST binding) die in CsrfViewMiddleware with a 403 HTML page.
+@method_decorator(csrf_exempt, name="dispatch")
 @method_decorator(cache_control(no_store=True), name="dispatch")
 class AllianceAuthUserInfoView(UserInfoView):
     """
