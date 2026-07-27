@@ -14,10 +14,13 @@ matrix, locale negotiation, and public-client policy.
 """
 
 import base64
+import html
 import os
+import re
 from typing import Any
 
 from ._factories import make_app
+from ._jwt_helpers import split_jwt
 from ._oidc_testcase import (
     REDIRECT_URI,
     SCOPE_FULL,
@@ -376,11 +379,10 @@ class TestClaimsRequestParameterHTTP(GrantedOIDCTestCase):
 
     The filter-level coverage lives in
     :class:`TestRequestedIdTokenClaimsSelector`; this class closes
-    the HTTP-side contract that the conformance suite's
-    ``oidcc-claims-essential`` was supposed to verify (TIMEOUT
-    upstream, HtmlUnit 4.11.1). Each case asserts the AS does NOT
-    500 / does NOT block the flow on bad input — graceful handling
-    is the security property.
+    the HTTP-side contract behind the conformance suite's
+    ``oidcc-claims-essential`` module. Each case asserts the AS does
+    NOT 500 / does NOT block the flow on bad input — graceful
+    handling is the security property.
     """
 
     def test_authorize_accepts_well_formed_claims_param(self) -> None:
@@ -440,6 +442,158 @@ class TestClaimsRequestParameterHTTP(GrantedOIDCTestCase):
             },
         )
         self.assertLess(resp.status_code, 500)
+
+
+class TestAcrValuesCodeFlow(GrantedOIDCTestCase):
+    """
+    OIDC Core 1.0 §15.1 — a client that requested ACR via
+    ``acr_values`` SHOULD get an ``acr`` claim back; the provider
+    answers ``acr=0`` (RFC 6711 "no specific level") because AA has
+    no concept of authentication levels.
+
+    These are full HTTP flows on purpose: the stub-level tests in
+    :class:`TestRequestedIdTokenClaimsSelector` exercised
+    ``_inject_acr_fallback`` with a hand-built request and stayed
+    green while the real code flow silently dropped ``acr_values``
+    at the token endpoint (oauthlib does not carry it across the
+    exchange; DOT persists only ``nonce`` and ``claims`` on the
+    Grant, and its consent form round-trips only those). The
+    conformance module
+    ``oidcc-ensure-request-with-acr-values-succeeds`` caught the
+    gap as a WARNING. The fix rewrites the authorize query,
+    folding ``acr_values`` into a ``claims.id_token.acr`` member —
+    see ``_fold_acr_values_into_claims_query`` in
+    ``views_authorize.py``.
+
+    The fold lives on the *rendered* flow (GET query / promoted
+    POST body), so these tests drive the endpoints the way a
+    browser does — ``skip_authorization`` fast path and the real
+    consent-form round trip — rather than fabricating a consent
+    POST like ``authorize_to_code`` does (a fabricated POST never
+    passes through the fold).
+    """
+
+    def _authorize_params(self, state: str, extra: dict | None) -> dict:
+        params = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": state,
+        }
+        params.update(extra or {})
+        return params
+
+    def _id_token_claims_via_skip_authorization(
+        self, extra: dict | None, state: str
+    ) -> dict:
+        """GET /o/authorize/ with skip_authorization -> code -> token."""
+        self.oauth_app.skip_authorization = True
+        self.oauth_app.save()
+        resp = self.authorize_get(
+            self.user1, params=self._authorize_params(state, extra)
+        )
+        _, _, qs = self.parse_redirect(resp, (302,))
+        body = self.json_body(
+            self.exchange_code_for_token(
+                code=qs["code"][0], redirect_uri=REDIRECT_URI
+            )
+        )
+        return split_jwt(body["id_token"])[1]
+
+    def test_acr_values_only_yields_acr_zero_in_id_token(self) -> None:
+        claims = self._id_token_claims_via_skip_authorization(
+            {"acr_values": "0"}, state="acr-values-only"
+        )
+        self.assertEqual("0", claims.get("acr"))
+
+    def test_claims_essential_acr_yields_acr_zero_in_id_token(
+        self,
+    ) -> None:
+        claims = self._id_token_claims_via_skip_authorization(
+            {"claims": '{"id_token":{"acr":{"essential":true}}}'},
+            state="acr-claims-essential",
+        )
+        self.assertEqual("0", claims.get("acr"))
+
+    def test_acr_values_alongside_claims_param_yields_acr_zero(
+        self,
+    ) -> None:
+        # Both spec-equivalent request forms at once — the fold must
+        # not clobber the client's own claims.id_token member.
+        claims = self._id_token_claims_via_skip_authorization(
+            {
+                "acr_values": "urn:mace:incommon:iap:silver",
+                "claims": '{"id_token":{"auth_time":{"essential":true}}}',
+            },
+            state="acr-values-plus-claims",
+        )
+        self.assertEqual("0", claims.get("acr"))
+        # The client-requested auth_time member survived the fold.
+        self.assertIn("auth_time", claims)
+
+    def test_no_acr_claim_without_any_acr_request(self) -> None:
+        claims = self._id_token_claims_via_skip_authorization(
+            None, state="acr-not-requested"
+        )
+        self.assertNotIn("acr", claims)
+
+    def test_acr_survives_consent_form_round_trip(self) -> None:
+        """
+        The deployment-default path (``skip_authorization=False``):
+        GET renders the consent form, the folded claims ride DOT's
+        hidden ``claims`` field, the user's POST carries them to the
+        grant. Submits the ACTUAL rendered form fields — no
+        fabricated values.
+        """
+        resp = self.authorize_get(
+            self.user1,
+            params=self._authorize_params(
+                "acr-consent-form", {"acr_values": "0"}
+            ),
+        )
+        self.assertEqual(200, resp.status_code)
+        content = resp.content.decode("utf-8")
+        # Attribute values arrive HTML-escaped (the claims JSON's
+        # quotes render as ``&quot;``) — unescape before re-POSTing.
+        hidden = {
+            name: html.unescape(value)
+            for name, value in re.findall(
+                r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', content
+            )
+        }
+        self.assertIn("acr", hidden.get("claims", ""))
+        code, _, _ = self.authorize_post_and_extract_code(
+            self.user1,
+            data={**hidden, "allow": "true"},
+            expected_redirect_uri=REDIRECT_URI,
+        )
+        body = self.json_body(
+            self.exchange_code_for_token(code=code, redirect_uri=REDIRECT_URI)
+        )
+        claims = split_jwt(body["id_token"])[1]
+        self.assertEqual("0", claims.get("acr"))
+
+    def test_acr_values_with_malformed_claims_param_is_rejected(
+        self,
+    ) -> None:
+        # The fold must leave malformed claims JSON untouched (never
+        # replace client input); oauthlib then rejects the request
+        # ("Malformed claims parameter") instead of the fold masking
+        # the client's error. DOT renders the rejection as an error
+        # page (no redirect — same shape as any authorize-request
+        # validation failure).
+        resp = self.authorize_get(
+            self.user1,
+            params=self._authorize_params(
+                "acr-malformed-claims",
+                {"acr_values": "0", "claims": "this is not json"},
+            ),
+        )
+        self.assertEqual(400, resp.status_code)
+        self.assertIn(
+            "invalid_request", resp.content.decode("utf-8", "replace")
+        )
 
 
 class TestLocaleNegotiation(GrantedOIDCTestCase):

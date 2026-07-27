@@ -9,6 +9,7 @@ per-app access policy enforcement.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -248,6 +249,66 @@ class AuthAuthorizationView(AuthorizationView):
         request.method = "GET"
         request.META["REQUEST_METHOD"] = "GET"
 
+    @staticmethod
+    def _fold_acr_values_into_claims_query(request: HttpRequest) -> None:
+        """
+        Preserve an ``acr_values`` request across the code exchange.
+
+        ``acr_values`` is an authorize-request parameter with no
+        durable carrier: DOT persists only ``nonce`` and ``claims``
+        on the Grant row, and its consent ``AllowForm`` round-trips
+        only those same fields — so by the time the id_token is
+        minted at the token endpoint the ACR request is gone and the
+        ``acr=0`` fallback in ``auth_provider.py`` can never fire.
+        The conformance module
+        ``oidcc-ensure-request-with-acr-values-succeeds`` flags the
+        result: "server SHOULD return an acr claim, but it did not"
+        (OIDC Core 1.0 §15.1).
+
+        Rewrite the query as if the client had asked via the
+        spec-equivalent ``claims.id_token.acr`` voluntary member
+        (OIDC §5.5.1.1 — ``null`` means "requested, no specific
+        requirement"). From there DOT's own plumbing carries it the
+        whole way: query → oauthlib request → hidden ``claims`` form
+        field on the consent screen → ``grant.claims`` →
+        ``request.claims`` at token time, where
+        ``_inject_acr_fallback`` picks it up. Covers both the
+        ``skip_authorization`` fast path and the consent-form POST.
+
+        Deliberately conservative: an existing ``claims.id_token.acr``
+        member (the client's own, possibly ``essential`` form) is
+        never overwritten, and a malformed ``claims`` payload is left
+        untouched for oauthlib to reject with its own
+        ``invalid_request`` ("Malformed claims parameter").
+        """
+        acr_values = request.GET.get("acr_values")
+        if not acr_values:
+            return
+        raw_claims = request.GET.get("claims")
+        if raw_claims:
+            try:
+                claims = json.loads(raw_claims)
+            except ValueError:
+                return
+            if not isinstance(claims, dict):
+                return
+        else:
+            claims = {}
+        id_token_member = claims.get("id_token")
+        if id_token_member is None:
+            id_token_member = {}
+        elif not isinstance(id_token_member, dict):
+            return
+        if "acr" in id_token_member:
+            return
+        id_token_member["acr"] = None
+        claims["id_token"] = id_token_member
+        folded = request.GET.copy()
+        folded["claims"] = json.dumps(claims)
+        encoded = folded.urlencode()
+        request.GET = QueryDict(encoded, mutable=False)
+        request.META["QUERY_STRING"] = encoded
+
     def _get_app(self, request: HttpRequest) -> AllianceAuthApplication | None:
         """
         Retrieve the active OAuth2 Application by ``client_id``.
@@ -442,6 +503,13 @@ class AuthAuthorizationView(AuthorizationView):
         # static method so it is unit-testable in isolation (see
         # ``tests/test_authorize.py::TestAuthAuthorizationViewPromotion``).
         self._promote_post_body_to_query(request)
+
+        # After promotion so the cross-origin POST initial request is
+        # covered too; before the anonymous short-circuit so the
+        # login ``next`` URL already carries the folded claims.
+        # Idempotent — a second pass (post-login re-entry) sees the
+        # ``acr`` member and returns unchanged.
+        self._fold_acr_values_into_claims_query(request)
 
         # Anonymous users go straight to ``super().dispatch()`` so
         # DOT's ``LoginRequiredMixin`` redirects them to ``LOGIN_URL``
