@@ -140,10 +140,11 @@ desktop.ini
 *.sublime-workspace
 
 # AI tooling
-.omc/
-.omx/
 .claude/
 .codegraph/
+.omc/
+.omx/
+.serena/
 
 # Vale: ``styles/`` holds project-shipped vocabularies under
 # ``config/vocabularies/`` (committed) plus any external packages
