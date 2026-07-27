@@ -54,13 +54,18 @@ COPY allianceauth_oidc ./allianceauth_oidc
 
 # Granular ``tests/`` slice — the conformance provider runtime needs
 # only Django settings + URLConf + the fakeredis hook + the RSA key.
-# Excluded by omission: ``tests/test_*.py`` (the unit-test suite,
-# ~50 files run via ``nox -s tests`` on the host, never in this
+# ``_mariadb_container`` rides along because ``test_settingsAA4``
+# imports its settings half at module scope (stdlib-only; the
+# ``AA_OIDC_TEST_DB`` gate is unset here, so it is a no-op that keeps
+# sqlite). Excluded by omission: ``tests/test_*.py`` (the unit-test
+# suite, ~50 files run via ``nox -s tests`` on the host, never in this
 # container) and ``tests/_factories.py`` / ``_jwt_helpers.py`` /
 # ``_oidc_testcase.py`` (test fixtures and helpers with the same
-# host-only lifecycle).
-COPY tests/__init__.py tests/_fakeredis.py tests/celery.py \
-     tests/oidc-test.key tests/test_settingsAA4.py \
+# host-only lifecycle). The slice is drift-gated by
+# ``tests/unit/test_conformance_dockerfile.py``, which recomputes the
+# import closure of the container entrypoints against this slice.
+COPY tests/__init__.py tests/_fakeredis.py tests/_mariadb_container.py \
+     tests/celery.py tests/oidc-test.key tests/test_settingsAA4.py \
      tests/urls.py tests/views.py \
      ./tests/
 

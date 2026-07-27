@@ -114,10 +114,16 @@ services:
       # suite enforces ``https://`` for OIDC discovery. The cert is
       # signed by the CA mounted into the suite container above.
       CONFORMANCE_PUBLIC_URL: https://provider:8443/o
-      CONFORMANCE_CLIENT_ID: conformance-client
-      CONFORMANCE_CLIENT_SECRET: conformance-secret
-      CONFORMANCE_USERNAME: conformance
-      CONFORMANCE_PASSWORD: conformance-pass
+      # Client credentials are deliberately NOT set here. seed.py
+      # (in-container) and run_plan.py (host, no compose env) both
+      # fall back to the defaults in ``runner/config.py`` — the single
+      # source of truth. A value pinned here once forked the two
+      # sides: compose kept the short ``conformance-secret`` after the
+      # runner default grew the >=32-byte HS256 padding, so the app
+      # was seeded with one secret while the suite authenticated with
+      # another and every token exchange died with 401
+      # ``invalid_client``. Guarded by
+      # ``tests/unit/test_conformance_compose.py``.
       AA_USE_FAKE_REDIS: "1"
     depends_on:
       mongodb:
