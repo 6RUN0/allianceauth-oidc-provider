@@ -50,6 +50,136 @@ def _login_task(host_root: str) -> dict[str, Any]:
     }
 
 
+def _login_snapshot_task(host_root: str) -> dict[str, Any]:
+    """
+    Snapshot the login form into the visit's image placeholder.
+
+    Re-auth modules (``oidcc-prompt-login``, ``oidcc-max-age-1``)
+    bind an ``ExpectSecondLoginPage`` placeholder to their second
+    authorization visit ("a screenshot of this must be uploaded") and
+    never finish until it is filled; the login page is exactly the
+    right page to snapshot. The suite scopes the fill per *visit*
+    (``WebRunner.placeholder`` is set by ``goToUrl``), so on visits
+    that bind no placeholder — every first login, both visits of
+    ``oidcc-max-age-10000`` — the ``-optional`` action variant is a
+    no-op.
+
+    The task is safe only inside the browser entry for *positive*
+    authorization flows. Negative modules bind an **error-page**
+    placeholder (``ExpectRedirectUriErrorPage`` and friends) to the
+    same visit; snapshotting their login page consumes that
+    placeholder, the suite's ``waitForPlaceholders`` poller then
+    finishes the test while the browser is still mid-flow, and the
+    module flips to FAILED (regression seen on
+    ``oidcc-response-type-missing`` and
+    ``oidcc-ensure-registered-redirect-uri``). Those flows are routed
+    to snapshot-free entries by the top-level ``match`` patterns in
+    ``build_plan_config`` — keep that routing in mind before moving
+    this task around.
+    """
+    return {
+        "task": "Snapshot login page for re-auth placeholder",
+        "match": f"{host_root}/admin/login*",
+        "optional": True,
+        "commands": [
+            [
+                "wait",
+                "id",
+                "id_username",
+                5,
+                ".*",
+                "update-image-placeholder-optional",
+            ],
+        ],
+    }
+
+
+def _wait_for_implicit_submission_task() -> dict[str, Any]:
+    """
+    Keep the browser window alive until the suite's callback page has
+    delivered the authorization response back to the suite.
+
+    The suite's ``implicitCallback.html`` posts the browser URL (the
+    fragment; empty for ``response_mode=query``) to
+    ``/test/a/conformance/implicit/<random>`` via an **async** XHR on
+    ``DOMContentLoaded``. HtmlUnit runs async XHR as a background job,
+    so the POST races WebRunner teardown: when the WebRunner finishes
+    its task list first, the job dies, the suite never receives the
+    submission, and the module sits in WAITING until our runner's poll
+    timeout — the "HtmlUnit lottery". The page marks completion by
+    inserting ``span#submission_complete`` (either on ``xhr.onload``
+    or via the suite's own 5s ``assumeComplete`` fallback for upstream
+    issue 766), so waiting for that element pins the window open long
+    enough for the background job to run — deterministically, not by
+    luck. ``optional: true`` skips the task whenever the flow ends
+    anywhere other than the suite callback page (provider error pages,
+    negative tests).
+    """
+    return {
+        "task": "Wait for implicit submission",
+        "match": "*/test/a/conformance/callback*",
+        "optional": True,
+        "commands": [
+            ["wait", "id", "submission_complete", 10],
+        ],
+    }
+
+
+def _authorize_flow_tasks(
+    host_root: str, *, snapshot_login: bool
+) -> list[dict[str, Any]]:
+    """
+    Task list driving one authorization visit end to end.
+
+    ``snapshot_login=True`` prepends :func:`_login_snapshot_task` —
+    only ever set for the positive-flow browser entry (see the
+    routing rationale on that function).
+    """
+    tasks: list[dict[str, Any]] = []
+    if snapshot_login:
+        # Must precede Login: it captures the still-unfilled form
+        # and does not navigate, so Login still matches afterwards.
+        tasks.append(_login_snapshot_task(host_root))
+    tasks += [
+        _login_task(host_root),
+        {
+            # ``optional`` on the click: after a rejected
+            # authorization the browser stays on ``/o/authorize*``
+            # showing our error template (no ``allow`` button), and
+            # a hard NoSuchElementException would abort the whole
+            # WebRunner before the error-page task below can run.
+            "task": "Authorize",
+            "match": f"{host_root}/o/authorize*",
+            "optional": True,
+            "commands": [
+                ["click", "name", "allow", "optional"],
+            ],
+        },
+        {
+            # Negative modules expect the provider to reject the
+            # request and bind an ExpectRedirectUriErrorPage-style
+            # placeholder; snapshotting the rendered
+            # ``<h2>Error: …</h2>`` fills it so the module can
+            # finish instead of waiting forever.
+            "task": "Verify authorization error page",
+            "match": f"{host_root}/o/authorize*",
+            "optional": True,
+            "commands": [
+                [
+                    "wait",
+                    "css",
+                    "h2",
+                    5,
+                    "Error: .+",
+                    "update-image-placeholder-optional",
+                ],
+            ],
+        },
+        _wait_for_implicit_submission_task(),
+    ]
+    return tasks
+
+
 def _host_root(public_url: str) -> str:
     """
     Strip the OIDC path prefix from ``public_url`` to recover the
@@ -192,18 +322,40 @@ def build_plan_config() -> dict[str, Any]:
                 ],
             },
             {
+                # JAR modules (``oidcc-ensure-request-object-with-
+                # redirect-uri``, ``oidcc-unsigned-request-object-…``)
+                # carry a literal ``request=`` query parameter and
+                # bind error-page placeholders to their visit — the
+                # login snapshot must not run for them (it would
+                # consume the placeholder; see _login_snapshot_task).
+                # No other basic-cert authorize URL contains
+                # ``request=`` (``request_uri=`` would not match
+                # either — different literal).
+                "match": f"{host_root}/o/authorize*request=*",
+                "tasks": _authorize_flow_tasks(
+                    host_root, snapshot_login=False
+                ),
+            },
+            {
+                # Positive flows: every well-formed authorize URL
+                # carries ``response_type=``. Re-auth modules
+                # (prompt-login / max-age-1) land here and get their
+                # second-login-page screenshot.
+                "match": f"{host_root}/o/authorize*response_type=*",
+                "tasks": _authorize_flow_tasks(host_root, snapshot_login=True),
+            },
+            {
+                # Fallback for malformed-request negatives —
+                # ``oidcc-response-type-missing`` is the only
+                # basic-cert module whose authorize URL lacks
+                # ``response_type=``. Same flow, no login snapshot:
+                # its visit binds ExpectResponseTypeMissingErrorPage
+                # and the provider answers with an error *redirect*,
+                # so the module finishes via the suite callback.
                 "match": f"{host_root}/o/authorize*",
-                "tasks": [
-                    _login_task(host_root),
-                    {
-                        "task": "Authorize",
-                        "match": f"{host_root}/o/authorize*",
-                        "optional": True,
-                        "commands": [
-                            ["click", "name", "allow"],
-                        ],
-                    },
-                ],
+                "tasks": _authorize_flow_tasks(
+                    host_root, snapshot_login=False
+                ),
             },
         ],
     }

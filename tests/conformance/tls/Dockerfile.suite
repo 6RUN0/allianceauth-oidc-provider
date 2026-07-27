@@ -8,7 +8,7 @@
 # auto-import path (``USE_SYSTEM_CA_CERTS``) is bypassed. Importing at
 # build time is the cleanest fix — it survives container restarts and
 # avoids fragile entrypoint juggling.
-ARG IMAGE_TAG=release-v5.1.43
+ARG IMAGE_TAG=release-v5.1.45
 FROM registry.gitlab.com/openid/conformance-suite:${IMAGE_TAG}
 
 # Build context is ``tls/`` so the CA cert is alongside this file.
@@ -39,12 +39,12 @@ RUN update-ca-certificates \
         -keystore "$JAVA_HOME/lib/security/cacerts" \
         -storepass changeit -noprompt
 
-# HtmlUnit 4.11.1 (bundled in release-v5.1.43) hits a
-# ``NullPointerException: engine is null`` in the async XMLHttpRequest
-# callback path; the bug poisons roughly half of the browser-driven
-# basic-cert modules with TIMEOUT. Replacing the bundled jar inside
-# the Spring Boot fat jar requires the original repackage plugin
-# (offsets + MANIFEST positioning + STORED entries) — manual
-# unzip+zip and ``jar uMf0`` both produce corrupt jars. Tracking as
-# a known limitation; the modules that DO complete confirm OIDC
-# compliance.
+# HtmlUnit is pinned at 4.11.1 through the suite's Spring Boot BOM in
+# every release up to at least v5.2.1, so a jar swap is not an option
+# anyway (replacing it inside the Spring Boot fat jar corrupts the
+# archive). What changed in release-v5.1.44 (work item 1827): the
+# suite now sets a 60s HTTP timeout on the headless browser's
+# WebClient. Before that fix a connection the provider accepted but
+# never answered blocked the WebRunner thread forever, which is what
+# used to present as non-deterministic TIMEOUTs across the
+# browser-driven basic-cert modules.

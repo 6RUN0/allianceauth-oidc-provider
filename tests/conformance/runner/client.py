@@ -254,20 +254,23 @@ def export_plan_html(
     *,
     plan_id: str,
     target_dir: pathlib.Path,
+    archive_stem: str | None = None,
 ) -> pathlib.Path:
     """
     Download the suite's HTML report archive for a finished plan.
 
     Calls ``GET /api/plan/exporthtml/{plan_id}`` and streams the
-    response to ``{target_dir}/{plan_id}.zip``. The archive contains
-    one HTML file per module with its full event log — useful for
-    archiving a run, sharing with reviewers, or attaching to a
-    certification submission.
+    response to ``{target_dir}/{archive_stem or plan_id}.zip``. The
+    archive contains one HTML file per module with its full event log
+    — useful for archiving a run, sharing with reviewers, or
+    attaching to a certification submission. ``archive_stem`` lets
+    isolated-mode callers prefix the file with the module name so a
+    directory of 35 per-module archives stays navigable.
 
     Mirrors the upstream ``conformance.py:exporthtml()`` pattern.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
-    archive = target_dir / f"{plan_id}.zip"
+    archive = target_dir / f"{archive_stem or plan_id}.zip"
     resp = session.get(
         f"{SUITE_URL}/api/plan/exporthtml/{plan_id}",
         verify=False,

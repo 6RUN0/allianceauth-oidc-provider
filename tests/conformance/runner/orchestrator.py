@@ -50,6 +50,63 @@ def _plan_id(payload: dict[str, object]) -> str:
     return str(plan_id)
 
 
+def _export_one_archive(
+    session: requests.Session,
+    *,
+    plan_id: str,
+    target_dir: pathlib.Path,
+    archive_stem: str,
+) -> None:
+    """
+    Download one plan archive, logging instead of raising on failure.
+
+    Split out of :func:`_export_archives` so the per-plan
+    ``try``/``except`` does not sit directly inside the loop body —
+    one plan's export hiccup must not abort the remaining exports.
+    """
+    try:
+        archive = export_plan_html(
+            session,
+            plan_id=plan_id,
+            target_dir=target_dir,
+            archive_stem=archive_stem,
+        )
+        logger.info("exported plan archive: %s", archive)
+    except requests.RequestException as exc:
+        logger.warning(
+            "export of plan %s to %s failed: %s", plan_id, target_dir, exc
+        )
+
+
+def _export_archives(
+    session: requests.Session,
+    *,
+    export_dir: pathlib.Path,
+    isolated: bool,
+    executed_plans: list[tuple[str, str]],
+    catalogue_id: str,
+) -> None:
+    """
+    Archive every plan that actually executed tests.
+
+    Shared mode: one plan holds every module — export it once.
+    Isolated mode: every module ran in its own plan; export each
+    (module-name-prefixed) — exporting the catalogue plan instead
+    would 404, because no test ever ran inside it.
+    """
+    if isolated:
+        to_export = [(f"{name}-{pid}", pid) for name, pid in executed_plans]
+    else:
+        to_export = [(catalogue_id, catalogue_id)]
+    for archive_stem, pid in to_export:
+        _export_one_archive(
+            session,
+            plan_id=pid,
+            target_dir=export_dir,
+            archive_stem=archive_stem,
+        )
+
+
 def run_plan(
     plan_name: str,
     *,
@@ -137,6 +194,12 @@ def run_plan(
     module_variant = module_variant or {}
 
     results: list[ModuleResult] = []
+    # (module name, plan id) for every module actually run — the
+    # export step needs the *executed* plans. In shared mode all
+    # entries carry ``catalogue_id``; in isolated mode each module
+    # has its own fresh plan and the catalogue plan never executes a
+    # test (the suite 404s ``exporthtml`` for it).
+    executed_plans: list[tuple[str, str]] = []
     try:
         for index, entry in enumerate(selected):
             # Plan modules look like
@@ -166,6 +229,7 @@ def run_plan(
                 module_variant=per_module_variant,
             )
             results.append(result)
+            executed_plans.append((name, target_plan_id))
             logger.info("  %s -> %s", result.name, result.result)
             # Avoid alias conflict with the next module: suite's
             # WebRunner thread can still hold the plan alias for a
@@ -198,18 +262,18 @@ def run_plan(
                     exc,
                 )
 
-    # Best-effort HTML archive — failure here logs and continues so
-    # an export hiccup does not mask test outcomes. Skipped on an
+    # Best-effort HTML archive — failures log and continue so an
+    # export hiccup does not mask test outcomes. Skipped on an
     # interrupted run: the ``try`` body raised, ``finally`` ran, and
     # the exception is already propagating past this point.
     if export_dir is not None:
-        try:
-            archive = export_plan_html(
-                session, plan_id=catalogue_id, target_dir=export_dir
-            )
-            logger.info("exported plan archive: %s", archive)
-        except requests.RequestException as exc:
-            logger.warning("export to %s failed: %s", export_dir, exc)
+        _export_archives(
+            session,
+            export_dir=export_dir,
+            isolated=isolated,
+            executed_plans=executed_plans,
+            catalogue_id=catalogue_id,
+        )
 
     return emit_summary(
         results,

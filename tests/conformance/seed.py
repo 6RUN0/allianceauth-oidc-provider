@@ -206,11 +206,19 @@ def main() -> None:
         redirect_uri=REDIRECT_URI,
         name="Conformance Test Client",
     )
+    # The suite routes callbacks by plan *alias*, not by client:
+    # modules that drive the secondary client through a browser flow
+    # (``oidcc-refresh-token``) send the primary ``…/callback`` as
+    # redirect_uri for client2 as well. DOT validates redirect_uri
+    # against the registered space-separated whitelist, so client2
+    # must whitelist both — with only ``callback2`` registered the
+    # second authorization dies with "Mismatching redirect URI"
+    # (HTTP 400) before the browser ever sees a page.
     _ensure_app(
         user,
         client_id=CLIENT2_ID,
         client_secret=CLIENT2_SECRET,
-        redirect_uri=REDIRECT_URI_2,
+        redirect_uri=f"{REDIRECT_URI} {REDIRECT_URI_2}",
         name="Conformance Test Client (secondary)",
     )
     sys.stdout.write(

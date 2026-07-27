@@ -23,7 +23,7 @@
 # Pinned to a specific release for reproducibility; flip ``IMAGE_TAG``
 # to ``latest`` to track master.
 
-x-conformance-image: &conformance_image_tag "release-v5.1.43"
+x-conformance-image: &conformance_image_tag "release-v5.1.45"
 
 services:
   mongodb:
@@ -43,7 +43,7 @@ services:
         max-file: "5"
 
   nginx:
-    image: registry.gitlab.com/openid/conformance-suite/nginx:${IMAGE_TAG:-release-v5.1.43}
+    image: registry.gitlab.com/openid/conformance-suite/nginx:${IMAGE_TAG:-release-v5.1.45}
     restart: unless-stopped
     networks:
       # Browser-driven modules follow OIDC redirects to the
@@ -79,7 +79,7 @@ services:
       context: ./tls
       dockerfile: Dockerfile.suite
       args:
-        IMAGE_TAG: ${IMAGE_TAG:-release-v5.1.43}
+        IMAGE_TAG: ${IMAGE_TAG:-release-v5.1.45}
     restart: unless-stopped
     environment:
       BASE_URL: ${CONFORMANCE_BASE_URL:-https://localhost.emobix.co.uk:8443}

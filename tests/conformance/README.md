@@ -20,7 +20,7 @@ a release and after any change to the protocol surface.
 - Docker 24+ (uses Compose V2 — `docker compose`, not `docker-compose`)
 - ~2 GB free disk for the suite + MongoDB images (pulled from
   `registry.gitlab.com/openid/conformance-suite{,/nginx}`; pinned to
-  release-v5.1.43 by default)
+  release-v5.1.45 by default)
 - Ports 8443 (suite) and 8080 (provider) free on the host
 - `/etc/hosts` entry `127.0.0.1 localhost.emobix.co.uk` (the public
   DNS record points there too, so this is usually only needed when
@@ -72,12 +72,9 @@ Use `--strict-warnings` to fail the run on WARNING-level results
 
 ## Run only specific modules
 
-Some plans (notably `oidcc-basic-certification-test-plan`) drive a
-bundled HtmlUnit 4.11.1 instance that hits a `NullPointerException:
-engine is null` in the async XMLHttpRequest path. Roughly half of the
-browser-driven modules can TIMEOUT for that reason — see the
-`tls/Dockerfile.suite` comment for the full context. To run only the
-modules that complete reliably, pass `--include`:
+To iterate on a subset of modules (e.g. the ones still listed in
+`expected_failures.json`) without paying for the full plan, pass
+`--include`:
 
 ```sh
 uv run nox -s conformance -- \
@@ -133,10 +130,14 @@ uv run nox -s conformance -- \
 ```
 
 The runner downloads `GET /api/plan/exporthtml/{plan_id}` and writes
-a zip archive `{plan_id}.zip` into the directory you pass (the
-runner `mkdir -p`s it for you). `.artifacts/` is the project-wide
-ephemeral-output bucket — gitignored and dockerignored, separate
-from `dist/` (wheel/sdist build output). Mirrors the upstream
+zip archives into the directory you pass (the runner `mkdir -p`s it
+for you). In shared mode that is a single `{plan_id}.zip`; under
+`--isolated` every module runs in its own plan, so the runner
+exports one `{module-name}-{plan_id}.zip` per executed module
+(exporting the shared "catalogue" plan would 404 — no test ever ran
+inside it). `.artifacts/` is the project-wide ephemeral-output
+bucket — gitignored and dockerignored, separate from `dist/`
+(wheel/sdist build output). Mirrors the upstream
 `conformance.py:exporthtml()` pattern.
 
 ## Expected failures (XFAIL / XPASS)
@@ -147,10 +148,8 @@ FILE.json`:
 
 ```json
 {
-  "oidcc-userinfo-get": "HtmlUnit 4.11.1 NPE in async XHR (upstream)",
-  "oidcc-userinfo-post-header": "HtmlUnit 4.11.1 NPE in async XHR (upstream)",
-  "oidcc-prompt-login": "OIDC prompt= parameter not yet implemented",
-  "oidcc-id-token-hint": "id_token_hint not yet implemented"
+  "oidcc-prompt-login": "prompt=login forced re-auth not implemented",
+  "oidcc-max-age-1": "max_age=1 forced re-auth not implemented"
 }
 ```
 
@@ -162,11 +161,12 @@ the upstream `run-test-plan.py --expected-failures-file` pattern.
 
 ## Per-module restart loop
 
-The HtmlUnit one-shot bug means a single shared-stack run cannot
-honestly distinguish "real spec failure" from "HtmlUnit gave up".
-For a clean `PASSED` / `FAILED` partition use the per-module
-orchestrator, which tears the suite stack down between every module
-so each one gets a fresh JVM:
+Since the implicit-submission race fix (the `Wait for implicit
+submission` browser task in `runner/plan_config.py`) a shared-stack
+run normally yields a clean partition on its own. When you still
+suspect suite-side state contamination, the per-module orchestrator
+tears the stack down between every module so each one gets a fresh
+JVM:
 
 ```sh
 tests/conformance/run_per_module.sh \
@@ -203,22 +203,42 @@ day-to-day iteration should stay on `nox -s conformance`.
 
 `tests/conformance/expected_failures.json` records the known status
 of every basic-cert module that does NOT pass cleanly today, with
-short reasons grouped into three classes:
+short reasons grouped into two classes:
 
-1. **Real provider gaps** (0 modules) — every basic-cert module
-   the suite tags as a provider behaviour either passes or, when
-   it does not, the failure root-causes to a suite-side issue
-   (HtmlUnit JS engine, manual screenshot upload). Add a line
-   here if a future plan or upstream change surfaces a real
-   provider-side gap.
-2. **HtmlUnit upstream issues** (~15 modules) — TIMEOUT or
-   browser-driver FAILED in the suite-side browser even with
-   per-module restart. These come back only when the suite ships a
-   newer HtmlUnit (4.13+) or a Selenium release that fixes
-   ``HtmlUnitDriver`` element resolution.
-3. **Suite-side SKIP** (3 modules) — `oidcc-scope-{address,phone,all}`
+1. **Provider-side gap: request objects / JAR** (2 modules) —
+   django-oauth-toolkit silently ignores the `request` parameter,
+   so `oidcc-unsigned-request-object-…` and
+   `oidcc-ensure-request-object-with-redirect-uri` complete the
+   flow from the plain query parameters instead of rejecting it.
+   OIDC Core 1.0 §6.1 wants an OP without request support to answer
+   with `request_not_supported`; implementing that rejection in
+   `AuthAuthorizationView` would green both modules.
+2. **Suite-side SKIP** (3 modules) — `oidcc-scope-{address,phone,all}`
    the suite skips because we do not advertise these scopes in
    discovery. Listed so they don't tilt the exit code.
+
+The pre-2026-07-28 ledger blamed ~15 TIMEOUTs on "HtmlUnit 4.11.1
+upstream". That attribution was wrong: the browser flow always
+completed, but the suite's `implicitCallback.html` delivers the
+authorization response back to the suite via an async XHR, and in
+HtmlUnit that background job raced WebRunner teardown. The
+`Wait for implicit submission` browser task in
+`runner/plan_config.py` pins the window open until the page's own
+`#submission_complete` marker appears, which removed the entire
+flaky class (12 modules went green in one run).
+
+The remaining reds then resolved to: forced re-auth modules
+(`oidcc-prompt-login`, `oidcc-max-age-1`) now finish as REVIEW —
+the browser automation uploads the second-login-page screenshot the
+suite wants a human to look at; `oidcc-refresh-token` was a seeding
+bug (client2 must whitelist the primary callback, see `seed.py`);
+`oidcc-userinfo-post-header` was a real provider bug (dropped
+`csrf_exempt` on the userinfo view — fixed, with a regression test
+in `tests/test_userinfo.py`); the JAR pair is the DOT gap above.
+The login-page screenshot is deliberately routed only to
+positive-flow visits — see the browser-entry ordering rationale in
+`runner/plan_config.py` and the guard tests in
+`tests/test_conformance_runner.py`.
 
 `run_per_module.sh` automatically passes
 `--expected-failures tests/conformance/expected_failures.json` if
@@ -229,10 +249,10 @@ a loud alarm that an entry has gone stale and should be removed.
 
 ## Discovery: which modules pass on this machine?
 
-The HtmlUnit NPE is non-deterministic, and a failed module can
-poison the browser state of subsequent modules in the same plan.
 For a clean PASS/FAIL split, run with `--isolated` — each module
-gets a fresh plan instance, so cross-contamination is impossible:
+gets a fresh plan instance, so plan-level state cannot leak between
+modules (note: the suite JVM and its browser thread pool are still
+shared; only `run_per_module.sh` gives a fresh JVM):
 
 ```sh
 uv run nox -s conformance -- \

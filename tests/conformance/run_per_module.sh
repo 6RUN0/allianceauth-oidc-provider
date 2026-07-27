@@ -2,11 +2,13 @@
 # Per-module conformance orchestrator with full stack restart.
 #
 # Why:
-#   HtmlUnit 4.11.1 (bundled in conformance-suite release-v5.1.43)
-#   becomes unable to complete second and subsequent browser-driven
-#   flows in the same JVM — the JS engine's NPE in the async
-#   XMLHttpRequest path poisons the suite-side state. Fresh JVM per
-#   module side-steps that.
+#   HtmlUnit 4.11.1 (still bundled via the suite's Spring Boot BOM
+#   as of release-v5.1.45) can fail to complete second and subsequent
+#   browser-driven flows in the same JVM — the JS engine's NPE in the
+#   async XMLHttpRequest path poisons the suite-side state. Fresh JVM
+#   per module side-steps that. Since release-v5.1.44 the browser's
+#   HTTP client also has a 60s timeout (work item 1827), so a stalled
+#   provider connection no longer wedges a WebRunner thread forever.
 #
 # Cost:
 #   Each module pays ~30 seconds of compose up/down. For the full

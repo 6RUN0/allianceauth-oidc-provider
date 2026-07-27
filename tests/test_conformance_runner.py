@@ -83,3 +83,87 @@ class TestEmitSummary(unittest.TestCase):
         self.assertIn("passed=1", out)
         self.assertIn("warned=1", out)
         self.assertIn("failed=0", out)
+
+
+class TestPlanConfigBrowserRouting(unittest.TestCase):
+    """
+    Pin the browser-entry routing contract of ``build_plan_config``.
+
+    The suite picks the FIRST top-level browser entry whose ``match``
+    fits the ``goToUrl`` URL, then runs that entry's tasks strictly
+    in order (``BrowserControl.goToUrl`` / ``WebRunner``). Two
+    invariants encode hard-won regressions:
+
+    1. The login-page snapshot task must be reachable ONLY from the
+       positive-flow entry (``response_type=``). Negative modules
+       bind error-page placeholders to their visit; a login snapshot
+       there consumes the placeholder and the suite finishes the
+       test mid-flow (``oidcc-response-type-missing`` /
+       ``oidcc-ensure-registered-redirect-uri`` flipped to FAILED).
+    2. Entry order: bad-redirect (``*/callback/*``), then JAR
+       (``request=``), then positive (``response_type=``), then the
+       fallback for ``oidcc-response-type-missing`` — a positive
+       entry listed earlier would swallow the negative flows.
+    """
+
+    def setUp(self) -> None:
+        from tests.conformance.runner.plan_config import build_plan_config
+
+        self.entries = build_plan_config()["browser"]
+
+    def test_entry_order_negatives_before_positive(self) -> None:
+        patterns = [entry["match"] for entry in self.entries]
+        self.assertEqual(4, len(patterns))
+        self.assertTrue(patterns[0].endswith("/callback/*"))
+        self.assertIn("request=", patterns[1])
+        self.assertNotIn("response_type=", patterns[1])
+        self.assertIn("response_type=", patterns[2])
+        self.assertTrue(patterns[3].endswith("/o/authorize*"))
+        self.assertNotIn("=", patterns[3])
+
+    def test_login_snapshot_only_in_positive_entry(self) -> None:
+        def snapshot_positions(entry: dict) -> list[int]:
+            return [
+                index
+                for index, task in enumerate(entry["tasks"])
+                if task["task"].startswith("Snapshot login page")
+            ]
+
+        self.assertEqual([], snapshot_positions(self.entries[0]))
+        self.assertEqual([], snapshot_positions(self.entries[1]))
+        self.assertEqual([], snapshot_positions(self.entries[3]))
+        # Present exactly once in the positive entry, BEFORE Login —
+        # it must capture the still-unfilled form.
+        positive = self.entries[2]
+        self.assertEqual([0], snapshot_positions(positive))
+        self.assertEqual("Login", positive["tasks"][1]["task"])
+
+    def test_login_task_never_touches_placeholders(self) -> None:
+        # The shotgun regression: an update-image-placeholder command
+        # inside the shared Login task fills whatever placeholder the
+        # visit bound — including error-page placeholders.
+        for entry in self.entries:
+            for task in entry["tasks"]:
+                if task["task"] != "Login":
+                    continue
+                for command in task.get("commands", []):
+                    self.assertFalse(
+                        any(
+                            isinstance(part, str)
+                            and part.startswith("update-image-placeholder")
+                            for part in command
+                        ),
+                        f"Login task carries a placeholder fill: {command}",
+                    )
+
+    def test_authorize_entries_end_with_implicit_submission_wait(
+        self,
+    ) -> None:
+        # Every authorize-flow entry must keep the browser window
+        # alive until the suite callback page delivered its async
+        # XHR — dropping the task resurrects the "HtmlUnit lottery"
+        # WAITING timeouts.
+        for entry in self.entries[1:]:
+            last = entry["tasks"][-1]
+            self.assertEqual("Wait for implicit submission", last["task"])
+            self.assertTrue(last["optional"])

@@ -921,3 +921,43 @@ class TestAuthorizeClickjackingHeaders(GrantedOIDCTestCase):
             "frame-ancestors 'none'",
             resp.headers.get("Content-Security-Policy", ""),
         )
+
+
+class TestUnregisteredRedirectUri(GrantedOIDCTestCase):
+    """
+    RFC 6749 §3.1.2.4 / OIDC Core 1.0 §3.1.2.1: a redirect_uri that
+    is not registered for the client MUST NOT be redirected to — the
+    AS has to stop and show the error itself, because redirecting
+    would hand the code (or the error, with the state) to an
+    arbitrary attacker-chosen endpoint.
+
+    The conformance module ``oidcc-ensure-registered-redirect-uri``
+    exercises exactly this (registered callback + random appended
+    path segment) and its browser automation keys on the rendered
+    ``<h2>Error: …</h2>`` heading — see the
+    ``Verify redirect_uri error page`` task in
+    ``tests/conformance/runner/plan_config.py``. This test pins the
+    provider side of that contract.
+    """
+
+    def test_unregistered_redirect_uri_renders_error_page(self) -> None:
+        self.client.force_login(self.user1)
+        response = self.client.get(
+            "/o/authorize/",
+            {
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": f"{REDIRECT_URI}/x1y2z3A4b5",
+                "scope": SCOPE_OPENID,
+                "state": "bad-redirect",
+            },
+        )
+        # Hard stop: 400 error page, no Location header at all.
+        self.assertEqual(400, response.status_code)
+        self.assertNotIn("Location", response.headers)
+        content = response.content.decode("utf-8", errors="replace")
+        # The heading the conformance browser automation matches on.
+        self.assertIn("Error: invalid_request", content)
+        # No consent form on the error page — nothing submittable
+        # that could resume the rejected request.
+        self.assertNotIn('name="allow"', content)
