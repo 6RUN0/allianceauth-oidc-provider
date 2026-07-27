@@ -50,9 +50,10 @@ from _nox._testing import (
     build_django_test_argv,
 )
 from _nox.shared import (
+    AA_GROUP_DJANGO_MAJOR,
     PYTHON_VERSIONS,
     PYTHON_VERSIONS_AA4,
-    TEST_RUNTIME_DEPS,
+    TEST_RUNTIME_GROUP,
     is_docker_available,
     test_env,
 )
@@ -94,7 +95,7 @@ def tests_matrix(session: nox.Session, python_version: str) -> None:
     plan = TestPlan(
         python=python_version,
         aa_group="aa5",
-        extra_deps=tuple(TEST_RUNTIME_DEPS),
+        extra_groups=(TEST_RUNTIME_GROUP,),
         parallel=_MATRIX_PARALLEL,
         labels=tuple(session.posargs),
     )
@@ -120,7 +121,7 @@ def tests_aa4(session: nox.Session, python_version: str) -> None:
     plan = TestPlan(
         python=python_version,
         aa_group="aa4",
-        extra_deps=tuple(TEST_RUNTIME_DEPS),
+        extra_groups=(TEST_RUNTIME_GROUP,),
         parallel=_MATRIX_PARALLEL,
         labels=tuple(session.posargs),
     )
@@ -160,7 +161,7 @@ def tests_compat(session: nox.Session, python_version: str) -> None:
     plan = TestPlan(
         python=python_version,
         pin=aa_pin,
-        extra_deps=tuple(TEST_RUNTIME_DEPS),
+        extra_groups=(TEST_RUNTIME_GROUP,),
         parallel=_MATRIX_PARALLEL,
         labels=tuple(session.posargs),
     )
@@ -214,7 +215,11 @@ def tests_mariadb(
     plan = TestPlan(
         python=python_version,
         aa_group=aa_group,
-        extra_deps=(*TEST_RUNTIME_DEPS, "mysqlclient>=2.2"),
+        extra_groups=(TEST_RUNTIME_GROUP,),
+        # ``mysqlclient`` stays a ``--with`` overlay: it depends on no
+        # Django, so it cannot shadow the AA group's pin the way
+        # django-prometheus once did.
+        extra_deps=("mysqlclient>=2.2",),
         parallel=_MATRIX_PARALLEL,
         labels=labels,
     )
@@ -239,8 +244,18 @@ def _run_offlock(
 
     ``extra_env`` augments the base test env (the ``tests_mariadb`` cell
     threads the ``AA_OIDC_TEST_DB_*`` connection parameters through here).
+
+    For AA-group plans the canary also receives the cell's expected
+    Django major (``AA_OIDC_EXPECT_DJANGO_MAJOR``) so a venv whose
+    Django does not match the group's pin — e.g. a ``--with`` overlay
+    shadowing it — fails loudly before the suite runs. Pin plans
+    (``tests_compat``) carry no expectation.
     """
     env = test_env(session)
+    if plan.aa_group in AA_GROUP_DJANGO_MAJOR:
+        env["AA_OIDC_EXPECT_DJANGO_MAJOR"] = AA_GROUP_DJANGO_MAJOR[
+            plan.aa_group
+        ]
     if extra_env:
         env = {**env, **extra_env}
     session.run(*build_canary_argv(plan), env=env, external=True)

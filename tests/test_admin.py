@@ -345,3 +345,100 @@ class TestApplicationAdminSendTestBackchannelLogout(OIDCTestCase):
         # The follow-up changelist response carries the warning.
         body = resp.content.decode("utf-8")
         self.assertIn("backchannel_logout_on_revoke_only", body)
+
+
+@override_settings(LANGUAGE_CODE="en")
+class TestApplicationAdminRegistrationSource(OIDCTestCase):
+    """
+    DOT 3.4 provenance fields are visible but never editable.
+
+    ``registration_source`` records HOW a row came to exist (manual /
+    DCR / CIMD) — exactly the field an operator needs during incident
+    response to spot a self-registered client, so it must be readable
+    in the change-form and filterable in the changelist. It must NOT
+    be editable: ``oauth2_provider.cimd`` branches on
+    ``registration_source == "cimd"`` into a network-fetching refresh
+    path, so letting an operator flip a hand-registered app to
+    ``cimd`` would hand it to that machinery.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            "admin-regsource",
+            password="x",  # nosec B106 - test fixture
+            is_superuser=True,
+            is_staff=True,
+        )
+        self.client.force_login(self.admin)
+        self.creds = make_app(owner=self.user1)
+
+    def _change_url(self) -> str:
+        return reverse(
+            "admin:allianceauth_oidc_allianceauthapplication_change",
+            args=[self.creds.app.pk],
+        )
+
+    def test_change_form_shows_registration_source_readonly(self) -> None:
+        response = self.client.get(self._change_url())
+        self.assertEqual(200, response.status_code)
+        body = response.content.decode("utf-8")
+        # Visible (label rendered) ...
+        self.assertIn("Registration source", body)
+        # ... but not editable (no bound form input for either
+        # provenance field).
+        self.assertNotIn('name="registration_source"', body)
+        self.assertNotIn('name="cimd_expires_at"', body)
+
+    def test_changelist_filter_by_registration_source(self) -> None:
+        url = reverse(
+            "admin:allianceauth_oidc_allianceauthapplication_changelist"
+        )
+        response = self.client.get(url)
+        self.assertEqual(200, response.status_code)
+        # The filter sidebar renders the field's verbose name — the
+        # affordance an operator uses to spot non-manual rows.
+        self.assertIn(
+            "registration source",
+            response.content.decode("utf-8").lower(),
+        )
+        response = self.client.get(url + "?registration_source__exact=manual")
+        self.assertEqual(200, response.status_code)
+
+    def test_admin_post_cannot_tamper_registration_source(self) -> None:
+        """
+        A crafted POST carrying ``registration_source=cimd`` must not
+        change the stored value — read-only fields ignore posted data.
+        """
+        app = self.creds.app
+        post_data = {
+            "name": app.name,
+            "client_id": app.client_id,
+            "client_type": app.client_type,
+            "authorization_grant_type": app.authorization_grant_type,
+            "redirect_uris": app.redirect_uris or "",
+            "post_logout_redirect_uris": app.post_logout_redirect_uris or "",
+            "allowed_origins": app.allowed_origins or "",
+            "skip_authorization": "",
+            "active": "on",
+            "debug_mode": "",
+            "pkce_required": "on" if app.pkce_required else "",
+            "access_token_format": "",
+            "user": str(app.user_id),
+            "logo_url": app.logo_url or "",
+            "algorithm": app.algorithm,
+            "states": [],
+            "groups": [],
+            "registration_source": "cimd",
+            "_save": "Save",
+        }
+        post_resp = self.client.post(self._change_url(), data=post_data)
+        self.assertIn(
+            post_resp.status_code,
+            (302, 200),
+            f"unexpected status {post_resp.status_code}: "
+            f"{post_resp.content[:400]!r}",
+        )
+        app.refresh_from_db()
+        self.assertEqual("manual", app.registration_source)

@@ -3521,6 +3521,12 @@ class TestModelsKillMutants(OIDCTestCase):
         creds = make_app(
             owner=self.user1,
             backchannel_logout_uri="",  # bypass URI validation
+            # DOT 3.4's ``clean()`` rejects HS256 unless the client
+            # secret is stored unhashed (it is the HMAC signing key);
+            # the flag also drives whether the secret is hashed at
+            # save-time, so it must be set here, not merely toggled
+            # in-memory after the hashed value is already persisted.
+            hash_client_secret=False,
         )
         app = creds.app
         # Non-interned ``"jwt"`` and ``"HS256"`` constructed at runtime.

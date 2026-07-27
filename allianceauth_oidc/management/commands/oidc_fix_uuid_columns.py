@@ -10,11 +10,13 @@ long``. Two columns are affected: ``oauth2_provider_idtoken.jti``
 (id_token issuance on ``/o/token/``) and
 ``oauth2_provider_refreshtoken.token_family`` (refresh-token rotation).
 
-This command is the operator-runnable corrective: on MariaDB >= 10.7 it
-converts each column to the native ``uuid`` type Django now expects,
-preserving the column's nullability; everywhere else (sqlite,
-PostgreSQL, MySQL, MariaDB < 10.7, or an already-converted column) it is
-a no-op. See ``docs/MARIADB.md``.
+This command is the operator-runnable corrective: when Django itself
+reports the native-uuid feature (``has_native_uuid_field`` — Django
+>= 5 on MariaDB >= 10.7) it converts each column to the native
+``uuid`` type Django now expects, preserving the column's nullability;
+everywhere else (sqlite, PostgreSQL, MySQL, MariaDB < 10.7, Django
+4.2, or an already-converted column) it is a no-op. See
+``docs/MARIADB.md``.
 
 It is deliberately a management command, not a migration: the tables
 belong to ``django-oauth-toolkit`` (not this app, so no clean
@@ -99,15 +101,17 @@ class Command(BaseCommand):
         field = model._meta.get_field(field_name)
         column = field.column
 
-        # Only MariaDB >= 10.7 advertises a native uuid type, which is
-        # what makes a legacy char(32) column overflow. Every other
-        # backend already stores the 32-char hex form and is consistent.
-        mysql_version = getattr(connection, "mysql_version", None)
+        # ``has_native_uuid_field`` is Django's own verdict (True only
+        # on Django >= 5 with MariaDB >= 10.7) — the 1406 overflow
+        # needs *Django* writing the 36-char form, not just a capable
+        # server. On Django 4.2 (AA 4.x stacks) char(32) is the
+        # correct column type and converting it is premature. The
+        # vendor guard stays because the information_schema probe and
+        # the ALTER below are MySQL-family SQL.
         native_uuid_backend = (
             connection.vendor == "mysql"
             and getattr(connection, "mysql_is_mariadb", False)
-            and mysql_version is not None
-            and mysql_version >= (10, 7)
+            and getattr(connection.features, "has_native_uuid_field", False)
         )
         if not native_uuid_backend:
             return {
@@ -115,8 +119,8 @@ class Command(BaseCommand):
                 "column": column,
                 "current_type": connection.vendor,
                 "action": "skipped",
-                "detail": "backend has no native UUID type "
-                "(not MariaDB >= 10.7)",
+                "detail": "Django does not use a native UUID type on "
+                "this backend (needs Django >= 5 and MariaDB >= 10.7)",
             }
 
         current = self._column_data_type(connection, table, column)

@@ -184,7 +184,7 @@ def _check_jwt_wiring() -> None:
             actual_name,
             expected,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Diagnostic check, not a hard error: an ImportError or a
         # bogus ACCESS_TOKEN_GENERATOR dotted-path string would land
         # here. Catching ``Exception`` is intentional: any failure

@@ -10,7 +10,8 @@ per-app access policy enforcement.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django.contrib.auth import logout
 from django.contrib.auth.views import redirect_to_login
@@ -519,6 +520,64 @@ class AuthAuthorizationView(AuthorizationView):
 
             case _:
                 assert_never(decision)
+
+    def handle_no_permission(self) -> HttpResponseBase:
+        """
+        Force ``login_required`` for anonymous ``prompt=none`` requests.
+
+        ``LoginRequiredMixin`` invokes ``handle_no_permission`` only for
+        unauthenticated callers, so every request reaching this method
+        has no End-User session. OIDC Core 1.0 §3.1.2.6 mandates that
+        such a ``prompt=none`` request return ``error=login_required``.
+
+        DOT 3.4's implementation resolves a safe (registered)
+        ``redirect_uri`` by running
+        ``validate_authorization_request`` first, which drives
+        oauthlib's silent gate: ``validate_silent_login`` (ours returns
+        True) then ``validate_silent_authorization`` (ours fails closed
+        for non-trusted clients) — the latter raises ``ConsentRequired``,
+        which DOT surfaces as ``error=consent_required``, masking the
+        ``login_required`` the unauthenticated caller must receive. The
+        validators cannot distinguish the anonymous case (oauthlib never
+        receives ``request.user``), but this method can: it is the
+        anonymous branch by construction. Rewriting a ``consent_required``
+        outcome to ``login_required`` here is therefore spec-correct and
+        cannot suppress a legitimate consent prompt (an authenticated
+        user never reaches this method).
+        """
+        # ``handle_no_permission`` always returns a response (Django's
+        # ``AccessMixin`` redirects or raises; it never returns None) —
+        # the stub's Optional return is narrowed away here.
+        response = cast("HttpResponseBase", super().handle_no_permission())
+        prompt = set(str(self.request.GET.get("prompt") or "").split())
+        if "none" not in prompt:
+            return response
+        location = response.get("Location")
+        if not location or "error=consent_required" not in location:
+            return response
+        # Rewrite on the parsed query, not the raw string: DOT builds
+        # the Location as ``redirect_uri + separator + urlencode(...)``,
+        # so a registered redirect_uri whose own query contains the
+        # literal ``error=consent_required`` would divert a substring
+        # replace onto the redirect_uri's copy and leave the appended
+        # (real) error parameter untouched. Every matching pair is
+        # rewritten deliberately: an anonymous ``prompt=none`` response
+        # must never carry ``consent_required``, wherever the pair
+        # sits. Percent-encoding of other values is normalised by the
+        # round-trip; RFC 3986 §2.1 treats the forms as equivalent.
+        scheme, netloc, path, query, fragment = urlsplit(location)
+        pairs = []
+        for key, value in parse_qsl(query, keep_blank_values=True):
+            rewritten = (
+                "login_required"
+                if key == "error" and value == "consent_required"
+                else value
+            )
+            pairs.append((key, rewritten))
+        response["Location"] = urlunsplit(
+            (scheme, netloc, path, urlencode(pairs), fragment)
+        )
+        return response
 
     def get(
         self, request: HttpRequest, *args: Any, **kwargs: Any

@@ -106,11 +106,15 @@ class TestAuthorizePromptNoneAnonymous(OIDCTestCase):
     OIDC Core 1.0 §3.1.2.6: when ``prompt=none`` is sent and the
     end-user is not authenticated, the authorization server MUST
     redirect to ``redirect_uri`` with ``error=login_required``
-    instead of displaying a login or consent UI. The behaviour is
-    inherited from DOT's
-    ``BaseAuthorizationView.handle_no_permission``; this test pins
-    it down so a future override here does not silently regress to
-    the generic ``LOGIN_URL`` redirect.
+    instead of displaying a login or consent UI. DOT 3.4 alone gets
+    this wrong for non-trusted clients: it resolves the request
+    through oauthlib's silent-authorization gate first, so our
+    fail-closed ``validate_silent_authorization`` surfaces as
+    ``error=consent_required`` before DOT's own ``login_required``
+    branch is reached. ``AuthAuthorizationView.handle_no_permission``
+    rewrites that outcome for anonymous callers; these tests pin the
+    override's behaviour, its no-op path for trusted apps, and its
+    robustness against redirect_uris that embed the error literal.
     """
 
     def test_anonymous_prompt_none_redirects_with_login_required(self):
@@ -133,6 +137,78 @@ class TestAuthorizePromptNoneAnonymous(OIDCTestCase):
         )
         self.assertEqual(["login_required"], qs.get("error"))
         self.assertEqual(["prompt-none-anon"], qs.get("state"))
+
+    def test_anonymous_prompt_none_trusted_app_login_required(self):
+        """
+        Pin the override's no-op path: for a trusted app
+        (``skip_authorization=True``) oauthlib's silent gate passes
+        ``validate_silent_authorization``, so DOT's native branch
+        emits ``login_required`` directly and
+        ``handle_no_permission`` must leave the redirect untouched.
+        Guards a refactor that inverts the ``"none" not in prompt``
+        condition or drops the ``error=consent_required`` guard —
+        the whole suite would otherwise still pass.
+        """
+        creds = make_app(
+            owner=self.user1,
+            skip_authorization=True,
+            pkce_required=False,
+        )
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": creds.client_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "prompt-none-anon-trusted",
+                "nonce": "nonce-anon-trusted",
+                "prompt": "none",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertEqual(["login_required"], qs.get("error"))
+        self.assertEqual(["prompt-none-anon-trusted"], qs.get("state"))
+
+    def test_rewrite_targets_appended_error_param_not_redirect_uri(self):
+        """
+        A registered ``redirect_uri`` whose own query string contains
+        the literal ``error=consent_required`` must not divert the
+        ``consent_required`` → ``login_required`` rewrite: the RP
+        must never receive ``consent_required`` on an anonymous
+        ``prompt=none`` request, whatever the redirect_uri looks
+        like. Regression for the first-occurrence ``str.replace``
+        implementation, which rewrote the redirect_uri's copy and
+        left DOT's appended error parameter intact.
+        """
+        tricky_uri = "https://rp.example.org/cb?error=consent_required"
+        creds = make_app(
+            owner=self.user1,
+            redirect_uri=tricky_uri,
+            pkce_required=False,
+        )
+        response = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": creds.client_id,
+                "redirect_uri": tricky_uri,
+                "scope": SCOPE_OPENID,
+                "state": "prompt-none-tricky",
+                "nonce": "nonce-tricky",
+                "prompt": "none",
+            },
+        )
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(
+            loc.startswith("https://rp.example.org/cb"),
+            f"redirect must point at registered redirect_uri, got {loc!r}",
+        )
+        errors = qs.get("error") or []
+        self.assertIn("login_required", errors)
+        self.assertNotIn("consent_required", errors)
+        self.assertEqual(["prompt-none-tricky"], qs.get("state"))
 
 
 class TestValidateSilentAuthorizationTrustedClient(OIDCTestCase):

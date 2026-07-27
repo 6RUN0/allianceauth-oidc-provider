@@ -14,6 +14,61 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the supported `django-oauth-toolkit` range narrows from
+  `>=3.2,<4` to `>=3.4,<3.5`. DOT 3.4 adds the `registration_source` /
+  `cimd_expires_at` columns and widens `client_id` to 255 chars on the
+  abstract application model; migration `0021` (mandatory — run
+  `manage.py migrate`) brings the schema in line, and the `<3.5` cap
+  keeps the next DOT minor from silently reintroducing schema drift.
+  MariaDB/MySQL note: the widened unique `client_id` index is
+  1020 bytes under `utf8mb4` — over the 767-byte index limit of the
+  legacy InnoDB `COMPACT`/`REDUNDANT` row formats (`ERROR 1071`).
+  Migration `0021` handles this automatically: a conditional pre-step
+  converts the application table to `DYNAMIC` (the default since
+  MariaDB 10.2 / MySQL 5.7) before rebuilding the index, and does
+  nothing when the format is already fine or the backend is not
+  MySQL-family.
+- The admin change-form shows DOT 3.4's provenance fields
+  (`registration_source`, `cimd_expires_at`) read-only, and the
+  changelist gains a `registration_source` filter: an auto-registered
+  client must be distinguishable from a hand-registered one during
+  incident response, but the field must not be editable — DOT's CIMD
+  machinery branches on it into a network-fetching refresh path.
+
+### Added
+
+- System check `allianceauth_oidc.W007`: flags applications combining
+  `algorithm="HS256"` with `hash_client_secret=True`. Under DOT >= 3.4
+  such rows fail id_token signing with an unhandled 500 at `/o/token/`
+  and cannot be re-saved through the admin. HS256 apps created under
+  earlier DOT versions with the default hashed secret are exactly this
+  state — switch them to RS256 or re-issue the secret with
+  `hash_client_secret=False`, and run `manage.py check` after
+  upgrading.
+- System check `allianceauth_oidc.W008`: warns when
+  `OAUTH2_PROVIDER['CIMD_ENABLED']` or `['DCR_ENABLED']` is turned on.
+  Client self-registration creates applications with an empty
+  states/groups whitelist, which the access policy treats as "allow
+  every user holding `access_oidc`" — incompatible with the whitelist
+  model this provider enforces.
+
+### Fixed
+
+- Anonymous `prompt=none` requests now return `error=login_required`
+  per OIDC Core 1.0 §3.1.2.6. DOT 3.4 on its own surfaces them as
+  `error=consent_required` for non-trusted clients. The rewrite
+  operates on the parsed query string, so a registered `redirect_uri`
+  embedding the literal error parameter cannot divert it.
+- System check `allianceauth_oidc.W006` and `oidc_fix_uuid_columns`
+  no longer fire on Django 4.2 (AA 4.x stacks). Both used to gate on
+  the MariaDB version alone, but the native-uuid overflow needs
+  *Django* writing the 36-char form
+  (`connection.features.has_native_uuid_field`, Django >= 5): under
+  Django 4.2 a `char(32)` column is correct, so the check warned
+  falsely and the command converted columns prematurely.
+
 ## [0.4.1] - 2026-06-08
 
 ### Changed

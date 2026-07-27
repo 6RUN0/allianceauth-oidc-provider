@@ -31,7 +31,7 @@ classifiers = [
 # ``allianceauth_oidc/__init__.py`` so the value never drifts from the
 # wheel that's actually deployed.
 
-dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.2,<4" ]
+dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.4,<3.5" ]
 
 # Optional extras. ``metrics`` opts the operator into Prometheus
 # integration via ``django-prometheus``: when installed (whether
@@ -125,6 +125,38 @@ dev = [
     # Cyclomatic-complexity guard. Pre-commit thresholds documented in
     # [tool.vulture] adjacent comments — xenon has no pyproject.toml schema.
     "xenon>=0.9",
+]
+# Third-party packages the test suite imports directly, independent of
+# the AA / Django versions in play. Off-lock matrix sessions
+# (``tests_aa4`` / ``tests_matrix`` / ``tests_compat`` /
+# ``tests_mariadb``) select this group NEXT TO the AA-stack group so
+# uv resolves everything in one pass under that group's Django pin.
+# Do NOT thread these as ``uv run --with`` extras instead: a ``--with``
+# overlay resolves outside the project's constraints, and
+# ``--with django-prometheus`` used to pull an unconstrained Django 5.2
+# that shadowed the ``aa4`` venv's Django 4.2 on ``sys.path``. Keep in
+# sync with the imports under ``tests/`` (the import canary in
+# ``_nox/_canary_imports.py`` reports gaps) and with the drift test in
+# ``tests/unit/test_nox_testing.py``.
+test-runtime = [
+    "fakeredis>=2.33",
+    "parameterized>=0.9",
+    "jwcrypto",
+    "requests>=2.32",
+    # tests/test_metrics.py top-level-imports ``prometheus_client`` to
+    # measure the real Counter / Histogram / Gauge side effects from
+    # allianceauth_oidc._metrics; without the dep, AA4 test discovery
+    # crashes with ``ModuleNotFoundError`` before any test runs. The
+    # ``[metrics]`` extra is not pulled in by ``-e .``, and AA 4.13.x
+    # does not list ``django-prometheus`` transitively.
+    "django-prometheus>=2.3",
+    # tests/test_property_invariants.py top-level-imports ``hypothesis``
+    # for property-based testing of PKCE round-trips and scope-claim
+    # monotonicity. Same drift class as the django-prometheus entry
+    # above: hypothesis lives in the ``dev`` group so the default
+    # ``tests`` session sees it via the lock, but the off-lock matrix
+    # venvs do not.
+    "hypothesis>=6.118",
 ]
 
 [tool.uv]
@@ -588,8 +620,12 @@ django-oauth-toolkit = "oauth2_provider"
 #   - DEP004 (dev-only declared): ``requests`` lives in the ``dev``
 #     group for HTTP fixtures, but ``tasks.py`` / ``logout.py``
 #     legitimately import it in production (AA pulls it transitively
-#     via ``esi-py``). Declaring it as a direct prod dep would
-#     duplicate the constraint.
+#     via ``esi-py``). Same for ``jwcrypto``: production imports in
+#     ``logout.py`` / ``tokens.py`` resolve via django-oauth-toolkit's
+#     own dependency, while the ``test-runtime`` group redeclares it
+#     only so off-lock matrix venvs can import the test suite.
+#     Declaring either as a direct prod dep would duplicate the
+#     upstream constraint.
 #   - ``aa_skip_email`` is a runtime-optional AA extension probed via
 #     ``import aa_skip_email`` inside a defensive ``try`` block — by
 #     design absent in most deployments.
@@ -606,7 +642,7 @@ DEP001 = [
     "typing_extensions",
     "aa_skip_email",
 ]
-DEP004 = ["requests"]
+DEP004 = ["requests", "jwcrypto"]
 
 [tool.interrogate]
 # Threshold reflects current baseline (86.4% as of 2026-05-20). The

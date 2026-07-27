@@ -43,6 +43,8 @@ from django.core.management.base import SystemCheckError
 from django.test import TestCase, override_settings
 from oauth2_provider.settings import oauth2_settings
 
+from ._settings_helpers import override_settings_no_dot_reload
+
 
 def _override_oauth2_provider(**overrides: Any) -> dict[str, Any]:
     """
@@ -664,7 +666,7 @@ class TestLogoutWiringCheck(TestCase):
         """
         from allianceauth_oidc.checks import check_logout_wiring
 
-        with override_settings(OAUTH2_PROVIDER=None):
+        with override_settings_no_dot_reload(OAUTH2_PROVIDER=None):
             msgs = check_logout_wiring(None)
         self.assertEqual(msgs, [])
 
@@ -965,7 +967,7 @@ class TestPkceRequiredWiringCheck(TestCase):
             check_pkce_required_wiring,
         )
 
-        with override_settings(OAUTH2_PROVIDER=None):
+        with override_settings_no_dot_reload(OAUTH2_PROVIDER=None):
             msgs = check_pkce_required_wiring(None)
         self.assertEqual(len(msgs), 1, msgs)
         self.assertEqual(msgs[0].id, E005_ID)
@@ -987,6 +989,7 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
         vendor: str = "mysql",
         is_mariadb: bool = True,
         version: tuple = (10, 11),
+        native_django: bool = True,
     ) -> Any:
         from unittest import mock
 
@@ -1001,6 +1004,15 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
         conn.vendor = vendor
         conn.mysql_is_mariadb = is_mariadb
         conn.mysql_version = version
+        # Mirror Django 5.x's feature derivation (True only for MariaDB
+        # >= 10.7); ``native_django=False`` models a Django <= 4.2
+        # backend where the attribute does not exist at all.
+        conn.features.has_native_uuid_field = bool(
+            native_django
+            and vendor == "mysql"
+            and is_mariadb
+            and version >= (10, 7)
+        )
         conn.cursor.return_value = cm
         return conn
 
@@ -1041,6 +1053,17 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
         conn = self._fake_connection("char", vendor="postgresql")
         self.assertEqual(self._run_with(conn), [])
 
+    def test_clean_when_django_has_no_native_uuid(self) -> None:
+        # Django <= 4.2 has no ``has_native_uuid_field`` feature — it
+        # writes UUIDs as 32-char hex regardless of the MariaDB
+        # version, so a char(32) column is correct there and W006 must
+        # stay silent. AA 4.x stacks run exactly this combination
+        # (Django 4.2 on a MariaDB >= 10.7); warning them would tell
+        # operators to convert columns Django is not yet writing the
+        # 36-char form into.
+        conn = self._fake_connection("char", native_django=False)
+        self.assertEqual(self._run_with(conn), [])
+
     def test_clean_on_current_backend(self) -> None:
         # No mocks: on the sqlite suite the vendor guard returns []; on
         # the MariaDB smoke the fresh schema already created jti native.
@@ -1049,3 +1072,142 @@ class TestW006IdtokenJtiColumnCheck(TestCase):
         )
 
         self.assertEqual(check_dot_native_uuid_columns(None), [])
+
+
+class TestHs256HashedSecretCheck(TestCase):
+    """
+    W007 — an application with ``algorithm="HS256"`` and
+    ``hash_client_secret=True`` cannot sign id_tokens.
+
+    HS256 uses the plaintext client secret as the HMAC signing key.
+    DOT >= 3.4 raises ``ImproperlyConfigured`` from ``jwk_key`` during
+    id_token signing (an unhandled 500 at ``/o/token/``) and rejects
+    the combination in ``clean()``, so the row cannot even be
+    re-saved through the admin. Rows created under DOT <= 3.3 with
+    the ``hash_client_secret=True`` default are exactly this legacy
+    state — the check surfaces them at ``manage.py check`` instead
+    of at the first RP sign-in after the upgrade.
+    """
+
+    def setUp(self) -> None:
+        from tests._factories import make_user
+
+        self.user = make_user(username="w007-fixture")
+
+    def _make_legacy_hs256_app(self, **kwargs: Any) -> Any:
+        """Recreate a pre-DOT-3.4 row: HS256 + hashed secret."""
+        from tests._factories import make_app
+
+        # ``objects.create`` does not run ``full_clean``, so DOT
+        # 3.4's clean()-level rejection is bypassed — the same way
+        # a legacy production row predates the rule.
+        return make_app(
+            owner=self.user,
+            algorithm="HS256",
+            hash_client_secret=True,
+            **kwargs,
+        )
+
+    def test_w007_warning_on_hs256_with_hashed_secret(self) -> None:
+        from allianceauth_oidc.checks import (
+            W007_ID,
+            check_hs256_hashed_client_secret,
+        )
+
+        creds = self._make_legacy_hs256_app()
+        msgs = check_hs256_hashed_client_secret(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        msg = msgs[0]
+        self.assertEqual(msg.id, W007_ID)
+        self.assertEqual(msg.level, checks.WARNING)
+        self.assertIn(creds.app.name, msg.msg)
+
+    def test_w007_flags_inactive_app_too(self) -> None:
+        """
+        Unlike W004, inactive rows stay flagged: the admin
+        change-form is equally broken for them (``clean()`` rejects
+        any save), and reactivation would re-arm the 500.
+        """
+        from allianceauth_oidc.checks import (
+            check_hs256_hashed_client_secret,
+        )
+
+        creds = self._make_legacy_hs256_app(active=False)
+        msgs = check_hs256_hashed_client_secret(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn(creds.app.name, msgs[0].msg)
+
+    def test_w007_clean_on_rs256_default(self) -> None:
+        from allianceauth_oidc.checks import (
+            check_hs256_hashed_client_secret,
+        )
+        from tests._factories import make_app
+
+        make_app(owner=self.user)
+        self.assertEqual(check_hs256_hashed_client_secret(None), [])
+
+    def test_w007_clean_on_hs256_with_unhashed_secret(self) -> None:
+        """The factory default for HS256 is the working combination."""
+        from allianceauth_oidc.checks import (
+            check_hs256_hashed_client_secret,
+        )
+        from tests._factories import make_app
+
+        make_app(owner=self.user, algorithm="HS256")
+        self.assertEqual(check_hs256_hashed_client_secret(None), [])
+
+
+class TestCimdDcrEnabledCheck(TestCase):
+    """
+    W008 — ``OAUTH2_PROVIDER['CIMD_ENABLED']`` or ``['DCR_ENABLED']``
+    is turned on.
+
+    DOT 3.4's client self-registration (RFC 7591 DCR; CIMD resolves
+    on any ``client_id`` cache miss at ``/o/authorize/`` /
+    ``/o/token/``) creates ``AllianceAuthApplication`` rows with no
+    ``states``/``groups`` whitelist. ``AccessPolicy`` treats an empty
+    whitelist as "allow every user holding ``access_oidc``", so a
+    self-registered client is authorized for everyone — incompatible
+    with the whitelist model this app enforces.
+    """
+
+    def test_w008_warning_when_cimd_enabled(self) -> None:
+        from allianceauth_oidc.checks import (
+            W008_ID,
+            check_cimd_dcr_disabled,
+        )
+
+        with override_settings(
+            OAUTH2_PROVIDER=_override_oauth2_provider(CIMD_ENABLED=True)
+        ):
+            msgs = check_cimd_dcr_disabled(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertEqual(msgs[0].id, W008_ID)
+        self.assertEqual(msgs[0].level, checks.WARNING)
+        self.assertIn("CIMD_ENABLED", msgs[0].msg)
+
+    def test_w008_warning_when_dcr_enabled(self) -> None:
+        from allianceauth_oidc.checks import (
+            W008_ID,
+            check_cimd_dcr_disabled,
+        )
+
+        with override_settings(
+            OAUTH2_PROVIDER=_override_oauth2_provider(DCR_ENABLED=True)
+        ):
+            msgs = check_cimd_dcr_disabled(None)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertEqual(msgs[0].id, W008_ID)
+        self.assertIn("DCR_ENABLED", msgs[0].msg)
+
+    def test_w008_clean_by_default(self) -> None:
+        from allianceauth_oidc.checks import check_cimd_dcr_disabled
+
+        self.assertEqual(check_cimd_dcr_disabled(None), [])
+
+    def test_w008_clean_when_oauth2_provider_is_not_dict(self) -> None:
+        from allianceauth_oidc.checks import check_cimd_dcr_disabled
+
+        with override_settings_no_dot_reload(OAUTH2_PROVIDER=None):
+            msgs = check_cimd_dcr_disabled(None)
+        self.assertEqual(msgs, [])

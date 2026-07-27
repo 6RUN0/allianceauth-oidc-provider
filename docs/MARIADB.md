@@ -114,10 +114,18 @@ migration for it; the corrective is a management command instead:
 # Preview the ALTERs without touching the database.
 python manage.py oidc_fix_uuid_columns --dry-run
 
-# Apply them. No-op on sqlite / PostgreSQL / MySQL / MariaDB < 10.7
-# or already-converted columns, so it is safe to run unconditionally.
+# Apply them. No-op on sqlite / PostgreSQL / MySQL / MariaDB < 10.7 /
+# Django < 5 or already-converted columns, so it is safe to run
+# unconditionally.
 python manage.py oidc_fix_uuid_columns
 ```
+
+Both the command and the `W006` check key off Django's own verdict
+(`connection.features.has_native_uuid_field`), not the bare MariaDB
+version: on Django 4.2 (Alliance Auth 4.x stacks) UUIDs are still
+written as 32-char hex, `char(32)` is the correct column type, and
+both stay silent. Run the command again after upgrading to an AA 5.x
+/ Django 5.x stack — that upgrade is what flips the feature on.
 
 The command runs the equivalent of the SQL below, which you can also
 apply by hand:

@@ -4,7 +4,7 @@ Django system checks for the OIDC provider — fail-loud-fail-early.
 Structurally-required configurations are guarded here as
 ``Error``-level checks (``E001``-``E006``); misconfigurations that
 are not fatal but routinely cause incident-class confusion are
-surfaced as ``Warning``-level checks (``W001``-``W006``). Each ID
+surfaced as ``Warning``-level checks (``W001``-``W008``). Each ID
 is part of the public API: operators grep for it in CI logs and
 the README references the migration path. ``Error``-severity is
 intentional — demoting any of them to ``Warning`` would let CI and
@@ -37,7 +37,7 @@ startup succeed and crash much later in production.
   ``invalid_scope`` or receives a token response without an
   ``id_token`` member.
 
-The remaining checks (``E005``, ``E006``, ``W001``-``W006``) are
+The remaining checks (``E005``, ``E006``, ``W001``-``W008``) are
 defined below — see each ``@register`` block for its trigger
 condition and remediation. The ``Warning``-level overlay covers:
 
@@ -94,16 +94,40 @@ condition and remediation. The ``Warning``-level overlay covers:
   legitimately accept the trade-off on isolated networks.
 
 * **W006** — a DOT ``UUIDField`` column is still ``char(32)`` on a
-  MariaDB ``>= 10.7`` backend. Django 5.x treats that MariaDB as having
-  a native ``uuid`` type, so it writes ``UUIDField`` values in the
+  backend where Django itself uses a native ``uuid`` type
+  (``connection.features.has_native_uuid_field`` — Django >= 5 with
+  MariaDB >= 10.7). There Django writes ``UUIDField`` values in the
   36-char dashed form, which overflows the legacy 32-char column with
-  ``1406 Data too long``. Two columns are affected:
+  ``1406 Data too long``. Django 4.2 (AA 4.x stacks) writes 32-char
+  hex on the same server, so ``char(32)`` is correct and the check
+  stays silent. Two columns are affected:
   ``oauth2_provider_idtoken.jti`` (fails id_token issuance on
   ``/o/token/``) and ``oauth2_provider_refreshtoken.token_family``
   (fails refresh-token rotation). A schema/backend mismatch from
   upgrading MariaDB across the 10.7 boundary; a fresh schema is immune.
   Database-tagged (runs at ``migrate`` / ``check --database``). Fixed by
   ``manage.py oidc_fix_uuid_columns``; see ``docs/MARIADB.md``.
+
+* **W007** — an application row combines ``algorithm="HS256"`` with
+  ``hash_client_secret=True``. HS256 signs id_tokens with the
+  plaintext client secret as the HMAC key; DOT >= 3.4 raises
+  ``ImproperlyConfigured`` from ``jwk_key`` during signing (an
+  unhandled 500 at ``/o/token/``) and rejects the combination in
+  ``clean()``, so the row cannot be re-saved through the admin
+  either. Rows created under DOT <= 3.3 — which allowed the
+  combination and silently signed with the stored hash, producing
+  id_tokens no RP could verify — surface at ``manage.py check``
+  instead of at the first RP sign-in after the upgrade.
+
+* **W008** — ``OAUTH2_PROVIDER['CIMD_ENABLED']`` or
+  ``['DCR_ENABLED']`` is turned on. DOT 3.4's client
+  self-registration creates application rows with an empty
+  ``states``/``groups`` whitelist, which ``AccessPolicy`` treats as
+  "allow every user holding ``access_oidc``" — incompatible with
+  the whitelist model this app enforces. DCR URLs are deliberately
+  not mounted, but CIMD needs none: DOT's validator resolves
+  ``https://`` client_ids on any cache miss at ``/o/authorize/`` /
+  ``/o/token/`` once the flag is on.
 
 * **E005** — ``OAUTH2_PROVIDER['PKCE_REQUIRED']`` is not
   :func:`allianceauth_oidc.pkce.per_app_pkce_required` (or a
@@ -157,6 +181,8 @@ W003_ID = "allianceauth_oidc.W003"
 W004_ID = "allianceauth_oidc.W004"
 W005_ID = "allianceauth_oidc.W005"
 W006_ID = "allianceauth_oidc.W006"
+W007_ID = "allianceauth_oidc.W007"
+W008_ID = "allianceauth_oidc.W008"
 
 # Dotted-path the W002 check compares ``ACCESS_TOKEN_GENERATOR``
 # against. Kept as a module-level constant so the same string is
@@ -960,12 +986,15 @@ def check_dot_native_uuid_columns(
 ) -> list[checks.CheckMessage]:
     """
     Emit ``allianceauth_oidc.W006`` (Warning) when a DOT ``UUIDField``
-    column is still ``char(32)`` on a MariaDB ``>= 10.7`` backend.
+    column is still ``char(32)`` on a backend where Django uses a
+    native ``uuid`` type.
 
     Django 5.x reports ``has_native_uuid_field = True`` for MariaDB
     ``>= 10.7``, so every ``UUIDField`` goes to the database in the
     36-char dashed form. A legacy ``char(32)`` column (created before
-    the MariaDB upgrade) then overflows with ``1406 Data too long``. Two
+    the MariaDB or Django upgrade) then overflows with ``1406 Data too
+    long``. Django 4.2 lacks the feature and keeps writing 32-char
+    hex, so the same column is correct there and nothing is flagged. Two
     DOT columns are affected: ``oauth2_provider_idtoken.jti`` (id_token
     issuance on ``/o/token/``) and
     ``oauth2_provider_refreshtoken.token_family`` (refresh-token
@@ -981,12 +1010,20 @@ def check_dot_native_uuid_columns(
         for getter_name, field_name in _NATIVE_UUID_TARGETS:
             model = getattr(dot_models, getter_name)()
             connection = connections[router.db_for_write(model) or "default"]
-            mysql_version = getattr(connection, "mysql_version", None)
+            # ``has_native_uuid_field`` is Django's own verdict (True
+            # only on Django >= 5 with MariaDB >= 10.7) — the 1406
+            # overflow needs *Django* writing the 36-char form, not
+            # just a capable server. On Django 4.2 the attribute does
+            # not exist, char(32) is the correct column type, and the
+            # check must stay silent (AA 4.x stacks). The vendor guard
+            # stays because the information_schema probe below is
+            # MySQL-family SQL.
             native_uuid_backend = (
                 connection.vendor == "mysql"
                 and getattr(connection, "mysql_is_mariadb", False)
-                and mysql_version is not None
-                and mysql_version >= (10, 7)
+                and getattr(
+                    connection.features, "has_native_uuid_field", False
+                )
             )
             # Every other backend already stores the consistent form, so
             # a single non-native connection means nothing to flag.
@@ -1026,6 +1063,130 @@ def check_dot_native_uuid_columns(
                 "Run `manage.py oidc_fix_uuid_columns` to convert the "
                 "column(s) to the native uuid type Django expects "
                 "(see docs/MARIADB.md)."
+            ),
+        )
+    ]
+
+
+@checks.register(checks.Tags.compatibility)
+def check_hs256_hashed_client_secret(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W007`` (Warning) for application rows
+    combining ``algorithm="HS256"`` with ``hash_client_secret=True``.
+
+    HS256 uses the plaintext client secret as the HMAC signing key,
+    so the secret must be stored recoverable. DOT >= 3.4 enforces
+    this: ``jwk_key`` raises ``ImproperlyConfigured`` during id_token
+    signing — an unhandled 500 at ``/o/token/`` — and ``clean()``
+    rejects the combination, so the row cannot even be re-saved
+    through the admin. Rows created under DOT <= 3.3 with the
+    ``hash_client_secret=True`` field default are exactly this
+    state; they previously "worked" by signing with the stored hash,
+    producing id_tokens no RP could verify against the real secret.
+
+    Inactive rows stay flagged (unlike W004): the admin change-form
+    is equally broken for them, and reactivation would re-arm the
+    500. Severity is **Warning** (not Error) because deployments
+    without HS256 apps are unaffected and the remediation requires
+    an operator decision — re-issue the secret or switch the
+    algorithm — that a hard check failure would only block, not
+    speed up.
+    """
+    try:
+        Application = apps.get_model(
+            "allianceauth_oidc", "AllianceAuthApplication"
+        )
+        names = sorted(
+            Application.objects.filter(
+                algorithm="HS256", hash_client_secret=True
+            ).values_list("name", flat=True)
+        )
+    except _BOOTSTRAP_EXCEPTIONS as exc:
+        logger.warning(
+            "allianceauth_oidc.W007 deferred: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    if not names:
+        return []
+    listing = ", ".join(repr(n) for n in names)
+    return [
+        checks.Warning(
+            (
+                f"Application(s) {listing} combine algorithm='HS256' "
+                "with hash_client_secret=True. HS256 signs id_tokens "
+                "with the plaintext client secret as the HMAC key; "
+                "django-oauth-toolkit >= 3.4 raises "
+                "ImproperlyConfigured when signing (an unhandled 500 "
+                "at /o/token/) and rejects the combination on save."
+            ),
+            id=W007_ID,
+            hint=(
+                "Switch the application to algorithm='RS256', or set "
+                "hash_client_secret=False and issue a new client "
+                "secret (the stored hash cannot be recovered) — then "
+                "update the RP with the new secret."
+            ),
+        )
+    ]
+
+
+@checks.register(checks.Tags.security)
+def check_cimd_dcr_disabled(
+    app_configs: Any,
+    **kwargs: Any,
+) -> list[checks.CheckMessage]:
+    """
+    Emit ``allianceauth_oidc.W008`` (Warning) when
+    ``OAUTH2_PROVIDER['CIMD_ENABLED']`` or ``['DCR_ENABLED']`` is
+    truthy.
+
+    DOT 3.4's client self-registration (RFC 7591 DCR; CIMD per the
+    Client ID Metadata Document draft) creates application rows with
+    no ``states``/``groups`` whitelist. ``AccessPolicy`` treats an
+    empty whitelist as "allow every user holding ``access_oidc``",
+    so a self-registered client is authorized for every such user —
+    the whitelist model has no way to constrain a client the
+    operator never saw. DCR URLs are deliberately not mounted
+    (``urls.py`` hand-composes its patterns; pinned by
+    ``tests/test_url_inventory.py``), but CIMD needs none: once the
+    flag is on, DOT's validator resolves ``https://`` client_ids on
+    any cache miss at ``/o/authorize/`` / ``/o/token/``, and the
+    default permission class allows every host.
+
+    Reads the raw ``settings.OAUTH2_PROVIDER`` dict (mirroring
+    W003): both flags default to ``False`` in DOT, so only an
+    explicit operator opt-in reaches the warning.
+    """
+    cfg = getattr(settings, "OAUTH2_PROVIDER", None)
+    if not isinstance(cfg, dict):
+        return []
+    enabled = [key for key in ("CIMD_ENABLED", "DCR_ENABLED") if cfg.get(key)]
+    if not enabled:
+        return []
+    listing = " and ".join(enabled)
+    return [
+        checks.Warning(
+            (
+                f"OAUTH2_PROVIDER[{listing}] is enabled. Client "
+                "self-registration creates AllianceAuthApplication "
+                "rows with an empty states/groups whitelist, which "
+                "the access policy treats as 'allow every user "
+                "holding access_oidc' — incompatible with the "
+                "whitelist model this provider enforces."
+            ),
+            id=W008_ID,
+            hint=(
+                "Remove CIMD_ENABLED / DCR_ENABLED from "
+                "OAUTH2_PROVIDER (both default to False). If you "
+                "really need client self-registration, restrict it "
+                "(CIMD_ALLOWED_HOSTS plus a custom CIMD permission "
+                "class) and assign states/groups to auto-registered "
+                "applications before use."
             ),
         )
     ]

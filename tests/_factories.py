@@ -144,9 +144,14 @@ def make_character(
         corporation_id=corp.corporation_id,
         corporation_name=corp.corporation_name,
         corporation_ticker=corp.corporation_ticker,
+        # ``alliance_id`` is nullable on ``EveCharacter``; the denormalised
+        # name/ticker CharFields are NOT NULL (``blank=True, default=""``)
+        # since AA 5.2, so a corpless character must store "" rather than
+        # None. Empty and None are both falsy, so the claims builder omits
+        # them identically — behaviour is unchanged across the AA range.
         alliance_id=getattr(corp.alliance, "alliance_id", None),
-        alliance_name=getattr(corp.alliance, "alliance_name", None),
-        alliance_ticker=getattr(corp.alliance, "alliance_ticker", None),
+        alliance_name=getattr(corp.alliance, "alliance_name", "") or "",
+        alliance_ticker=getattr(corp.alliance, "alliance_ticker", "") or "",
     )
 
 
@@ -213,7 +218,7 @@ def make_user(
     return user
 
 
-def make_app(
+def make_app(  # noqa: PLR0913 - test factory: many optional knobs by design
     *,
     owner: User,
     states: list[str] | None = None,
@@ -226,6 +231,7 @@ def make_app(
     redirect_uri: str = DEFAULT_REDIRECT_URI,
     skip_authorization: bool = False,
     algorithm: str = "RS256",
+    hash_client_secret: bool | None = None,
     client_type: str = AbstractApplication.CLIENT_CONFIDENTIAL,
     authorization_grant_type: str = (
         AbstractApplication.GRANT_AUTHORIZATION_CODE
@@ -251,6 +257,13 @@ def make_app(
     silently produced an unrejected-but-broken row. Renamed to
     ``authorization_grant_type`` to match Django's field name.
     """
+    # DOT 3.4 rejects ``algorithm="HS256"`` with a hashed client secret
+    # at ``full_clean()`` — HS256 signs with the client secret as the
+    # shared HMAC key, so it must be stored unhashed. Default the flag
+    # off for HS256 apps (and on otherwise) so the factory yields a
+    # clean-able row without every caller having to remember the rule.
+    if hash_client_secret is None:
+        hash_client_secret = algorithm != "HS256"
     client_id = generate_client_id()
     raw_secret = generate_client_secret()
     with contextlib.ExitStack() as stack:
@@ -271,6 +284,7 @@ def make_app(
             name=f"TEST APP - {client_id}",
             skip_authorization=skip_authorization,
             algorithm=algorithm,
+            hash_client_secret=hash_client_secret,
             active=active,
             debug_mode=debug_mode,
             pkce_required=pkce_required,

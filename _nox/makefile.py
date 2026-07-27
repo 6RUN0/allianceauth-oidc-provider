@@ -116,15 +116,19 @@ TARGETS: tuple[Target, ...] = (
         recipe=("AA_PIN='$(AA_PIN)' uv run nox -s tests_compat",),
         session="tests_compat",
         comment=(
-            "``tests_compat`` is parametrised across every supported "
-            "Python and",
+            (
+                "``tests_compat`` is parametrised across every supported "
+                "Python and"
+            ),
             "requires ``AA_PIN`` to be set to a PEP 508 requirement. Typical",
             "invocations:",
             "  make test-compat AA_PIN='allianceauth==5.1rc1'",
             "  AA_PIN='allianceauth>=5.0,<5.1' make test-compat",
             "Pass ``-- --python=3.12`` (or run nox directly) to narrow the",
-            "matrix to a single interpreter when probing an "
-            "interpreter-specific",
+            (
+                "matrix to a single interpreter when probing an "
+                "interpreter-specific"
+            ),
             "upstream behaviour.",
         ),
     ),
@@ -137,12 +141,18 @@ TARGETS: tuple[Target, ...] = (
         recipe=("uv run nox -s tests_mariadb",),
         session="tests_mariadb",
         comment=(
-            "DB-backed smoke against the MySQL-family backend. Uses a "
-            "throwaway",
-            "``testcontainers`` MariaDB (needs Docker) or an external "
-            "server via",
-            "``AA_OIDC_TEST_DB_HOST``; skips cleanly when neither is "
-            "available.",
+            (
+                "DB-backed smoke against the MySQL-family backend. Uses a "
+                "throwaway"
+            ),
+            (
+                "``testcontainers`` MariaDB (needs Docker) or an external "
+                "server via"
+            ),
+            (
+                "``AA_OIDC_TEST_DB_HOST``; skips cleanly when neither is "
+                "available."
+            ),
             "See docs/MARIADB.md.",
         ),
     ),
@@ -295,8 +305,10 @@ TARGETS: tuple[Target, ...] = (
         recipe=("uv run nox -s mutation_parallel -- $(N)",),
         session="mutation_parallel",
         comment=(
-            "``mutation-parallel`` resumes an existing "
-            "``mutation.sqlite`` using",
+            (
+                "``mutation-parallel`` resumes an existing "
+                "``mutation.sqlite`` using"
+            ),
             "N isolated worker copies; pass N via the make var or env:",
             "``make mutation-parallel N=8`` or the ``CR_PARALLEL_N`` env var.",
             "See ``_nox/mutation.py::mutation_parallel`` and",
@@ -318,10 +330,14 @@ TARGETS: tuple[Target, ...] = (
         recipe=("uv run nox -s mutation_check",),
         session="mutation_check",
         comment=(
-            "``mutation-check`` reads the existing ``mutation.sqlite`` "
-            "and fails",
-            "when the cosmic-ray survival rate exceeds "
-            "``MUTATION_MAX_SURVIVAL``",
+            (
+                "``mutation-check`` reads the existing ``mutation.sqlite`` "
+                "and fails"
+            ),
+            (
+                "when the cosmic-ray survival rate exceeds "
+                "``MUTATION_MAX_SURVIVAL``"
+            ),
             "(default ``35.0`` — i.e. require >= 65 % killed). Override:",
             "  MUTATION_MAX_SURVIVAL=25.0 make mutation-check    # tighter",
             "  MUTATION_MAX_SURVIVAL=50.0 make mutation-check    # looser",

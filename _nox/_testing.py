@@ -31,9 +31,15 @@ Three provisioning modes, keyed off the :class:`TestPlan` fields:
   ``allianceauth`` requirement for ad-hoc compatibility probes.
 
 Off-lock venvs are deliberately light: they carry the AA stack plus the
-suite's direct third-party imports (``extra_deps``, threaded through as
-repeated ``--with``) but NOT the heavyweight ``dev`` tooling
-(cosmic-ray, basedpyright, ...) the suite never imports.
+suite's direct third-party imports (the ``test-runtime`` dependency
+group, threaded through ``extra_groups``) but NOT the heavyweight
+``dev`` tooling (cosmic-ray, basedpyright, ...) the suite never
+imports. Runtime deps ride a *group* rather than ``--with`` because a
+``uv run --with`` overlay resolves outside the project's constraints —
+``--with django-prometheus`` used to pull an unconstrained Django 5.2
+into the overlay, shadowing the ``aa4`` group's Django 4.2 base venv
+on ``sys.path``. ``extra_deps`` (``--with``) remains for per-session
+extras that pull no Django of their own (e.g. ``mysqlclient``).
 """
 
 from __future__ import annotations
@@ -69,14 +75,17 @@ class TestPlan:
     ``python`` None selects the in-venv (lock-driven) mode; a version
     string selects an off-lock ``uv run`` mode. ``aa_group`` and ``pin``
     are mutually exclusive AA selectors (``pin`` wins if both are set).
-    ``extra_deps`` are off-lock ``--with`` requirements; ``parallel``
-    maps to ``--parallel=<value>``; ``labels`` are the raw posargs
-    forwarded to :func:`resolve_test_labels`.
+    ``extra_groups`` are additional ``--group`` selectors resolved
+    jointly with the AA group (Django-safe); ``extra_deps`` are
+    off-lock ``--with`` overlay requirements and must not pull Django;
+    ``parallel`` maps to ``--parallel=<value>``; ``labels`` are the raw
+    posargs forwarded to :func:`resolve_test_labels`.
     """
 
     python: str | None = None
     aa_group: str | None = None
     pin: str | None = None
+    extra_groups: tuple[str, ...] = ()
     extra_deps: tuple[str, ...] = ()
     parallel: str = "auto"
     labels: tuple[str, ...] = ()
@@ -97,6 +106,8 @@ def _uv_prefix(plan: TestPlan) -> list[str]:
         prefix += ["--no-default-groups", "--with", plan.pin]
     elif plan.aa_group:
         prefix += ["--no-default-groups", "--group", plan.aa_group]
+    for group in plan.extra_groups:
+        prefix += ["--group", group]
     for dep in plan.extra_deps:
         prefix += ["--with", dep]
     prefix.append("--isolated")

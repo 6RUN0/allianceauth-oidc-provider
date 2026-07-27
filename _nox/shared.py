@@ -75,34 +75,25 @@ PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
 # only schedules runs that can actually succeed.
 PYTHON_VERSIONS_AA4 = ["3.10", "3.11", "3.12"]
 
-# Third-party runtime dependencies the test suite imports directly,
-# independent of the AA / Django versions resolved in the lock. Used by
-# ``tests_aa4`` (and any future ``tests_aaN``) to provision a venv
-# off-lock against an older AA stack. Keep in sync with the imports under
-# ``tests/`` — anything else needed for the suite to import lives in
-# ``[dependency-groups].dev`` in ``pyproject.toml``.
-TEST_RUNTIME_DEPS = [
-    "fakeredis>=2.33",
-    "parameterized>=0.9",
-    "jwcrypto",
-    "requests>=2.32",
-    # tests/test_metrics.py top-level-imports ``prometheus_client`` to
-    # measure the real Counter / Histogram / Gauge side effects from
-    # allianceauth_oidc._metrics; without the dep, AA4 test discovery
-    # crashes with ``ModuleNotFoundError`` before any test runs. The
-    # ``[metrics]`` extra is not pulled in by ``-e .``, and AA 4.13.x
-    # does not list ``django-prometheus`` transitively, so the AA4
-    # matrix must provision it the same way the dev / AA5 environments
-    # already do (see ``[dependency-groups].dev`` in pyproject.toml).
-    "django-prometheus>=2.3",
-    # tests/test_property_invariants.py top-level-imports ``hypothesis``
-    # for property-based testing of PKCE round-trips and scope-claim
-    # monotonicity. Same drift class as the django-prometheus entry
-    # above: hypothesis lives in ``[dependency-groups].dev`` so the
-    # default ``tests`` session sees it via the lock, but the off-lock
-    # AA4 venv built by ``uv pip install -e . --group aa4`` does not.
-    "hypothesis>=6.118",
-]
+# Dependency group carrying the third-party packages the test suite
+# imports directly, independent of the AA / Django versions the lock
+# resolves (see ``[dependency-groups].test-runtime`` in pyproject.toml).
+# Off-lock sessions select it via ``uv run --group`` NEXT TO the AA
+# selector group so everything resolves in one pass under the AA
+# group's Django pin. These deps must NOT be threaded as ``--with``:
+# a ``uv run --with`` overlay resolves outside the project's
+# constraints, and ``--with django-prometheus`` used to pull an
+# unconstrained Django 5.2 that shadowed the ``aa4`` venv's Django 4.2
+# on ``sys.path`` — surfaced as an AA ``system_package_mariadb`` check
+# crash on the MariaDB cell, silent everywhere else.
+TEST_RUNTIME_GROUP = "test-runtime"
+
+# Django major version each AA-stack group is expected to resolve.
+# Threaded to the import canary (AA_OIDC_EXPECT_DJANGO_MAJOR) so an
+# off-lock venv whose Django does not match its cell fails before the
+# suite runs. Pinned against the pyproject group specifiers by
+# ``tests/unit/test_nox_testing.py``.
+AA_GROUP_DJANGO_MAJOR = {"aa4": "4", "aa5": "5"}
 
 
 def is_ci() -> bool:

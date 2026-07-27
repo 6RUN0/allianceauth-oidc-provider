@@ -12,7 +12,7 @@ protocol work, this app adds Alliance-Auth-specific access control, claim mappin
 custom `Application` model.
 
 Supported runtime: Python 3.10–3.13, Django 4.2 or 5.2, Alliance Auth 4.x or 5.x,
-`django-oauth-toolkit>=3.2,<4`. The dev environment locks to the AA 5.x stack (Django 5.2);
+`django-oauth-toolkit>=3.4,<3.5`. The dev environment locks to the AA 5.x stack (Django 5.2);
 AA 4.x compatibility is exercised via the off-lock `tests_aa4` nox session and CI matrix.
 A broader cross-version sweep lives in `tests_matrix` (driven from `_nox/matrix.py`); `make test-all`
 runs it.
@@ -271,18 +271,25 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
 - **Inherited-field drift across DOT versions**: `AllianceAuthApplication` subclasses DOT's
   *abstract* `AbstractApplication`, so every inherited field — including ones the app never
   touches, like `client_secret` — is materialised into this app's own migration history
-  (`0001`). DOT reworks those field definitions between releases (e.g. 3.2 → 3.3 changed
-  `client_secret`'s `help_text`), and because the project supports a *range*
-  (`django-oauth-toolkit>=3.2,<4`), the off-lock `tests_aa4` session installs the newest DOT
-  while the locked stack stays on the older one. That mismatch makes `makemigrations --check`
-  dirty on whichever DOT version differs from the one that froze the migration — surfaced as a
-  CI failure in `tests.test_back_channel_logout.TestBackChannelLogoutModel
-  .test_makemigrations_check_dry_run_clean`. **Fix pattern**: override the drifting field on
-  `AllianceAuthApplication` with attributes mirroring the frozen `0001` state (see the
-  `client_secret` override in `models.py`). Pinning the field to the app makes the model state
-  identical across the whole DOT range, so no per-DOT-version migration is needed. Only reach for
-  a real `AlterField` migration when the inherited change is a genuine *schema* change (column
-  type / length / index), not a metadata-only one like `help_text`.
+  (`0001`). DOT reworks those field definitions between releases, and the drift splits by kind:
+  - *Metadata-only* drift (e.g. 3.2 → 3.3 changed `client_secret`'s `help_text`) makes
+    `makemigrations --check` dirty without any real schema change — surfaced as a CI failure in
+    `tests.test_back_channel_logout.TestBackChannelLogoutModel.test_makemigrations_check_dry_run_clean`.
+    **Fix pattern**: override the drifting field on `AllianceAuthApplication` with attributes
+    mirroring the frozen `0001` state (see the `client_secret` override in `models.py`). Pinning
+    the field to the app makes the model state identical across patch releases, so no
+    per-DOT-version migration is needed. This is the *only* use for a pin — never for a genuine
+    schema change.
+  - *Schema* drift (new abstract columns or a column-type/length change) cannot be pinned away —
+    a query against a column the migrations never created fails at runtime, not just under
+    `--check`. DOT 3.4 hit this: it added `registration_source` and `cimd_expires_at` and widened
+    `client_id` (100 → 255) for CIMD / RFC 7591 DCR. Because these land only on a DOT *minor*
+    bump, the supported range is deliberately capped to a single minor
+    (`django-oauth-toolkit>=3.4,<3.5`): a real `AlterField`/`AddField` migration (`0021`) brings
+    the schema in line with 3.4, and the `<3.5` cap stops a future minor from silently
+    reintroducing the same breakage. **Bumping the floor to a new DOT minor is a deliberate step**
+    — regenerate the migration, review the added columns, and move both the floor and the cap
+    together.
 
 ## Tooling (MCP)
 

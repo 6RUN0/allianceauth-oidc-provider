@@ -59,6 +59,11 @@ PINNED_DISCOVERY_KEYS = frozenset(
         "claim_types_supported",
         "claims_parameter_supported",
         "claims_supported",
+        # Added by DOT 3.4 (RFC 7591 DCR / Client ID Metadata Document
+        # advertisement). The KEY is always present; its VALUE mirrors
+        # ``oauth2_settings.CIMD_ENABLED`` (default ``False``) — see
+        # ``test_cimd_capability_is_advertised_disabled``.
+        "client_id_metadata_document_supported",
         "code_challenge_methods_supported",
         "end_session_endpoint",
         "grant_types_supported",
@@ -95,9 +100,11 @@ class TestDiscoveryAndJWKS(GrantedOIDCTestCase):
         """
         Snapshot guard on the full set of discovery top-level keys.
 
-        Pins the exact 23-key shape observed on 2026-05-20. A DOT
-        version bump that adds a key (or our own provider gaining a
-        field) must update :data:`PINNED_DISCOVERY_KEYS` consciously
+        Pins the exact 24-key shape: the 23 keys observed on
+        2026-05-20 plus ``client_id_metadata_document_supported``
+        added by the DOT 3.4 bump. A DOT version bump that adds a key
+        (or our own provider gaining a field) must update
+        :data:`PINNED_DISCOVERY_KEYS` consciously
         — silent additions can break strict-parser RPs that cache
         the document.
         """
@@ -111,6 +118,23 @@ class TestDiscoveryAndJWKS(GrantedOIDCTestCase):
             added or removed,
             f"discovery shape drift: added={sorted(added)}, "
             f"removed={sorted(removed)}",
+        )
+
+    def test_cimd_capability_is_advertised_disabled(self):
+        """
+        The value pin behind the key pin above: CIMD client
+        self-registration must stay off. A flip to ``true`` means
+        someone enabled ``OAUTH2_PROVIDER['CIMD_ENABLED']`` — clients
+        would self-register with an empty states/groups whitelist,
+        which ``AccessPolicy`` treats as "allow every user holding
+        ``access_oidc``" (see W008 in ``allianceauth_oidc.checks``).
+        """
+        resp = self.client.get("/o/.well-known/openid-configuration/")
+        self.assertEqual(200, resp.status_code)
+        doc = self.json_body(resp, expected_status=None)
+        self.assertIs(
+            doc["client_id_metadata_document_supported"],
+            False,
         )
 
     def test_openid_configuration_advertises_required_endpoints(self):

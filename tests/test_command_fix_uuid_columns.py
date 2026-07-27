@@ -41,12 +41,14 @@ class TestOIDCFixUuidColumnsCommand(OIDCTestCase):
             self.assertIn(row["action"], {"skipped", "noop", "altered"}, row)
 
     def test_noop_on_non_native_backend(self) -> None:
-        # sqlite (and any non-MariaDB->=10.7 backend) has no native uuid
-        # type, so the command must skip without altering anything.
-        is_native = (
-            connection.vendor == "mysql"
-            and getattr(connection, "mysql_is_mariadb", False)
-            and connection.mysql_version >= (10, 7)
+        # Native-uuid is a *Django* feature (5.x on MariaDB >= 10.7),
+        # not a bare MariaDB-version property: Django 4.2 writes
+        # 32-char hex on the same server and its char(32) columns are
+        # correct. The command must mirror
+        # ``connection.features.has_native_uuid_field`` — on the AA4
+        # MariaDB cell (Django 4.2) it must skip, not convert.
+        is_native = connection.vendor == "mysql" and getattr(
+            connection.features, "has_native_uuid_field", False
         )
         for row in self._run():
             if is_native:
@@ -54,6 +56,41 @@ class TestOIDCFixUuidColumnsCommand(OIDCTestCase):
                 self.assertEqual("noop", row["action"], row)
             else:
                 self.assertEqual("skipped", row["action"], row)
+
+    def test_skips_when_django_has_no_native_uuid(self) -> None:
+        # Simulated Django <= 4.2 backend: MariaDB >= 10.7 but no
+        # ``has_native_uuid_field`` feature. Converting a char(32)
+        # column there is premature — Django still writes 32-char hex —
+        # and the ALTER's implicit commit is exactly what poisoned the
+        # AA4 MariaDB suite run. ``--dry-run`` keeps this test
+        # read-only on every backend.
+        from unittest import mock
+
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = ("char",)
+        cm = mock.MagicMock()
+        cm.__enter__.return_value = cursor
+        cm.__exit__.return_value = False
+        conn = mock.MagicMock()
+        conn.vendor = "mysql"
+        conn.mysql_is_mariadb = True
+        conn.mysql_version = (10, 11)
+        conn.features.has_native_uuid_field = False
+        conn.cursor.return_value = cm
+
+        with (
+            mock.patch(
+                "allianceauth_oidc.management.commands"
+                ".oidc_fix_uuid_columns.connections",
+                {"default": conn},
+            ),
+            mock.patch(
+                "django.db.router.db_for_write", return_value="default"
+            ),
+        ):
+            rows = self._run("--dry-run")
+        for row in rows:
+            self.assertEqual("skipped", row["action"], row)
 
     def test_dry_run_never_alters(self) -> None:
         # On a non-native backend the dry-run is indistinguishable from a

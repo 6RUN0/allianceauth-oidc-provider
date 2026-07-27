@@ -48,7 +48,7 @@ whitelist'ом `state` / `group`.
 | Python                | 3.10, 3.11, 3.12, 3.13                             |
 | Alliance Auth         | 4.x и 5.x                                          |
 | Django                | 4.2 (с AA 4.x) или 5.2 (с AA 5.x)                  |
-| `django-oauth-toolkit`| `>=3.2,<4`                                         |
+| `django-oauth-toolkit`| `>=3.4,<3.5`                                       |
 
 CI прогоняет стек AA 5.x на каждой поддерживаемой версии Python и
 backward-совместимость с AA 4.x на Python 3.10–3.12 (AA 4.13.x объявляет

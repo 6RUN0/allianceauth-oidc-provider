@@ -70,12 +70,12 @@ class AllianceAuthIntrospectTokenView(IntrospectTokenView):
         )
         try:
             self._emit_introspect_audit(request, response)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # An audit failure MUST NOT break introspection — the
             # protocol response is the contract operators rely on,
-            # the signal is observability scaffolding. ``BLE001`` is
-            # acknowledged: a narrower catch would risk masking a
-            # new dispatch-time exception class we did not predict
+            # the signal is observability scaffolding. The broad
+            # ``except Exception`` is deliberate: a narrower catch
+            # would risk masking an exception class we did not predict
             # (e.g. a future django.http addition). Log loudly with
             # ``exc_info=True`` so the failure does surface to the
             # operator without crashing the request.

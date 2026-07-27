@@ -10,8 +10,8 @@ once per ``migrations_check`` session.
 ``MIGRATION_LINTER_OPTIONS`` pins migrations the gate must not fail
 on: ten that pre-date the linter's introduction (already applied by
 every deployment, editing migration history would break operators)
-plus ``0020``, whose sole finding is a documented NOT_NULL false
-positive (see the inline note). The gate therefore catches issues
+plus ``0020`` and ``0021``, whose findings are documented NOT_NULL
+non-issues (see the inline notes). The gate therefore catches issues
 only in genuinely new, genuinely unsafe migrations.
 """
 
@@ -49,5 +49,18 @@ MIGRATION_LINTER_OPTIONS = {
         "0019_issuedcodeaudit_application_client_id_snapshot_and_more",
         # (2) NOT_NULL false positive on a VARCHAR-widening AlterField.
         "0020_alter_backchannellogoutattempt_jti",
+        # (3) NOT_NULL findings on the DOT 3.4 field additions.
+        #     ``0021`` adds ``registration_source`` as NOT NULL with
+        #     ``default="manual"`` — existing rows are backfilled in
+        #     the same migration. The linter's actual concern is the
+        #     rolling-deploy window: Django drops the DB-level default
+        #     after the backfill, so an old-code INSERT racing the
+        #     deploy would violate NOT NULL. That cannot bite here —
+        #     ``AllianceAuthApplication`` rows are created only by
+        #     operators (admin / management commands), never by
+        #     request traffic. The ``client_id`` VARCHAR(100 -> 255)
+        #     widening is the same SQLite table-rebuild false positive
+        #     as ``0020``; ``cimd_expires_at`` is nullable.
+        "0021_allianceauthapplication_cimd_expires_at_and_more",
     ],
 }

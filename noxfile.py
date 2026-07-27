@@ -220,10 +220,24 @@ def audit(session: nox.Session) -> None:
       import ``python-jose`` directly anywhere in the package; AA's
       ESI flow is the only consumer. Revisit when django-esi migrates
       off python-jose (tracked upstream).
+
+    * PYSEC-2026-1325 — ``ecdsa`` side-channel advisory with no fixed
+      release (the project declares side-channel resistance out of
+      scope). Same chain as above: ``python-jose`` ← ``django-esi`` ←
+      ``allianceauth``; nothing in this package imports ``ecdsa``, and
+      the provider's own signing runs on ``jwcrypto``/``cryptography``.
+      Falls away together with PYSEC-2025-185 when django-esi drops
+      python-jose.
     """
-    # TODO(2026-Q4): drop PYSEC-2025-185 suppression once django-esi
-    # migrates off python-jose; revisit upstream status next quarter.
-    ignored = ["--ignore-vuln", "PYSEC-2025-185"]
+    # TODO(2026-Q4): drop both suppressions once django-esi migrates
+    # off python-jose (python-jose is the sole consumer of ecdsa too);
+    # revisit upstream status next quarter.
+    ignored = [
+        "--ignore-vuln",
+        "PYSEC-2025-185",
+        "--ignore-vuln",
+        "PYSEC-2026-1325",
+    ]
     session.run("pip-audit", *ignored, *session.posargs)
 
 

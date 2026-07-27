@@ -58,8 +58,8 @@ class AllianceAuthApplication(AbstractApplication):
     # from the one that froze 0001 -- caught by
     # ``test_makemigrations_check_dry_run_clean``. Overriding the field
     # pins its state to this app, keeping the model identical across the
-    # supported DOT range (>=3.2,<4). Attributes mirror 0001 verbatim so
-    # the override is schema-neutral.
+    # supported DOT range (>=3.4,<3.5). Attributes mirror 0001 verbatim
+    # so the override is schema-neutral.
     client_secret = ClientSecretField(
         blank=True,
         db_index=True,

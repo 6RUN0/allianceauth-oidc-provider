@@ -42,7 +42,21 @@ class ApplicationAdmin(admin.ModelAdmin):
         "pkce_required",
         "access_token_format",
         "backchannel_logout_on_revoke_only",
+        "registration_source",
     )
+    # DOT 3.4 adds ``registration_source`` (RFC 7591 DCR / CIMD
+    # provenance) and ``cimd_expires_at`` (Client ID Metadata Document
+    # cache TTL) to ``AbstractApplication``. Both stay VISIBLE —
+    # provenance is exactly what an operator checks during incident
+    # response, and a non-"manual" row is the red flag W008 warns
+    # about — but neither is EDITABLE: ``oauth2_provider.cimd``
+    # branches on ``registration_source == "cimd"`` into a
+    # network-fetching metadata-refresh path, so a hand-edit could
+    # hand an operator-registered app to that machinery. Read-only
+    # fields generate no form input; the model defaults
+    # (``"manual"`` / ``None``) apply on create and posted values are
+    # ignored on change.
+    readonly_fields = ("registration_source", "cimd_expires_at")
     filter_horizontal = ("states", "groups")
     radio_fields = {
         "client_type": admin.HORIZONTAL,

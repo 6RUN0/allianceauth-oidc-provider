@@ -46,7 +46,7 @@ The diagram source is `assets/diagrams/policy-flow.d2`; re-render with `make dia
 | Python                | 3.10, 3.11, 3.12, 3.13                          |
 | Alliance Auth         | 4.x and 5.x                                     |
 | Django                | 4.2 (with AA 4.x) or 5.2 (with AA 5.x)          |
-| `django-oauth-toolkit`| `>=3.2,<4`                                      |
+| `django-oauth-toolkit`| `>=3.4,<3.5`                                    |
 
 CI exercises the AA 5.x stack on every supported Python version and AA 4.x
 backward compatibility on Python 3.10–3.12 (AA 4.13.x declares

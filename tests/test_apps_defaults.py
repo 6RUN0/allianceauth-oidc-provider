@@ -20,6 +20,8 @@ from __future__ import annotations
 from django.conf import settings as django_settings
 from django.test import TestCase, override_settings
 
+from ._settings_helpers import override_settings_no_dot_reload
+
 
 class TestApplyDefaultOauth2ProviderSettings(TestCase):
     """
@@ -95,7 +97,7 @@ class TestApplyDefaultOauth2ProviderSettings(TestCase):
         have bigger problems (DOT will not configure itself), but the
         helper must not amplify the failure.
         """
-        with override_settings(OAUTH2_PROVIDER=None):
+        with override_settings_no_dot_reload(OAUTH2_PROVIDER=None):
             from allianceauth_oidc.apps import (
                 _apply_default_oauth2_provider_settings,
             )
