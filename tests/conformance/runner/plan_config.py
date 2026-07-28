@@ -19,6 +19,7 @@ from .config import (
     CLIENT_SECRET,
     PASSWORD,
     PUBLIC_URL,
+    SUITE_URL,
     USERNAME,
 )
 
@@ -114,10 +115,23 @@ def _wait_for_implicit_submission_task() -> dict[str, Any]:
     luck. ``optional: true`` skips the task whenever the flow ends
     anywhere other than the suite callback page (provider error pages,
     negative tests).
+
+    The ``match`` is anchored to the suite origin on purpose. The
+    suite builds authorize URLs with the redirect_uri embedded RAW
+    (no percent-encoding), so an unanchored
+    ``*/test/a/conformance/callback*`` also matches the provider's
+    own authorize/error page whenever ``redirect_uri=…/callback…``
+    sits in its query string — the wait then runs on the error page,
+    times out, and the ``TestFailureException`` interrupts the module
+    before ``waitForPlaceholders`` can finish it off the
+    already-filled placeholder (seen on
+    ``oidcc-ensure-request-object-with-redirect-uri``). Anchoring on
+    ``https://<suite-host>/…`` makes the provider-origin URL
+    unmatchable.
     """
     return {
         "task": "Wait for implicit submission",
-        "match": "*/test/a/conformance/callback*",
+        "match": f"{SUITE_URL}/test/a/conformance/callback*",
         "optional": True,
         "commands": [
             ["wait", "id", "submission_complete", 10],

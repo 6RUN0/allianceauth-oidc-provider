@@ -167,3 +167,17 @@ class TestPlanConfigBrowserRouting(unittest.TestCase):
             last = entry["tasks"][-1]
             self.assertEqual("Wait for implicit submission", last["task"])
             self.assertTrue(last["optional"])
+            # The match must be anchored to the suite origin. The
+            # suite embeds redirect_uri into the authorize URL RAW
+            # (no percent-encoding), so an unanchored
+            # ``*/test/a/conformance/callback*`` also matches the
+            # provider's own authorize/error page whenever the query
+            # carries ``redirect_uri=…/test/a/conformance/callback…``
+            # — the wait then times out on the error page and
+            # interrupts the module (seen on
+            # ``oidcc-ensure-request-object-with-redirect-uri``).
+            self.assertTrue(
+                str(last["match"]).startswith("https://"),
+                f"submission-wait match must be origin-anchored, "
+                f"got {last['match']!r}",
+            )
