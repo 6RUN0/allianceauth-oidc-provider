@@ -14,6 +14,8 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-28
+
 ### Changed
 
 - **Breaking:** the supported `django-oauth-toolkit` range narrows from
@@ -36,6 +38,16 @@ is preserved in `git log`; this file documents fork-specific changes only.
   client must be distinguishable from a hand-registered one during
   incident response, but the field must not be editable — DOT's CIMD
   machinery branches on it into a network-fetching refresh path.
+- The authorize endpoint now rejects JWT-secured authorization
+  requests explicitly instead of silently ignoring them: `request`
+  answers with `error=request_not_supported`, `request_uri` with
+  `error=request_uri_not_supported` (OIDC Core 1.0 §6.1 / §6.2).
+  Silent ignoring was a parameter-confusion hazard — the client
+  believes the signed object's parameters are in force while the
+  server acts on the plain query string. The error redirect only ever
+  targets a redirect_uri validated against the client's registered
+  set; with an unregistered or missing redirect_uri the request still
+  renders the 400 error page.
 
 ### Added
 
@@ -53,6 +65,18 @@ is preserved in `git log`; this file documents fork-specific changes only.
   states/groups whitelist, which the access policy treats as "allow
   every user holding `access_oidc`" — incompatible with the whitelist
   model this provider enforces.
+- Authorize requests carrying `acr_values` now yield an `acr: "0"`
+  claim in the issued id_token (OIDC Core 1.0 §15.1). The view folds
+  the request into the spec-equivalent voluntary
+  `claims.id_token.acr` member, which survives DOT's consent
+  round-trip and code exchange; a client-supplied `claims` request is
+  never overwritten.
+- OpenID Foundation conformance harness under `tests/conformance`:
+  dockerised suite (pinned release), REST-API plan runner with
+  deterministic headless-browser automation, per-module result
+  export and an expected-failures ledger. The OIDC Core Basic
+  certification plan passes end to end (2 accepted warnings on
+  claims coverage, 4 expected suite-side skips).
 
 ### Fixed
 
@@ -68,6 +92,10 @@ is preserved in `git log`; this file documents fork-specific changes only.
   (`connection.features.has_native_uuid_field`, Django >= 5): under
   Django 4.2 a `char(32)` column is correct, so the check warned
   falsely and the command converted columns prematurely.
+- POST requests to `/o/userinfo/` with the access token in the form
+  body no longer fail with 403: the Cache-Control dispatch override
+  (OIDC Core 1.0 §5.3.2) had silently dropped DOT's `csrf_exempt`,
+  so Django's CSRF middleware rejected token-authenticated POSTs.
 
 ## [0.4.1] - 2026-06-08
 
@@ -844,7 +872,8 @@ latter to mitigate cache-poisoning across release runs).
 
 For changes prior to this fork's divergence, see `git log` and the upstream releases page.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.1...v0.3.2
