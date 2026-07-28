@@ -16,7 +16,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django.contrib.auth import logout
 from django.contrib.auth.views import redirect_to_login
-from django.http import HttpRequest, HttpResponseBase, QueryDict
+from django.http import (
+    HttpRequest,
+    HttpResponseBase,
+    HttpResponseRedirect,
+    QueryDict,
+)
 from django.shortcuts import render
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -309,6 +314,71 @@ class AuthAuthorizationView(AuthorizationView):
         request.GET = QueryDict(encoded, mutable=False)
         request.META["QUERY_STRING"] = encoded
 
+    def _reject_unsupported_request_object(
+        self, request: HttpRequest
+    ) -> HttpResponseBase | None:
+        """
+        OIDC Core 1.0 §6.1 / §6.2 — reject JAR parameters explicitly.
+
+        The provider does not implement request objects (no JAR
+        support in DOT). Silently ignoring ``request`` /
+        ``request_uri`` — DOT's default — is a parameter-confusion
+        hazard: the client believes the signed object's parameters
+        (redirect_uri, state, nonce, ...) are in force while the AS
+        acts on the plain query string. §6.1 says an OP that does not
+        support ``request`` SHOULD return ``request_not_supported``
+        (§6.2: ``request_uri_not_supported``), and the conformance
+        module ``oidcc-unsigned-request-object-…-or-rejected-as-
+        unsupported`` enforces exactly that choice.
+
+        The error is delivered as an OAuth redirect **only** to a
+        redirect_uri validated against the client's registered set
+        (query value, falling back to the sole registered URI when
+        the query omits it — mirroring DOT's ``default_redirect_uri``
+        without its ``assert``). Anything unvalidatable returns
+        ``None`` so the request falls through to DOT, whose own
+        redirect_uri validation renders the 400 ``invalid_request``
+        error page — never a redirect. That branch is conformance-
+        critical: ``oidcc-ensure-request-object-with-redirect-uri``
+        sends an invalid query redirect_uri and fails any server
+        that redirects the rejection to a registered URI instead
+        (``EnsureOPDoesNotUseDefaultRedirectUriInCaseOfInvalidRedirectUri``).
+        """
+        if request.GET.get("request"):
+            error = "request_not_supported"
+            description = "The request parameter is not supported."
+        elif request.GET.get("request_uri"):
+            error = "request_uri_not_supported"
+            description = "The request_uri parameter is not supported."
+        else:
+            return None
+        app = self._get_app(request)
+        if app is None:
+            return None
+        redirect_uri = request.GET.get("redirect_uri")
+        if redirect_uri:
+            if not app.redirect_uri_allowed(redirect_uri):
+                return None
+        else:
+            registered = (app.redirect_uris or "").split()
+            if len(registered) != 1:
+                return None
+            redirect_uri = registered[0]
+        logger.info(
+            "OIDC REJECTED: %s client_id=%s redirect_uri=%s",
+            error,
+            app.client_id,
+            redirect_uri,
+        )
+        params = [("error", error), ("error_description", description)]
+        state = request.GET.get("state")
+        if state:
+            params.append(("state", state))
+        separator = "&" if urlsplit(redirect_uri).query else "?"
+        return HttpResponseRedirect(
+            f"{redirect_uri}{separator}{urlencode(params)}"
+        )
+
     def _get_app(self, request: HttpRequest) -> AllianceAuthApplication | None:
         """
         Retrieve the active OAuth2 Application by ``client_id``.
@@ -491,9 +561,15 @@ class AuthAuthorizationView(AuthorizationView):
         2. Anonymous short-circuit — fall through to
            ``LoginRequiredMixin`` so an unauthenticated request lands
            on ``LOGIN_URL`` instead of the policy-denied page.
-        3. ``enforce_reauth`` — OIDC Core 1.0 §3.1.2.1
+        3. JAR rejection (``request`` / ``request_uri``) — OIDC Core
+           1.0 §6.1 / §6.2 ``request_not_supported``. After the
+           anonymous short-circuit (the conformance suite's browser
+           must reach the login form first) and before
+           ``enforce_reauth`` (the request is rejected regardless, so
+           never ``logout()`` an existing session on its account).
+        4. ``enforce_reauth`` — OIDC Core 1.0 §3.1.2.1
            ``prompt=login`` / ``max_age`` handling.
-        4. Access policy gate (``AccessPolicy.decide``) on every
+        5. Access policy gate (``AccessPolicy.decide``) on every
            authenticated request, GET or POST. Centralising the gate
            here closes the POST-bypass that arises if the check lives
            in ``get()``/``post()`` separately.
@@ -521,6 +597,10 @@ class AuthAuthorizationView(AuthorizationView):
         user: UserLike | None = getattr(request, "user", None)
         if not getattr(user, "is_authenticated", False):
             return super().dispatch(request, *args, **kwargs)
+
+        jar_rejection = self._reject_unsupported_request_object(request)
+        if jar_rejection is not None:
+            return jar_rejection
 
         # OIDC Core 1.0 §3.1.2.1 ``prompt=login`` / ``max_age``
         # enforcement. Force re-authentication when the client

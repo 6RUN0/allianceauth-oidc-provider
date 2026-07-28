@@ -202,20 +202,28 @@ day-to-day iteration should stay on `nox -s conformance`.
 ## Baseline expected_failures.json
 
 `tests/conformance/expected_failures.json` records the known status
-of every basic-cert module that does NOT pass cleanly today, with
-short reasons grouped into two classes:
+of every basic-cert module that does NOT pass cleanly today. All
+remaining entries are suite-side SKIPs (bucketed as failures by the
+runner unless acknowledged here, so a silent skip cannot masquerade
+as coverage):
 
-1. **Provider-side gap: request objects / JAR** (2 modules) —
-   django-oauth-toolkit silently ignores the `request` parameter,
-   so `oidcc-unsigned-request-object-…` and
-   `oidcc-ensure-request-object-with-redirect-uri` complete the
-   flow from the plain query parameters instead of rejecting it.
-   OIDC Core 1.0 §6.1 wants an OP without request support to answer
-   with `request_not_supported`; implementing that rejection in
-   `AuthAuthorizationView` would green both modules.
-2. **Suite-side SKIP** (3 modules) — `oidcc-scope-{address,phone,all}`
-   the suite skips because we do not advertise these scopes in
-   discovery. Listed so they don't tilt the exit code.
+1. `oidcc-unsigned-request-object-…-or-rejected-as-unsupported` —
+   the provider rejects `request` / `request_uri` with the OIDC
+   Core 1.0 §6.1 / §6.2 `request_not_supported` /
+   `request_uri_not_supported` errors (see
+   `AuthAuthorizationView._reject_unsupported_request_object` and
+   `tests/test_authorize_security.py::TestRequestNotSupportedRejection`).
+   That is spec-permitted behaviour, and the suite acknowledges it
+   by skipping the module ("request objects cannot be tested").
+   `oidcc-ensure-request-object-with-redirect-uri` needs no entry
+   any more: its invalid query `redirect_uri` now falls through to
+   DOT's 400 error page (redirecting the rejection to a registered
+   URI would fail
+   `EnsureOPDoesNotUseDefaultRedirectUriInCaseOfInvalidRedirectUri`),
+   the error-page browser task uploads the screenshot, and the
+   module finishes as REVIEW.
+2. `oidcc-scope-{address,phone,all}` — skipped by the suite because
+   we do not advertise these scopes in discovery.
 
 The pre-2026-07-28 ledger blamed ~15 TIMEOUTs on "HtmlUnit 4.11.1
 upstream". That attribution was wrong: the browser flow always
@@ -234,7 +242,8 @@ suite wants a human to look at; `oidcc-refresh-token` was a seeding
 bug (client2 must whitelist the primary callback, see `seed.py`);
 `oidcc-userinfo-post-header` was a real provider bug (dropped
 `csrf_exempt` on the userinfo view — fixed, with a regression test
-in `tests/test_userinfo.py`); the JAR pair is the DOT gap above.
+in `tests/test_userinfo.py`); the JAR pair resolved once the
+provider gained the §6.1 `request_not_supported` rejection.
 The login-page screenshot is deliberately routed only to
 positive-flow visits — see the browser-entry ordering rationale in
 `runner/plan_config.py` and the guard tests in

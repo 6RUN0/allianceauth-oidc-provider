@@ -271,11 +271,12 @@ class TestRequestObjectAndUriHandling(GrantedOIDCTestCase):
        URL → AS makes an outbound HTTP request, possibly to internal
        services (RFC 6819 §5.4.1).
 
-    Tests pin the safe behaviour: parameters are ignored, the flow
-    uses the query-string values, no outbound fetch happens, no 5xx.
-    Replaces ``oidcc-ensure-request-object-with-redirect-uri`` and
-    ``oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported``
-    from the conformance suite (both fail upstream).
+    Both parameters are rejected outright with the §6.1 / §6.2
+    ``request_not_supported`` / ``request_uri_not_supported`` errors
+    (see ``TestRequestNotSupportedRejection`` for the full rejection
+    contract). These tests keep the security floor pinned
+    independently of the rejection mechanics: no forged-URI
+    redirect, no outbound fetch, no 5xx.
     """
 
     def test_request_param_does_not_override_query_redirect_uri(self) -> None:
@@ -382,6 +383,143 @@ class TestRequestObjectAndUriHandling(GrantedOIDCTestCase):
             "advertised as true unless request_uri fetch is "
             "implemented",
         )
+
+
+class TestRequestNotSupportedRejection(GrantedOIDCTestCase):
+    """
+    OIDC Core 1.0 §6.1 / §6.2 — explicit rejection of JAR parameters.
+
+    The provider does not implement request objects, and §6.1 says an
+    OP that does not support the ``request`` parameter SHOULD return
+    ``request_not_supported`` (``request_uri_not_supported`` for
+    ``request_uri``, §6.2) instead of silently ignoring it. Silent
+    ignoring is what the retired python conformance suite tolerated;
+    the current suite
+    (``oidcc-unsigned-request-object-supported-correctly-or-rejected-
+    as-unsupported``) requires one of "process it" or "reject it".
+
+    The rejection is an OAuth error *redirect* — but only to a
+    redirect_uri validated against the client's registered set. With
+    an unregistered (or missing) redirect_uri the request falls
+    through to DOT, whose own validation renders the 400 error page:
+    ``oidcc-ensure-request-object-with-redirect-uri`` explicitly
+    fails servers that redirect to a registered URI when the query
+    redirect_uri was invalid
+    (``EnsureOPDoesNotUseDefaultRedirectUriInCaseOfInvalidRedirectUri``).
+    """
+
+    def _authorize(self, extra: dict[str, str]) -> Any:
+        self.client.force_login(self.user1)
+        params = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            **extra,
+        }
+        return self.client.get("/o/authorize/", data=params)
+
+    def test_request_param_rejected_with_request_not_supported(self):
+        resp = self._authorize(
+            {
+                "request": forge_unsigned_jwt({"state": "inside-object"}),
+                "state": "outer-state",
+            }
+        )
+        location, _, qs = self.parse_redirect(resp, (302,))
+        self.assertTrue(
+            location.startswith(REDIRECT_URI),
+            f"error redirect must target the registered redirect_uri; "
+            f"got {location!r}",
+        )
+        self.assertEqual(["request_not_supported"], qs.get("error"))
+        self.assertEqual(["outer-state"], qs.get("state"))
+
+    def test_request_uri_param_rejected_with_request_uri_not_supported(
+        self,
+    ) -> None:
+        resp = self._authorize(
+            {
+                "request_uri": "https://attacker.invalid/forged.jwt",
+                "state": "uri-state",
+            }
+        )
+        location, _, qs = self.parse_redirect(resp, (302,))
+        self.assertTrue(location.startswith(REDIRECT_URI))
+        self.assertEqual(["request_uri_not_supported"], qs.get("error"))
+        self.assertEqual(["uri-state"], qs.get("state"))
+
+    def test_rejection_without_state_omits_state(self):
+        resp = self._authorize({"request": forge_unsigned_jwt({})})
+        _, _, qs = self.parse_redirect(resp, (302,))
+        self.assertEqual(["request_not_supported"], qs.get("error"))
+        self.assertNotIn(
+            "state",
+            qs,
+            "state MUST NOT be injected when the request lacked it",
+        )
+
+    def test_unregistered_redirect_uri_renders_error_page_not_redirect(
+        self,
+    ) -> None:
+        # The suite's ``oidcc-ensure-request-object-with-redirect-uri``
+        # sends an *invalid* redirect_uri in the query (the valid one
+        # sits inside the ignored request object). Redirecting the
+        # rejection to any registered URI here is a hard conformance
+        # failure — the provider must render the error page instead.
+        resp = self._authorize(
+            {
+                "request": forge_unsigned_jwt({}),
+                "redirect_uri": f"{REDIRECT_URI}/x1y2z3A4b5",
+            }
+        )
+        self.assertEqual(400, resp.status_code)
+        self.assertNotIn("Location", resp.headers)
+        self.assertIn(
+            "invalid_request",
+            resp.content.decode("utf-8", errors="ignore"),
+        )
+
+    def test_cross_origin_post_with_request_param_rejected(self):
+        # OIDC Core 1.0 §3.1.2.1 mandates POST support at the
+        # authorize endpoint; the promotion path must hit the same
+        # rejection as GET (POST-bypass regression guard).
+        self.client.force_login(self.user1)
+        resp = self.client.post(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "state": "post-state",
+                "request": forge_unsigned_jwt({}),
+            },
+        )
+        location, _, qs = self.parse_redirect(resp, (302,))
+        self.assertTrue(location.startswith(REDIRECT_URI))
+        self.assertEqual(["request_not_supported"], qs.get("error"))
+        self.assertEqual(["post-state"], qs.get("state"))
+
+    def test_anonymous_request_param_still_redirects_to_login(self):
+        # The rejection runs only for authenticated users: the
+        # conformance suite's browser must be able to log in first
+        # (its Login task drives the login form) before the provider
+        # answers with the error redirect. Rejecting pre-login would
+        # strand the suite on an error page it never expects there.
+        resp = self.client.get(
+            "/o/authorize/",
+            data={
+                "response_type": "code",
+                "client_id": self.oauth_id,
+                "redirect_uri": REDIRECT_URI,
+                "scope": SCOPE_OPENID,
+                "request": forge_unsigned_jwt({}),
+            },
+        )
+        location, _, _ = self.parse_redirect(resp, (302,))
+        self.assertIn("login", location)
+        self.assertIn("request%3D", location)
 
 
 class TestAuthorizeInputBounds(GrantedOIDCTestCase):

@@ -1,7 +1,5 @@
 {
-  "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported": "FAILED — provider silently ignores the request parameter (DOT has no JAR support): the suite puts state/nonce inside the request object only, so the response is missing state and the id_token nonce mismatches. OIDC Core 1.0 s6.1 says an OP without request support should return the request_not_supported error; implementing that rejection in AuthAuthorizationView would turn this module green.",
-
-  "oidcc-ensure-request-object-with-redirect-uri": "FAILED — same DOT JAR gap: the request object carries the redirect_uri, the provider ignores the object entirely and completes the flow from the plain query parameters, so the rejection (or redirect_uri error page) the suite expects never happens. The request_not_supported rejection above would green this module too.",
+  "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported": "Suite SKIPPED — the provider rejects request objects with request_not_supported (OIDC Core 1.0 s6.1, permitted behaviour); the suite fires 'test skipped' because request objects cannot be exercised against such a server. Implementing JAR would flip this to a real PASS.",
 
   "oidcc-scope-address": "Suite SKIPPED — address scope not advertised in discovery; provider does not return address claims.",
   "oidcc-scope-phone": "Suite SKIPPED — phone scope not advertised in discovery; provider does not return phone claims.",
