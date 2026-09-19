@@ -237,23 +237,63 @@ back to `False` via Django admin. The matching `RuntimeWarning` is described und
 ### `django-oauth-toolkit` floor raised to 3.4.1
 
 The supported range is now `>=3.4.1,<3.5`; DOT 3.4.0 is no longer supported. Upgrade DOT
-together with this package, then run `python manage.py migrate`: migration `0022` only records
-new field labels and executes no SQL, but until it is applied `manage.py` keeps reporting it.
+together with this package, then run `python manage.py migrate`.
 
-**This changes behaviour your RPs can observe**, so read before upgrading a busy deployment.
-Both changes come from DOT itself and both close a hole:
+That `migrate` applies three migrations, and only one of them touches the schema.
+`allianceauth_oidc.0022` records new field labels and emits no SQL at all
+(`sqlmigrate allianceauth_oidc 0022` prints a bare `BEGIN; COMMIT;`), as does DOT's own
+`oauth2_provider.0021`. DOT's `oauth2_provider.0022` adds an index on
+`oauth2_provider_refreshtoken.token_family`. Plan the window around that one: index creation
+on a large refresh-token table is not instant, and on MySQL/MariaDB it holds a metadata lock
+on the table for its duration.
 
-- **Revoking an access token now also revokes the refresh token bound to it.** Previously the
+**DOT 3.4.1 is a security release, and it changes behaviour your RPs and your users can
+observe.** Read this before upgrading a busy deployment. The upstream
+[Upgrading to 3.4.1](https://django-oauth-toolkit.readthedocs.io/en/3.4.1/upgrade.html#upgrading-to-3-4-1)
+page is the complete list; what follows is the part that reaches a deployment of this package,
+most disruptive first.
+
+- **Redirect URIs are matched exactly** (RFC 9700 §2.1, restated by OIDC Core §3.1.2.1). Four
+  ways a request could previously differ from the registered URI and still match are closed: a
+  query parameter that was never registered, a path parameter (`/cb;evil=1`), credentials
+  (`https://evil@example.com/cb`), and a fragment. An RP that passes per-request data through
+  the `redirect_uri` query string now gets `invalid_request` on every authorization. Either
+  register the full URI including its query, in the same parameter order, or move that data
+  into `state`, which is what it is for. Apps whose registered `redirect_uris` carry no query
+  component are unaffected. Registration is tightened to match: a URI ending in `#` now raises
+  a `ValidationError` on save instead of being stored and never authorizing anything. In the
+  other direction, RFC 8252 §7.1 private-use schemes (`com.example.app:/oauth2redirect`, single
+  slash) can finally be registered, so native-app clients no longer need a workaround.
+- **Revoking an access token also revokes the refresh token bound to it.** Previously the
   refresh token survived as an orphan and could immediately mint a replacement access token. An
   RP that revokes an access token to drop a single device and then keeps refreshing on the same
   grant will now be forced back through authorization. If that is your logout flow, expect users
-  to re-authorize once after the upgrade.
+  to re-authorize once after the upgrade. The same now holds for the revoke button on
+  `/o/authorized_tokens/`, which previously deleted only the access token.
 - **Revocation is scoped to the client that owns the token.** A second confidential client
   presenting its own valid credentials can no longer revoke another client's tokens. Per
   RFC 7009 §2.2 the endpoint still answers `200` in that case - the status never reveals whether
   the token existed - so an RP relying on cross-client revocation will see success and no effect
   rather than an error. Check for this before upgrading if you run several clients against one
   Auth instance.
+- **`REFRESH_TOKEN_EXPIRE_SECONDS` is enforced when a refresh token is presented**, not only by
+  the `cleartokens` sweep. If you set it and never scheduled the cleanup task
+  ([Periodic cleanup](#periodic-cleanup-of-expired-tokens-celery-beat)), refresh tokens past
+  that age kept working; they are now rejected at the token endpoint. Deployments that leave
+  the setting unset are unaffected.
+- **A deliberately revoked refresh token is no longer honoured inside
+  `REFRESH_TOKEN_GRACE_PERIOD_SECONDS`.** The grace window exists to shield the token a client
+  retries when it missed the rotated response; it also covered tokens killed by `/o/revoke_token/`,
+  logout, or the admin. Only deployments that raised the window above its default of `0` were
+  ever exposed, and only those see a change.
+- **`/o/authorized_tokens/` renders unstyled until you run `collectstatic`.** DOT's templates
+  stopped loading Bootstrap from a third-party CDN and now link a stylesheet shipped inside the
+  package, served through `staticfiles`. The consent, logout-confirmation and access-denied
+  pages this package ships extend Alliance Auth's own base template and are unaffected.
+- **In Django admin, access and refresh tokens can no longer be deleted**; use the new "Revoke
+  selected" action. A raw delete of an access token used to leave its refresh token behind as an
+  orphan that could still mint tokens, so the action is the only correct path now. `Grant` and
+  `IDToken` keep the ordinary delete.
 
 ## Configuration
 
