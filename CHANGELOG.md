@@ -14,6 +14,8 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-19
+
 ### Changed
 
 - The supported `django-oauth-toolkit` range narrows from `>=3.4,<3.5` to
@@ -895,6 +897,7 @@ latter to mitigate cache-poisoning across release runs).
 For changes prior to this fork's divergence, see `git log` and the upstream releases page.
 
 [Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.5.0...HEAD
+[0.6.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.3.2...v0.4.0
