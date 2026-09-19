@@ -14,6 +14,33 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-19
+
+### Fixed
+
+- The 0.6.0 upgrade notes named two of DOT 3.4.1's observable changes and
+  presented them as the whole set. They were not the most disruptive ones.
+  DOT 3.4.1 also matches redirect URIs exactly (RFC 9700 §2.1), which
+  rejects any request whose `redirect_uri` carries a query parameter, path
+  parameter, credentials or fragment the registered URI does not have - an
+  RP that passes per-request data through that query string breaks on every
+  authorization until the full URI is registered or the data moves into
+  `state`. Missing along with it: `REFRESH_TOKEN_EXPIRE_SECONDS` is now
+  enforced when a refresh token is presented rather than only by the
+  `cleartokens` sweep; a deliberately revoked refresh token is no longer
+  honoured inside a non-default `REFRESH_TOKEN_GRACE_PERIOD_SECONDS`;
+  `/o/authorized_tokens/` needs `collectstatic` to render styled, DOT
+  having dropped its Bootstrap CDN link; and Django admin replaces raw
+  deletion of access and refresh tokens with a "Revoke selected" action.
+  `README.md` carries the full list and links the upstream upgrade page.
+- The same notes said `manage.py migrate` emits no SQL. That holds for
+  `allianceauth_oidc.0022` and DOT's `oauth2_provider.0021`, but the same
+  run also applies DOT's `oauth2_provider.0022`, which adds an index on
+  `oauth2_provider_refreshtoken.token_family`. On a large refresh-token
+  table that build is not instant, and on MySQL/MariaDB it holds a metadata
+  lock on the table throughout - so an upgrade window sized against "no SQL"
+  was sized wrong.
+
 ## [0.6.0] - 2026-09-19
 
 ### Changed
@@ -896,7 +923,8 @@ latter to mitigate cache-poisoning across release runs).
 
 For changes prior to this fork's divergence, see `git log` and the upstream releases page.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.0...v0.4.1
