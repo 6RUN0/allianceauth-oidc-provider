@@ -58,8 +58,16 @@ class AllianceAuthApplication(AbstractApplication):
     # from the one that froze 0001 -- caught by
     # ``test_makemigrations_check_dry_run_clean``. Overriding the field
     # pins its state to this app, keeping the model identical across the
-    # supported DOT range (>=3.4,<3.5). Attributes mirror 0001 verbatim
+    # supported DOT range (>=3.4.1,<3.5). Attributes mirror 0001 verbatim
     # so the override is schema-neutral.
+    #
+    # The pin also holds back the ``verbose_name`` DOT 3.4.1 added
+    # upstream in ``0021_translatable_field_labels``, so this is the one
+    # inherited field whose admin label Django derives from the field
+    # name instead of DOT's ``gettext`` catalogue, and why migration 0022
+    # relabels 15 fields rather than 16. Recovering the translated label
+    # means dropping the pin plus another migration, and brings the
+    # ``help_text`` drift above back the next time DOT touches it.
     client_secret = ClientSecretField(
         blank=True,
         db_index=True,

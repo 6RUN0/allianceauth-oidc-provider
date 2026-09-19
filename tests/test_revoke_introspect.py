@@ -191,10 +191,12 @@ class TestRevokeRefreshTokenChainBehaviour(GrantedOIDCTestCase):
 
     DOT's :class:`RefreshToken.revoke` deletes the linked
     ``AccessToken`` row, so revoking an RT does invalidate the AT.
-    The reverse direction (revoke AT → leave RT alone) is left
-    open by the RFC; DOT keeps the RT independent. Both contracts
-    are pinned here so a future DOT change in either direction is
-    visible.
+    The reverse direction is left open by the RFC ("MAY"), and since
+    3.4.1 DOT cascades there too: ``RefreshToken.access_token`` is
+    ``SET_NULL``, so revoking the AT alone would leave the RT an
+    active orphan able to re-mint one immediately, which defeats the
+    revocation. Both directions are pinned here so a future DOT change
+    in either one is visible.
     """
 
     def _issue_tokens(self) -> dict:
@@ -240,19 +242,18 @@ class TestRevokeRefreshTokenChainBehaviour(GrantedOIDCTestCase):
             "RFC 7009 §2.1 SHOULD: revoking RT must invalidate linked AT",
         )
 
-    def test_revoking_access_token_leaves_refresh_token_independent(
+    def test_revoking_access_token_cascades_to_refresh_token(
         self,
     ) -> None:
         """
-        Revoke just the AT; the RT remains usable to mint a new AT.
-        Pins DOT's "AT-only revoke does not cascade to RT" contract.
-        If DOT tightens to cascade (RFC 7009 permits this), flip the
-        assertion accordingly.
+        Revoke just the AT; the bound RT must stop minting new ATs.
+        Pins DOT >= 3.4.1's "AT revoke cascades to the bound RT"
+        contract. A 200 here means the RT survived its access token
+        and revocation no longer ends the session.
         """
         tokens = self._issue_tokens()
         self._revoke(tokens["access_token"])
 
-        # The RT should still mint a fresh AT.
         refresh_resp = self.client.post(
             "/o/token/",
             data={
@@ -263,10 +264,10 @@ class TestRevokeRefreshTokenChainBehaviour(GrantedOIDCTestCase):
             },
         )
         self.assertEqual(
-            200,
+            400,
             refresh_resp.status_code,
-            "DOT default: revoking AT alone leaves RT independent and "
-            "usable; if this fails, DOT now cascades AT revoke to RT",
+            "DOT >= 3.4.1 revokes the bound RT together with the AT; a "
+            "200 means the RT outlived the revocation as an orphan",
         )
 
 

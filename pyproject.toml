@@ -31,7 +31,17 @@ classifiers = [
 # ``allianceauth_oidc/__init__.py`` so the value never drifts from the
 # wheel that's actually deployed.
 
-dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.4,<3.5" ]
+# The floor is 3.4.1, not 3.4, because DOT 3.4.1 tightened token
+# revocation twice: revoking an access token now cascades to the refresh
+# token bound to it, and revocation is scoped to the client that owns the
+# token. The suite pins both, so it is red on 3.4.0 - the range cannot
+# claim a version whose revocation semantics differ. Secondary reason:
+# 3.4.1 also relabelled the fields inherited from the abstract
+# ``AbstractApplication`` (``verbose_name``), which dirties
+# ``makemigrations --check`` without touching the schema, and one patch
+# of range holds exactly one model state. See the inherited-field-drift
+# section in CLAUDE.md before widening either end.
+dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.4.1,<3.5" ]
 
 # Optional extras. ``metrics`` opts the operator into Prometheus
 # integration via ``django-prometheus``: when installed (whether
@@ -432,6 +442,12 @@ module = [
     "oauth2_provider.*",
     "oauthlib.*",
     "celery.*",
+    # Reached through the django-stubs plugin, not through an import in
+    # this package: it resolves ``apps.get_model`` call sites against
+    # INSTALLED_APPS from ``tests.test_settingsAA4``, which pulls in
+    # every AA-required app's models module. Neither ships ``py.typed``.
+    "django_celery_beat.*",
+    "esi.*",
     "aa_skip_email.*",
     "requests",
     "requests.*",
@@ -440,9 +456,10 @@ module = [
     # ``_metrics.py`` purely for the side effect of confirming
     # availability (the optional ``[metrics]`` extra gate); the
     # API surface we touch is exactly zero, so suppressing the
-    # missing-import error does not weaken type coverage.
+    # missing-import error does not weaken type coverage. Only the
+    # top-level module is listed: the probe imports no submodule, and
+    # ``warn_unused_configs`` flags a ``django_prometheus.*`` entry.
     "django_prometheus",
-    "django_prometheus.*",
 ]
 ignore_missing_imports = true
 

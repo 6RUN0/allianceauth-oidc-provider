@@ -12,7 +12,7 @@ protocol work, this app adds Alliance-Auth-specific access control, claim mappin
 custom `Application` model.
 
 Supported runtime: Python 3.10–3.13, Django 4.2 or 5.2, Alliance Auth 4.x or 5.x,
-`django-oauth-toolkit>=3.4,<3.5`. The dev environment locks to the AA 5.x stack (Django 5.2);
+`django-oauth-toolkit>=3.4.1,<3.5`. The dev environment locks to the AA 5.x stack (Django 5.2);
 AA 4.x compatibility is exercised via the off-lock `tests_aa4` nox session and CI matrix.
 A broader cross-version sweep lives in `tests_matrix` (driven from `_nox/matrix.py`); `make test-all`
 runs it.
@@ -280,12 +280,33 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
     the field to the app makes the model state identical across patch releases, so no
     per-DOT-version migration is needed. This is the *only* use for a pin — never for a genuine
     schema change.
+
+    The pin does not scale past a handful of fields: DOT 3.4.1 relabelled *every* inherited
+    field with `verbose_name` (upstream `0021_translatable_field_labels`), and copying that many
+    upstream field definitions into `models.py` buys one permanent drift point per field. Where a
+    whole release is metadata-only, narrow the supported range instead, so it holds exactly one
+    model state - that is why migration `0022` exists. Check what a candidate migration would
+    actually run (`django sqlmigrate allianceauth_oidc 0022`) before choosing: a metadata-only one
+    emits a bare `BEGIN; COMMIT;`, and a non-empty body means the drift is schema drift and
+    belongs in the bullet below.
+
+    Counting trap: DOT relabelled 16 fields, `0022` carries 15. The sixteenth is `client_secret`,
+    held at its frozen state by the pin above - so it is also the one inherited field with no
+    translated admin label. Don't "fix" the count by regenerating `0022`.
+
+    Note that the `>=3.4.1` floor is *not* justified by this drift on its own: `0022` emits no
+    SQL, and nothing breaks at runtime on 3.4.0. The binding reason is behavioural - 3.4.1
+    tightened token revocation (access-token revoke cascades to the bound refresh token;
+    revocation is scoped to the owning client), the suite pins both, and it is red on 3.4.0.
+    Before widening the floor back to `>=3.4` to spare operators an upgrade, read those tests
+    (`tests/test_revoke_introspect.py`, `tests/test_multiapp.py`) - the range would then span two
+    incompatible revocation semantics with only the upper one exercised.
   - *Schema* drift (new abstract columns or a column-type/length change) cannot be pinned away —
     a query against a column the migrations never created fails at runtime, not just under
     `--check`. DOT 3.4 hit this: it added `registration_source` and `cimd_expires_at` and widened
     `client_id` (100 → 255) for CIMD / RFC 7591 DCR. Because these land only on a DOT *minor*
     bump, the supported range is deliberately capped to a single minor
-    (`django-oauth-toolkit>=3.4,<3.5`): a real `AlterField`/`AddField` migration (`0021`) brings
+    (`django-oauth-toolkit>=3.4.1,<3.5`): a real `AlterField`/`AddField` migration (`0021`) brings
     the schema in line with 3.4, and the `<3.5` cap stops a future minor from silently
     reintroducing the same breakage. **Bumping the floor to a new DOT minor is a deliberate step**
     — regenerate the migration, review the added columns, and move both the floor and the cap
@@ -293,9 +314,10 @@ The back-channel-logout dispatch path (`tasks.send_logout_token`) and the audit-
 
 ## Tooling (MCP)
 
-Prefer these MCP servers over ad-hoc grep/read loops or manual note-taking. `codegraph`
-is wired in this repo's `.mcp.json`; `agentmemory` is provided by the environment's MCP
-setup (not committed here):
+Prefer these MCP servers over ad-hoc grep/read loops or manual note-taking. Neither ships
+with the repository: `.mcp.json` is untracked, so server wiring is per-developer and either
+server may simply be absent. Treat both as optional - when one is not connected, fall back
+to `Grep`/`Read` rather than reporting the capability as missing:
 
 - **`codegraph`** — code-intelligence over a pre-built SQLite knowledge graph of every
   symbol, edge, and file. Consult it **before** writing or editing code. For "how does X

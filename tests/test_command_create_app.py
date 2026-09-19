@@ -223,6 +223,36 @@ class TestOIDCCreateAppCommand(OIDCTestCase):
         self.assertIn("MixedBadGroup", msg)
         self.assertNotIn("MixedGoodGroup", msg)
 
+    def test_creation_writes_admin_logentry(self) -> None:
+        # The ``log_action`` call has no other guard: mypy resolves
+        # ``LogEntry.objects`` to ``Any`` through the django-stubs
+        # plugin, basedpyright is suppressed on the line, and the
+        # write sits inside ``except Exception``. So a renamed kwarg,
+        # or the removal of the singular ``log_action`` deprecated
+        # since Django 5.1, would keep every gate green while the
+        # admin audit trail silently stopped being written. The
+        # sibling test below pins the failure branch; this one pins
+        # that the row is actually there on the happy path.
+        from django.contrib.admin.models import ADDITION, LogEntry
+        from django.contrib.contenttypes.models import ContentType
+
+        Application = get_application_model()
+        call_command(
+            "oidc_create_app",
+            "--name=Audited Creation",
+            f"--user-id={self.user1.pk}",
+            "--format=json",
+            stdout=StringIO(),
+        )
+        app = Application.objects.get(name="Audited Creation")
+        entry = LogEntry.objects.get(
+            content_type=ContentType.objects.get_for_model(Application),
+            object_id=str(app.id),
+        )
+        self.assertEqual(ADDITION, entry.action_flag)
+        self.assertEqual(self.user1.pk, entry.user_id)
+        self.assertIn("oidc_create_app", entry.change_message)
+
     def test_logentry_write_failure_does_not_undo_creation(self) -> None:
         # Pin ``except Exception`` on the LogEntry write.
         # ``ExceptionReplacer`` narrowing the catch (e.g. to

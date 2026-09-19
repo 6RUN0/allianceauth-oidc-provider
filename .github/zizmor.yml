@@ -1,0 +1,33 @@
+# zizmor configuration. Discovered automatically from `.github/`; the
+# `actions_lint` nox session runs `zizmor --persona=pedantic
+# --min-severity=low` over `.github/workflows/*.yml`.
+
+rules:
+  # `self-repository` wants `uses: $/.github/actions/setup` in place of
+  # `./.github/actions/setup`. The `$/` form is real (GitHub Actions,
+  # GA 2026-07-30) and is the better posture in general: `./` resolves
+  # against the runner filesystem, so it can pick up an action a
+  # previous step cloned, and it is invisible to org-level "fully
+  # pinned" policy.
+  #
+  # Not adopted here, because neither half of that buys anything in
+  # these workflows while the cost is two tools:
+  #
+  # * The clone-shadowing path needs a step that writes into
+  #   `.github/actions/` before the composite runs. Every job checks
+  #   out this repository and nothing else, and does it immediately
+  #   before `uses:`, so there is no such step to exploit.
+  # * `actionlint` rejects `$/` as a malformed `uses:` value. 1.7.12
+  #   is the newest release and support is still an open PR
+  #   (rhysd/actionlint#732, with the maintainer inactive per #719),
+  #   so the `lint-actions` gate fails on every workflow file.
+  # * `act` rejects it the same way ("Expected format
+  #   {org}/{repo}[/path]@ref"), which breaks `make ci-local`.
+  #
+  # Revisit when actionlint and act both parse `$/`: the change is a
+  # one-line rewrite per `uses:` plus deleting this block.
+  self-repository:
+    ignore:
+      - audit.yml
+      - main.yml
+      - release.yml

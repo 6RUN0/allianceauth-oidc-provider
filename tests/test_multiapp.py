@@ -99,14 +99,16 @@ class TestMultiAppIsolation(GrantedOIDCTestCase):
         # The leaked metadata: app B sees app A's user, scope, expiry.
         self.assertEqual(self.user1.username, introspection.get("username"))
 
-    def test_revoke_with_other_app_credentials_succeeds_in_dot(self):
+    def test_revoke_with_other_app_credentials_is_a_noop(self):
         """
-        Pinned: RFC 7009 §2.1 requires the server to verify the token belongs
-        to the requesting client; DOT does not.
+        Pinned: RFC 7009 §2.1 client scoping, enforced by DOT since 3.4.1.
 
-        Any confidential client can revoke any token in the provider. This test
-        pins the current (insecure) DOT behaviour — if it starts failing, DOT
-        has tightened revoke and we should celebrate then update the assertion.
+        App B authenticates correctly but does not own the token, so the
+        revocation must not take effect. The endpoint still answers 200
+        (§2.2: an unknown token is not distinguishable from a known one,
+        or the response would confirm a token's existence to whoever
+        asks), which is why the assertion that matters is the one on the
+        token still working afterwards.
         """
         body = self._issue_token_for_app1()
         access_token = body["access_token"]
@@ -121,12 +123,16 @@ class TestMultiAppIsolation(GrantedOIDCTestCase):
         )
         self.assertEqual(200, revoke_resp.status_code)
 
-        # The token is now unusable, even though app B revoked it.
         post_revoke = self.client.get(
             "/o/userinfo/",
             headers={"authorization": f"Bearer {access_token}"},
         )
-        self.assertIn(post_revoke.status_code, (401, 403))
+        self.assertEqual(
+            200,
+            post_revoke.status_code,
+            "app B must not be able to revoke app A's token; a 401/403 "
+            "means DOT stopped scoping revocation to the owning client",
+        )
 
 
 class TestCrossClientCodeAbuse(GrantedOIDCTestCase):

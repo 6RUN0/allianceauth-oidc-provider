@@ -46,7 +46,7 @@ The diagram source is `assets/diagrams/policy-flow.d2`; re-render with `make dia
 | Python                | 3.10, 3.11, 3.12, 3.13                          |
 | Alliance Auth         | 4.x and 5.x                                     |
 | Django                | 4.2 (with AA 4.x) or 5.2 (with AA 5.x)          |
-| `django-oauth-toolkit`| `>=3.4,<3.5`                                    |
+| `django-oauth-toolkit`| `>=3.4.1,<3.5`                                  |
 
 CI exercises the AA 5.x stack on every supported Python version and AA 4.x
 backward compatibility on Python 3.10–3.12 (AA 4.13.x declares
@@ -233,6 +233,27 @@ the data step detects the non-boolean value, fails over to RFC 9700 secure-by-de
 force-sets every existing app to `pkce_required=True`. Recovery is to flip individual apps
 back to `False` via Django admin. The matching `RuntimeWarning` is described under
 [Operations → Per-app PKCE](#per-app-pkce).
+
+### `django-oauth-toolkit` floor raised to 3.4.1
+
+The supported range is now `>=3.4.1,<3.5`; DOT 3.4.0 is no longer supported. Upgrade DOT
+together with this package, then run `python manage.py migrate`: migration `0022` only records
+new field labels and executes no SQL, but until it is applied `manage.py` keeps reporting it.
+
+**This changes behaviour your RPs can observe**, so read before upgrading a busy deployment.
+Both changes come from DOT itself and both close a hole:
+
+- **Revoking an access token now also revokes the refresh token bound to it.** Previously the
+  refresh token survived as an orphan and could immediately mint a replacement access token. An
+  RP that revokes an access token to drop a single device and then keeps refreshing on the same
+  grant will now be forced back through authorization. If that is your logout flow, expect users
+  to re-authorize once after the upgrade.
+- **Revocation is scoped to the client that owns the token.** A second confidential client
+  presenting its own valid credentials can no longer revoke another client's tokens. Per
+  RFC 7009 §2.2 the endpoint still answers `200` in that case - the status never reveals whether
+  the token existed - so an RP relying on cross-client revocation will see success and no effect
+  rather than an error. Check for this before upgrading if you run several clients against one
+  Auth instance.
 
 ## Configuration
 

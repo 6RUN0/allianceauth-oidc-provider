@@ -10,7 +10,7 @@
 # Drift is gated (CI + pre-commit) by:
 #   uv run nox -s makefile_check
 
-.PHONY: help dev test test-all test-aa4 test-compat mariadb timing integration preflight lint lint-md lint-actions typecheck coverage audit messages messages-check compilemessages makemigrations migrations-check migrations-ddl-check diagrams conformance conformance-basic mutation mutation-parallel mutation-html mutation-check makefile makefile-check clean package verify-wheel deploy
+.PHONY: help dev test test-all test-aa4 test-compat mariadb timing integration preflight lint lint-md lint-actions ci-local typecheck coverage audit messages messages-check compilemessages makemigrations migrations-check migrations-ddl-check diagrams conformance conformance-basic mutation mutation-parallel mutation-html mutation-check makefile makefile-check clean package verify-wheel deploy
 
 help:
 	@echo "Available targets (all run via uv):"
@@ -26,6 +26,7 @@ help:
 	@echo "  lint                  run pre-commit on all files (nox -s lint)"
 	@echo "  lint-md               lint Markdown via rumdl + lychee + vale (nox -s markdown_lint)"
 	@echo "  lint-actions          lint GitHub Actions workflows via actionlint + zizmor (nox -s actions_lint)"
+	@echo "  ci-local              replay .github/workflows/main.yml locally via act (nox -s ci_local; needs Docker)"
 	@echo "  typecheck             run mypy + basedpyright (nox -s typecheck)"
 	@echo "  coverage              run tests with coverage report (nox -s coverage)"
 	@echo "  audit                 pip-audit dependencies (nox -s audit)"
@@ -100,6 +101,16 @@ lint-md:
 
 lint-actions:
 	uv run nox -s actions_lint
+
+# ``ci-local`` runs the CI workflow in a container so a runner-only
+# failure (missing apt package, dep absent from the lock) surfaces
+# before a push burns a CI round-trip. Narrow the scope:
+#   make ci-local JOB=lint            # one job
+#   make ci-local EVENT=pull_request  # a different trigger
+# Bare ``make ci-local`` replays the whole 7-cell test matrix -
+# budget an hour. ``EVENT`` defaults to ``push``.
+ci-local:
+	CI_LOCAL_JOB='$(JOB)' CI_LOCAL_EVENT='$(EVENT)' uv run nox -s ci_local
 
 typecheck:
 	uv run nox -s typecheck

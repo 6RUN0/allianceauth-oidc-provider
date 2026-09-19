@@ -204,6 +204,35 @@ TARGETS: tuple[Target, ...] = (
         session="actions_lint",
     ),
     Target(
+        name="ci-local",
+        help=(
+            "replay .github/workflows/main.yml locally via act "
+            "(nox -s ci_local; needs Docker)"
+        ),
+        recipe=(
+            (
+                "CI_LOCAL_JOB='$(JOB)' CI_LOCAL_EVENT='$(EVENT)' "
+                "uv run nox -s ci_local"
+            ),
+        ),
+        session="ci_local",
+        comment=(
+            (
+                "``ci-local`` runs the CI workflow in a container so a "
+                "runner-only"
+            ),
+            (
+                "failure (missing apt package, dep absent from the lock) "
+                "surfaces"
+            ),
+            "before a push burns a CI round-trip. Narrow the scope:",
+            "  make ci-local JOB=lint            # one job",
+            "  make ci-local EVENT=pull_request  # a different trigger",
+            ("Bare ``make ci-local`` replays the whole 7-cell test matrix -"),
+            "budget an hour. ``EVENT`` defaults to ``push``.",
+        ),
+    ),
+    Target(
         name="typecheck",
         help="run mypy + basedpyright (nox -s typecheck)",
         recipe=("uv run nox -s typecheck",),

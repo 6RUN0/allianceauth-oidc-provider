@@ -59,6 +59,15 @@ from _nox.shared import (
 # registry live here.
 _MAKEFILE_PATH = pathlib.Path("Makefile")
 
+# Runner image the ``ci_local`` session hands to ``act``. The tag
+# tracks the workflow's ``runs-on: ubuntu-24.04``; ``catthehacker``
+# images are the ones act's own docs point at, and the plain
+# (non-``-full``) variant is the smallest one that still carries
+# ``sudo`` + ``apt-get``, which ``.github/actions/setup`` needs for
+# ``default-libmysqlclient-dev``. Bump this in lockstep with
+# ``runs-on`` in ``.github/workflows/main.yml``.
+_ACT_RUNNER_IMAGE = "catthehacker/ubuntu:act-24.04"
+
 nox.options.sessions = ["lint", "tests"]
 # `none`: nox does not create its own venv; it runs sessions in the active
 # environment. Combined with `uv sync --all-groups`, this keeps the toolchain
@@ -350,6 +359,95 @@ def actions_lint(session: nox.Session) -> None:
             "dev-util/zizmor) or "
             "https://github.com/woodruffw/zizmor"
         )
+
+
+@nox.session
+def ci_local(session: nox.Session) -> None:
+    """
+    Run the CI workflow locally in Docker via ``act``.
+
+    Closes the push-test-fix loop that ``preflight`` cannot: the nox
+    sessions run in the developer's own environment, while CI runs them
+    on a bare runner after ``uv sync``. Failures that only exist in that
+    gap (a dev dependency present locally but absent from the lock, an
+    ``apt-get`` package the composite action forgot, a step that assumes
+    a warm cache) are invisible until a push burns a CI round-trip.
+
+    ``act`` (https://github.com/nektos/act) replays the workflow in a
+    container. Needs a running Docker daemon; both the binary and the
+    daemon are opt-in, so the session warns and returns when either is
+    missing - same pattern as ``actions_lint`` / ``diagrams``.
+
+    Scope knobs, in the order you usually want them:
+
+        make ci-local JOB=typecheck      # one job (the fast one)
+        make ci-local EVENT=pull_request
+        make ci-local                    # the whole push event
+        uv run nox -s ci_local -- --dryrun
+        uv run nox -s ci_local -- -j test --matrix python-version:3.12
+
+    ``JOB``/``EVENT`` map to ``CI_LOCAL_JOB``/``CI_LOCAL_EVENT``;
+    posargs are appended verbatim to the ``act`` command line.
+
+    Three caveats that are not visible from the workflow file:
+
+    - The bare ``make ci-local`` replays the full ``test`` matrix (7
+      cells), each doing its own ``uv sync`` with a ``mysqlclient``
+      sdist build inside the container. Budget an hour; narrow with
+      ``JOB`` for anything but a pre-release sweep.
+    - ``JOB=lint`` cannot pass. ``act`` does not run ``actions/checkout``
+      for real - it copies the working tree in and leaves ``.git``
+      out, so ``pre-commit run --all-files`` dies with "git failed. Is
+      it installed, and are you in a Git repository directory?". Probed
+      by running a workflow whose only step is ``test -e .git``: absent,
+      while ``git --version`` reports 2.55.0. ``act --bind`` mounts the
+      real directory instead of copying and does fix it, at the price of
+      letting the container's root-owned ``uv sync`` write over the
+      host ``.venv`` - so it stays opt-in, via posargs. Run the gate on
+      the host (``nox -s lint``); the jobs that only need the working
+      tree (``typecheck``, ``test``, ``package``) replay faithfully.
+    - ``act``'s ``services:`` support is partial, so the ``mariadb``
+      job is expected to misbehave locally even when CI is green. Use
+      ``nox -s tests_mariadb`` (testcontainers) for that path instead.
+    """
+    if not shutil.which("act"):
+        session.warn(
+            "act not installed; skipping. Install via your system "
+            "package manager (Gentoo: dev-util/act) or "
+            "https://github.com/nektos/act/releases."
+        )
+        return
+    if not shutil.which("docker"):
+        session.warn("docker not on PATH; act needs a container runtime")
+        return
+
+    # ``or`` rather than a ``get`` default: the Makefile recipe always
+    # exports both vars, so an unset ``EVENT=`` arrives as the empty
+    # string and would shadow the default.
+    event = os.environ.get("CI_LOCAL_EVENT") or "push"
+    job = os.environ.get("CI_LOCAL_JOB") or ""
+
+    # ``-P`` is mandatory, not a preference. The workflow pins
+    # ``runs-on: ubuntu-24.04`` (not ``ubuntu-latest``), which act has
+    # no built-in image for; with no mapping and no ``~/.actrc`` it
+    # stops to ask which image size to use, hanging a ``make`` run on
+    # an interactive prompt. Pinning the image here also keeps the run
+    # reproducible across machines whose ``~/.actrc`` differs.
+    #
+    # ``--pull=false`` keeps the edit-run loop off the network; refresh
+    # the image explicitly with ``docker pull``.
+    args = [
+        "act",
+        event,
+        "-W",
+        ".github/workflows/main.yml",
+        "-P",
+        f"ubuntu-24.04={_ACT_RUNNER_IMAGE}",
+        "--pull=false",
+    ]
+    if job:
+        args += ["-j", job]
+    session.run(*args, *session.posargs, external=True)
 
 
 @nox.session

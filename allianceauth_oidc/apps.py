@@ -106,7 +106,7 @@ def _connect_bcl_pre_save_gate() -> None:
         dispatch_uid="allianceauth_oidc.bcl_uri_save_gate",
         weak=False,
     )
-    def _enforce(  # pyright: ignore[reportUnusedFunction]
+    def _enforce(
         sender: Any,  # noqa: ARG001
         instance: Any,
         **kwargs: Any,  # noqa: ARG001

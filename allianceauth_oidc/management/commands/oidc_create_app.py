@@ -168,12 +168,16 @@ class Command(BaseCommand):
         try:
             from django.contrib.admin.models import ADDITION, LogEntry
 
-            # ``log_action`` is the Django 4.2 public API; Django 5.1
-            # marked it deprecated in favour of bulk ``log_actions``,
-            # which the django-stubs we depend on already mirror —
-            # hence the typing ignores. We keep the singular call
-            # because it matches the runtime AA installation.
-            LogEntry.objects.log_action(  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+            # Django 5.1 deprecates singular ``log_action`` in favour of
+            # bulk ``log_actions``; the singular call stays because it is
+            # what the Django 4.2 floor of the supported range offers.
+            # django-stubs declares only ``log_actions`` on
+            # ``LogEntryManager``. basedpyright reads that stub directly
+            # and flags the attribute; mypy resolves ``LogEntry.objects``
+            # to ``Any`` through the django-stubs plugin and so reports
+            # nothing at all, which makes a ``type: ignore`` here unused
+            # and a ``warn_unused_ignores`` error. Hence pyright-only.
+            LogEntry.objects.log_action(  # pyright: ignore[reportAttributeAccessIssue]
                 user_id=owner_id,
                 content_type_id=ContentType.objects.get_for_model(
                     Application

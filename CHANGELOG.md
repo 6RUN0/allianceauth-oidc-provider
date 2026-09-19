@@ -14,6 +14,28 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Changed
+
+- The supported `django-oauth-toolkit` range narrows from `>=3.4,<3.5` to
+  `>=3.4.1,<3.5`, forced by the revocation change below: the suite pins
+  3.4.1's semantics and is red on 3.4.0, so the range cannot honestly
+  claim it. Deployments pinned to DOT 3.4.0 must move to 3.4.1.
+  Separately, 3.4.1 relabels the fields inherited from the abstract
+  application model (`verbose_name`), which dirties
+  `makemigrations --check` without touching the schema. Migration `0022`
+  (run `manage.py migrate`) records the new labels and emits no SQL at all -
+  `sqlmigrate allianceauth_oidc 0022` prints a bare `BEGIN; COMMIT;`.
+- Two revocation semantics tighten with DOT 3.4.1, both in the safe
+  direction, both now pinned by the suite. Revoking an access token at
+  `/o/revoke_token/` also revokes the refresh token bound to it, instead
+  of leaving it an orphan that could immediately re-mint access; an RP
+  that revoked an access token to drop one device and kept refreshing on
+  the same grant now has to re-authorize. And revocation is scoped to the
+  client that owns the token: a second confidential client presenting its
+  own valid credentials can no longer revoke another client's tokens. The
+  endpoint still answers `200` in that case, per RFC 7009 §2.2 - the
+  status never reveals whether the token existed.
+
 ## [0.5.0] - 2026-07-28
 
 ### Changed

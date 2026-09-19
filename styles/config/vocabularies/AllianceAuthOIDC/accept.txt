@@ -93,6 +93,7 @@ prefetched
 runtime
 serialise
 serialiser
+dockerised
 struct
 templating
 typecheck
@@ -171,6 +172,7 @@ v6
 subclassing
 nginx
 untrusted
+untracked
 ACLs
 Auth's
 Talovikov
@@ -313,6 +315,10 @@ hostnames
 URIs
 JWTs
 IPs
+RPs
+DOT's
+POSTs
+POSTed
 cleartext
 loopback
 multicast
