@@ -82,6 +82,16 @@ _PKCE_CODE_VERIFIER_RE: Final[re.Pattern[str]] = re.compile(
     r"[A-Za-z0-9\-._~]{43,128}"
 )
 
+# RFC 7636 s4.2: a ``plain`` challenge is the verifier itself; an
+# ``S256`` one is base64url, no padding, of a SHA-256 digest. DOT stores
+# the challenge unchecked in a 128-character column, so an overlong one
+# is a DataError (HTTP 500) on MySQL/MariaDB. Unknown methods are left
+# to oauthlib, which refuses them with ``invalid_request``.
+_PKCE_CODE_CHALLENGE_RE: Final[dict[str, re.Pattern[str]]] = {
+    "plain": _PKCE_CODE_VERIFIER_RE,
+    "S256": re.compile(r"[A-Za-z0-9_-]{43}"),
+}
+
 
 def _lookup_dot_token_pk(model: Any, raw_value: str | None) -> int | None:
     """
@@ -262,6 +272,35 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
             getattr(resolved_client, "client_id", None),
         )
         return False
+
+    def is_pkce_required(self, client_id, request):
+        """
+        Refuse an authorize request whose ``code_challenge`` breaks RFC 7636.
+
+        oauthlib calls this from ``validate_authorization_request``
+        just before its own challenge checks, on both the GET and the
+        consent-form POST, and before DOT persists the ``Grant``: it is
+        the only validator hook at that point that sees the challenge.
+        The raise becomes an ``invalid_request`` redirect with
+        ``state``, like oauthlib's missing-challenge error. Token
+        requests carry no ``response_type`` and are not checked.
+        """
+        challenge = getattr(request, "code_challenge", None)
+        if (
+            challenge is not None
+            and getattr(request, "response_type", None) is not None
+        ):
+            method = getattr(request, "code_challenge_method", None)
+            pattern = _PKCE_CODE_CHALLENGE_RE.get(method or "plain")
+            if pattern is not None and pattern.fullmatch(challenge) is None:
+                raise oauth_errors.InvalidRequestError(
+                    description=(
+                        "code_challenge does not match RFC 7636 for "
+                        "the code_challenge_method."
+                    ),
+                    request=request,
+                )
+        return super().is_pkce_required(client_id, request)
 
     def validate_silent_login(self, request):
         """

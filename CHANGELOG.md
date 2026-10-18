@@ -54,6 +54,19 @@ is preserved in `git log`; this file documents fork-specific changes only.
   `TypeError`. An RP that sent an out-of-spec verifier that happened to
   match its own challenge was accepted before and now gets
   `invalid_grant`.
+- An authorization request whose `code_challenge` breaks RFC 7636
+  section 4.2 is refused with an `invalid_request` redirect to the
+  client's `redirect_uri`, `state` echoed, before any authorization code
+  is stored: a `plain` challenge (also the default when
+  `code_challenge_method` is omitted) must be 43 to 128 characters of
+  `A-Z a-z 0-9 - . _ ~`, an `S256` challenge exactly 43 characters of
+  `A-Z a-z 0-9 - _` with no `=` padding; an unknown
+  `code_challenge_method` stays refused with `invalid_request`. On
+  MySQL/MariaDB a challenge longer than 128 characters overflowed the
+  `code_challenge` column of django-oauth-toolkit's `Grant` table and
+  returned 500 Internal Server Error; a shorter out-of-spec challenge,
+  including an empty one, was stored and a code issued. An RP that
+  sends such a challenge now gets `invalid_request` instead of a code.
 
 ## [0.6.1] - 2026-09-19
 

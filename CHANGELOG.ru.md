@@ -54,6 +54,19 @@
   `TypeError`. RP, отправлявший verifier вне спецификации, который
   совпадал с его собственным challenge, раньше проходил, теперь получает
   `invalid_grant`.
+- Запрос авторизации, у которого `code_challenge` нарушает RFC 7636,
+  раздел 4.2, отклоняется редиректом с `invalid_request` на
+  `redirect_uri` клиента с возвратом `state` - до того, как сохранён
+  код авторизации. Challenge метода `plain` (он же используется, если
+  `code_challenge_method` не передан) - от 43 до 128 символов из
+  `A-Z a-z 0-9 - . _ ~`, challenge метода `S256` - ровно 43 символа из
+  `A-Z a-z 0-9 - _` без дополнения `=`; неизвестный
+  `code_challenge_method` по-прежнему получает `invalid_request`. На
+  MySQL/MariaDB challenge длиннее 128 символов переполнял колонку
+  `code_challenge` таблицы `Grant` из django-oauth-toolkit и давал 500
+  Internal Server Error; более короткий challenge вне спецификации, в
+  том числе пустой, сохранялся, и код выдавался. RP, отправляющий такой
+  challenge, теперь получает `invalid_request` вместо кода.
 
 ## [0.6.1] - 2026-09-19
 

@@ -252,6 +252,95 @@ class TestStateEchoOnError(GrantedOIDCTestCase):
         )
 
 
+class TestCodeChallengeFormatAtAuthorize(GrantedOIDCTestCase):
+    """
+    RFC 7636 s4.2 challenge grammar enforced on /o/authorize/.
+
+    DOT persists ``code_challenge`` into ``Grant.code_challenge``
+    (``max_length=128``) unchecked: on MySQL/MariaDB a longer value
+    raised ``DataError`` (HTTP 500) and broke the surrounding
+    transaction, while SQLite stored it silently. A malformed
+    challenge must instead come back as an ``invalid_request``
+    redirect with ``state`` echoed (RFC 6749 s4.1.2.1) and leave no
+    ``Grant`` row behind.
+    """
+
+    # ``plain``: the challenge is the verifier, so s4.1 applies
+    # (43..128 unreserved characters). ``S256``: base64url without
+    # padding of a SHA-256 digest, exactly 43 characters.
+    MALFORMED = (
+        ("plain", "A" * 129),
+        ("plain", "A" * 42),
+        ("plain", "A" * 42 + "+"),
+        (None, "A" * 129),
+        ("S256", "A" * 42),
+        ("S256", "A" * 44),
+        ("S256", "A" * 42 + "="),
+        ("S256", "A" * 42 + "/"),
+        ("S256", "A" * 42 + "."),
+        ("S256", "A" * 129),
+        ("S256", ""),
+        ("S512", "A" * 43),
+        ("S512", "A" * 129),
+    )
+
+    def _params(self, method: str | None, challenge: str) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "response_type": "code",
+            "client_id": self.oauth_id,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_OPENID,
+            "state": "bad-challenge-state",
+            "code_challenge": challenge,
+        }
+        if method is not None:
+            params["code_challenge_method"] = method
+        return params
+
+    def _assert_invalid_request(self, response: Any) -> None:
+        loc, _, qs = self.parse_redirect(response, (302,))
+        self.assertTrue(loc.startswith(REDIRECT_URI))
+        self.assertEqual(["invalid_request"], qs.get("error"))
+        self.assertEqual(["bad-challenge-state"], qs.get("state"))
+        self.assertNotIn("code", qs)
+
+    def test_malformed_challenge_get_is_invalid_request(self) -> None:
+        """Each malformed challenge or unknown method: no code, no row."""
+        from oauth2_provider.models import get_grant_model
+
+        grant_model = get_grant_model()
+        creds = make_app(owner=self.user1, skip_authorization=True)
+        self.client.force_login(self.user1)
+        for method, challenge in self.MALFORMED:
+            with self.subTest(
+                method=method, length=len(challenge), tail=challenge[-1:]
+            ):
+                params = self._params(method, challenge)
+                params["client_id"] = creds.client_id
+                response = self.client.get("/o/authorize/", data=params)
+                self._assert_invalid_request(response)
+        self.assertFalse(grant_model.objects.exists())
+
+    def test_malformed_challenge_consent_post_is_invalid_request(
+        self,
+    ) -> None:
+        """
+        The consent-form submit re-validates the challenge.
+
+        ``allow=True`` reaches code issuance directly, so the GET-time
+        refusal alone would not keep the overlong value out of
+        ``Grant``.
+        """
+        from oauth2_provider.models import get_grant_model
+
+        self.client.force_login(self.user1)
+        data = self._params("plain", "A" * 129)
+        data["allow"] = True
+        response = self.client.post("/o/authorize/", data=data)
+        self._assert_invalid_request(response)
+        self.assertFalse(get_grant_model().objects.exists())
+
+
 class TestRequestObjectAndUriHandling(GrantedOIDCTestCase):
     """
     OIDC Core 1.0 §6 / RFC 9101 (JAR) — the ``request`` and

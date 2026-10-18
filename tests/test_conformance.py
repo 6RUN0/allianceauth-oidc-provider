@@ -478,22 +478,23 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
         """
         A verifier outside RFC 7636 s4.1 unreserved characters: 400.
 
-        The challenge is derived from the malformed verifier itself,
-        so the comparison alone would accept it; only the charset rule
-        refuses it, for ``plain`` and ``S256`` alike.
+        The challenge is the S256 hash of the malformed verifier, a
+        legal 43-character value, so the comparison alone would accept
+        it; only the token-time charset rule refuses it. ``plain`` is
+        not exercised: its challenge is the verifier itself, and
+        /o/authorize/ refuses such a challenge before a code exists
+        (``TestCodeChallengeFormatAtAuthorize``).
         """
         base = "a" * 42
-        for method in ("plain", "S256"):
-            for bad in (" ", "+", "/", "="):
-                with self.subTest(method=method, char=bad):
-                    resp = self._strict_exchange(
-                        state="strict-charset",
-                        verifier_of=lambda v: v,
-                        method=method,
-                        genuine=base + bad,
-                    )
-                    body = self.json_body(resp, expected_status=400)
-                    self.assertEqual("invalid_grant", body.get("error"))
+        for bad in (" ", "+", "/", "="):
+            with self.subTest(char=bad):
+                resp = self._strict_exchange(
+                    state="strict-charset",
+                    verifier_of=lambda v: v,
+                    genuine=base + bad,
+                )
+                body = self.json_body(resp, expected_status=400)
+                self.assertEqual("invalid_grant", body.get("error"))
 
     def test_strict_app_verifier_length_outside_43_128_is_invalid_grant(
         self,
@@ -501,20 +502,23 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
         """
         RFC 7636 s4.1 bounds the verifier to 43..128 characters.
 
-        Each verifier matches its own challenge, so a 400 here comes
-        from the length rule, not from the comparison.
+        Each verifier hashes to its own S256 challenge, always a legal
+        43-character value, so a 400 here comes from the token-time
+        length rule, not from the comparison. ``plain`` cannot bind a
+        42- or 129-character verifier: the challenge would be the
+        verifier, which /o/authorize/ refuses before a code exists
+        (``TestCodeChallengeFormatAtAuthorize``); a 129-character one
+        also overflows ``Grant.code_challenge`` on MySQL/MariaDB.
         """
-        for method in ("plain", "S256"):
-            for length in (42, 129):
-                with self.subTest(method=method, length=length):
-                    resp = self._strict_exchange(
-                        state="strict-length",
-                        verifier_of=lambda v: v,
-                        method=method,
-                        genuine="A" * length,
-                    )
-                    body = self.json_body(resp, expected_status=400)
-                    self.assertEqual("invalid_grant", body.get("error"))
+        for length in (42, 129):
+            with self.subTest(length=length):
+                resp = self._strict_exchange(
+                    state="strict-length",
+                    verifier_of=lambda v: v,
+                    genuine="A" * length,
+                )
+                body = self.json_body(resp, expected_status=400)
+                self.assertEqual("invalid_grant", body.get("error"))
 
     def test_strict_app_verifier_at_43_and_128_chars_issues_tokens(self):
         """
