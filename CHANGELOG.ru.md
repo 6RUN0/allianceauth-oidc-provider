@@ -14,6 +14,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-18
+
 ### Изменено
 
 - `oauthlib>=4,<5` становится прямой зависимостью. DOT 3.4.1 принимает
@@ -1000,7 +1002,8 @@ cache-poisoning vector между release-прогонами).
 
 Что было до точки расхождения форка — смотрите `git log` и страницу релизов оригинала.
 
-[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/6RUN0/allianceauth-oidc-provider/compare/v0.4.1...v0.5.0
