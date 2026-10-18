@@ -49,11 +49,16 @@ whitelist'ом `state` / `group`.
 | Alliance Auth         | 4.x и 5.x                                          |
 | Django                | 4.2 (с AA 4.x) или 5.2 (с AA 5.x)                  |
 | `django-oauth-toolkit`| `>=3.4.1,<3.5`                                     |
+| `oauthlib`            | `>=4,<5`                                           |
 
 CI прогоняет стек AA 5.x на каждой поддерживаемой версии Python и
 backward-совместимость с AA 4.x на Python 3.10–3.12 (AA 4.13.x объявляет
 `requires-python <3.13`, поэтому Python 3.13 в AA 4.x-измерении не идёт).
 Оба стека используют один и тот же код — версионных shim'ов в пакете нет.
+Зафиксированный в lock стек - Alliance Auth 5.5.0 с django-esi 10 на
+Django 5.2; ветка AA 4.x разрешается в Alliance Auth 4.13.x на Django 4.2.
+Нижняя граница `oauthlib` защищает от уязвимости: все выпуски 3.x подвержены
+PYSEC-2026-4114 (утечка по времени при сравнении PKCE `code_verifier`).
 
 ## Установка
 

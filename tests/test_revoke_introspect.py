@@ -81,6 +81,49 @@ class TestRevokeAndIntrospect(GrantedOIDCTestCase):
             )
             self.assertEqual(200, resp.status_code)
 
+    def test_revoke_ignores_jsonp_callback_parameter(self):
+        """
+        A ``callback`` parameter never wraps the revocation response.
+
+        oauthlib 4 dropped JSONP revocation. A JSONP body is executable
+        script served from the provider's origin, so a dependency that
+        brings it back must turn this red.
+        """
+        token = self._issue_access_token()
+        resp = self.client.post(
+            "/o/revoke_token/",
+            data={
+                "token": token,
+                "client_id": self.oauth_id,
+                "client_secret": self.oauth_secret,
+                "callback": "pwn",
+            },
+        )
+        self.assertEqual(200, resp.status_code)
+        self.assertNotIn(b"pwn", resp.content)
+        self.assertNotIn("javascript", resp.get("Content-Type", ""))
+
+    def test_revoke_error_ignores_jsonp_callback_parameter(self):
+        """
+        A revocation error stays plain JSON when ``callback`` is sent.
+
+        The error path built its own JSONP wrapper in oauthlib 3.x, so
+        it is pinned separately from the success path.
+        """
+        resp = self.client.post(
+            "/o/revoke_token/",
+            data={
+                "token": "unknown-token",
+                "client_id": self.oauth_id,
+                "client_secret": "WRONG_SECRET",  # pragma: allowlist secret
+                "callback": "pwn",
+            },
+        )
+        self.assertNotIn(b"pwn", resp.content)
+        self.assertEqual("application/json", resp.get("Content-Type"))
+        body = self.json_body(resp, expected_status=None)
+        self.assertEqual("invalid_client", body.get("error"))
+
     def test_introspect_reports_active_for_valid_token(self):
         """
         RFC 7662: /o/introspect/ must return active=true for a valid

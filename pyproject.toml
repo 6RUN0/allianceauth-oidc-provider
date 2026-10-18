@@ -44,7 +44,20 @@ classifiers = [
 # ``makemigrations --check`` without touching the schema, and one patch
 # of range holds exactly one model state. See the inherited-field-drift
 # section in CLAUDE.md before widening either end.
-dependencies = [ "allianceauth>=4,<6", "django-oauth-toolkit>=3.4.1,<3.5" ]
+#
+# ``oauthlib`` is a direct dependency only to carry a floor: DOT 3.4.1
+# asks for ``oauthlib>=3.3.0``, and every 3.x is affected by
+# PYSEC-2026-4114 (timing side channel in the PKCE ``code_verifier``
+# comparison, fixed in 4.0.0). PKCE is verified on every app that keeps
+# the default ``pkce_required=True``, so a resolver must not be allowed
+# to pick 3.x. The ``<5`` cap: a major oauthlib release changes endpoint
+# behaviour the suite pins (4.0 moved missing ``grant_type`` from 401
+# ``invalid_client`` to 400 ``invalid_request``).
+dependencies = [
+    "allianceauth>=4,<6",
+    "django-oauth-toolkit>=3.4.1,<3.5",
+    "oauthlib>=4,<5",
+]
 
 # Optional extras. ``metrics`` opts the operator into Prometheus
 # integration via ``django-prometheus``: when installed (whether
@@ -655,7 +668,6 @@ DEP001 = [
     "celery",
     "asgiref",
     "oauth2_provider",
-    "oauthlib",
     "jwcrypto",
     "cryptography",
     "prometheus_client",

@@ -17,6 +17,7 @@ import base64
 import html
 import os
 import re
+import unittest
 from typing import Any
 
 from ._factories import make_app
@@ -199,10 +200,7 @@ class TestPKCEFlow(GrantedOIDCTestCase):
         )
         status, body = self._exchange(code=code, verifier=wrong_verifier)
         self.assertEqual(400, status)
-        self.assertIn(
-            body.get("error"),
-            {"invalid_grant", "invalid_request"},
-        )
+        self.assertEqual("invalid_grant", body.get("error"))
 
     def test_pkce_missing_verifier_when_challenge_provided_is_rejected(
         self,
@@ -219,10 +217,7 @@ class TestPKCEFlow(GrantedOIDCTestCase):
         )
         status, body = self._exchange(code=code, verifier=None)
         self.assertEqual(400, status)
-        self.assertIn(
-            body.get("error"),
-            {"invalid_grant", "invalid_request"},
-        )
+        self.assertEqual("invalid_request", body.get("error"))
 
     def test_pkce_empty_verifier_is_rejected(self):
         """
@@ -237,10 +232,7 @@ class TestPKCEFlow(GrantedOIDCTestCase):
         )
         status, body = self._exchange(code=code, verifier="")
         self.assertEqual(400, status)
-        self.assertIn(
-            body.get("error"),
-            {"invalid_grant", "invalid_request"},
-        )
+        self.assertEqual("invalid_grant", body.get("error"))
 
 
 class TestPerAppPkceRequired(GrantedOIDCTestCase):
@@ -365,10 +357,112 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
         )
         self.assertEqual(400, token_resp.status_code)
         body = self.json_body(token_resp, expected_status=None)
-        self.assertIn(
-            body.get("error"),
-            {"invalid_grant", "invalid_request"},
+        self.assertEqual("invalid_grant", body.get("error"))
+
+    def _strict_exchange(
+        self, *, state: str, verifier_of, method: str = "S256"
+    ) -> Any:
+        """
+        Run a PKCE code flow on a ``pkce_required=True`` app.
+
+        ``verifier_of`` maps the genuine verifier to the one sent at
+        the exchange (``None`` omits the parameter).
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        creds = make_app(
+            owner=self.user1, pkce_required=True, skip_authorization=True
         )
+        verifier, challenge = self.make_pkce_pair()
+        if method == "plain":
+            challenge = verifier
+        resp = self.authorize_get_default(
+            self.user1,
+            scope=SCOPE_OPENID,
+            state=state,
+            extra={
+                "client_id": creds.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": method,
+            },
+        )
+        self.assertEqual(302, resp.status_code)
+        code = parse_qs(urlparse(resp.headers["Location"]).query)["code"][0]
+        return self.exchange_code_with_verifier(
+            code=code,
+            verifier=verifier_of(verifier),
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+        )
+
+    def test_strict_app_s256_round_trip(self):
+        """
+        The S256 happy path on a PKCE-required app issues tokens.
+
+        Pinned next to the negatives below: oauthlib 4 rewrote the
+        verifier comparison (constant-time, PYSEC-2026-4114), and a
+        comparison that rejects everything would pass every negative.
+        """
+        resp = self._strict_exchange(
+            state="strict-s256-ok", verifier_of=lambda v: v
+        )
+        body = self.json_body(resp, expected_status=200)
+        self.assertIn("access_token", body)
+
+    def test_strict_app_wrong_verifier_is_invalid_grant(self):
+        """A verifier not hashing to the challenge: 400 invalid_grant."""
+        resp = self._strict_exchange(
+            state="strict-wrong",
+            verifier_of=lambda v: _b64url(os.urandom(32)),
+        )
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("invalid_grant", body.get("error"))
+
+    def test_strict_app_missing_verifier_is_invalid_request(self):
+        """
+        No ``code_verifier`` for a PKCE-bound code: 400 invalid_request.
+
+        RFC 7636 s4.6 makes the parameter mandatory once a challenge
+        was sent; oauthlib reports its absence as a malformed request.
+        """
+        resp = self._strict_exchange(
+            state="strict-missing", verifier_of=lambda v: None
+        )
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("invalid_request", body.get("error"))
+
+    def test_strict_app_non_ascii_s256_verifier_is_invalid_grant(self):
+        """
+        A non-ASCII verifier under S256 is a grant error, never a 500.
+
+        S256 hashes the verifier before the constant-time comparison,
+        so both ``hmac.compare_digest`` operands stay ASCII.
+        """
+        resp = self._strict_exchange(
+            state="strict-non-ascii-s256",
+            verifier_of=lambda v: v[:-1] + "\u00e9",
+        )
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("invalid_grant", body.get("error"))
+
+    # Known defect on oauthlib 4.0.0: the 500 below is real (the test
+    # passes on 3.3.1). Unexpected success means the defect is gone.
+    @unittest.expectedFailure
+    def test_strict_app_non_ascii_plain_verifier_is_rejected_not_500(self):
+        """
+        A non-ASCII verifier under ``plain`` is refused, never a 500.
+
+        ``plain`` feeds the raw verifier to ``hmac.compare_digest``,
+        which raises ``TypeError`` on a non-ASCII ``str``.
+        """
+        resp = self._strict_exchange(
+            state="strict-non-ascii-plain",
+            verifier_of=lambda v: v[:-1] + "\u00e9",
+            method="plain",
+        )
+        self.assertLess(resp.status_code, 500)
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("invalid_grant", body.get("error"))
 
 
 class TestClaimsRequestParameterHTTP(GrantedOIDCTestCase):

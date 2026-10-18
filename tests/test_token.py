@@ -1613,6 +1613,88 @@ class TestTokenEndpointAntiEnumeration(OIDCTestCase):
         )
 
 
+class TestTokenRequestWithoutGrantType(OIDCTestCase):
+    """
+    Pin the token endpoint's answer to a request lacking ``grant_type``.
+
+    DOT dispatches such a request to the default (authorization-code)
+    handler, whose first check is ``grant_type``, so the answer is 400
+    ``unsupported_grant_type`` before any client authentication. The
+    answer is identical on oauthlib 3.3.1 and 4.0.0; it is pinned
+    because a dispatcher that authenticated first would turn it into
+    401 ``invalid_client`` for an unknown client and expose which
+    ``client_id`` values are registered.
+    """
+
+    def _post_without_grant_type(self, *, client_id: str, secret: str):
+        return self.client.post(
+            "/o/token/",
+            data={
+                "client_id": client_id,
+                "client_secret": secret,
+                "redirect_uri": REDIRECT_URI,
+                "code": "any-non-existent-code",
+            },
+        )
+
+    def test_without_grant_type_valid_client_is_unsupported_grant_type(
+        self,
+    ) -> None:
+        """Valid client credentials, no ``grant_type``: 400."""
+        resp = self._post_without_grant_type(
+            client_id=self.oauth_id, secret=self.oauth_secret
+        )
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("unsupported_grant_type", body.get("error"))
+
+    def test_without_grant_type_unknown_client_gets_identical_answer(
+        self,
+    ) -> None:
+        """Unknown client, no ``grant_type``: the same 400, not a 401."""
+        resp = self._post_without_grant_type(
+            client_id="not-a-registered-client",
+            secret="anything",  # nosec B106
+        )
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("unsupported_grant_type", body.get("error"))
+
+
+class TestTokenClientIdMismatch(OIDCTestCase):
+    """
+    Basic credentials of one client next to a body ``client_id`` of another.
+
+    oauthlib 4.0 cross-checks the authenticated client against the
+    ``client_id`` parameter and refuses a mismatch as 400
+    ``server_error``; oauthlib 3.3.1 let the request reach code
+    validation, which answered 400 ``invalid_grant``. The refusal
+    before code validation is the safer order, so it is pinned, and
+    the status stays below 500 so it never reads as a provider outage.
+    """
+
+    def test_basic_auth_client_differs_from_body_client_id(self) -> None:
+        """Authenticated as one app, naming another: 400 server_error."""
+        import base64
+
+        from ._factories import make_app
+
+        other = make_app(owner=self.user1)
+        basic = base64.b64encode(
+            f"{self.oauth_id}:{self.oauth_secret}".encode()
+        ).decode("ascii")
+        resp = self.client.post(
+            "/o/token/",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": other.client_id,
+                "redirect_uri": REDIRECT_URI,
+                "code": "any-non-existent-code",
+            },
+            headers={"authorization": f"Basic {basic}"},
+        )
+        body = self.json_body(resp, expected_status=400)
+        self.assertEqual("server_error", body.get("error"))
+
+
 class TestRedirectURIInjection(GrantedOIDCTestCase):
     """
     Header- and URL-injection guards on ``redirect_uri``.

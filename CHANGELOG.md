@@ -14,6 +14,33 @@ is preserved in `git log`; this file documents fork-specific changes only.
 
 ## [Unreleased]
 
+### Changed
+
+- `oauthlib>=4,<5` becomes a direct dependency. DOT 3.4.1 accepts any
+  `oauthlib>=3.3.0`, and every 3.x release compares the PKCE
+  `code_verifier` in non-constant time (PYSEC-2026-4114, fixed only in
+  4.0.0). The provider verifies PKCE on every application that keeps the
+  default `pkce_required=True`, so without the floor a resolver could
+  install a vulnerable 3.x next to this package. Upgrading pulls
+  oauthlib 4 into the Alliance Auth environment: another installed module
+  that pins `oauthlib<4` makes the install fail with a dependency
+  conflict, and that pin has to go first.
+- One token-endpoint answer changes with oauthlib 4: a request that
+  authenticates with HTTP Basic as one client but names another in the
+  `client_id` body parameter is refused with 400 `server_error` before the
+  code is examined; oauthlib 3.x answered 400 `invalid_grant` after code
+  validation. The request is refused either way - only the error code an
+  RP logs differs.
+- Unchanged with oauthlib 4, and now pinned by the suite: a token request
+  without `grant_type` gets 400 `unsupported_grant_type` whether or not
+  the client is registered, and `/o/revoke_token/` ignores a JSONP
+  `callback` parameter. oauthlib 4 removed the revocation JSONP option,
+  but DOT never enabled it, so revocation responses match 0.6.1.
+- The locked development and CI stack moves to Alliance Auth 5.5.0,
+  django-esi 10 and Django 5.2; the AA 4.x leg keeps testing Alliance
+  Auth 4.13.x on Django 4.2. The supported Alliance Auth and Django ranges
+  are unchanged.
+
 ## [0.6.1] - 2026-09-19
 
 ### Fixed

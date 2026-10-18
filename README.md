@@ -47,12 +47,16 @@ The diagram source is `assets/diagrams/policy-flow.d2`; re-render with `make dia
 | Alliance Auth         | 4.x and 5.x                                     |
 | Django                | 4.2 (with AA 4.x) or 5.2 (with AA 5.x)          |
 | `django-oauth-toolkit`| `>=3.4.1,<3.5`                                  |
+| `oauthlib`            | `>=4,<5`                                        |
 
 CI exercises the AA 5.x stack on every supported Python version and AA 4.x
 backward compatibility on Python 3.10–3.12 (AA 4.13.x declares
 `requires-python <3.13`, so Python 3.13 is excluded from the AA 4.x dimension).
 Both stacks share the same code path — no version-specific shims live in the
-package itself.
+package itself. The locked stack is Alliance Auth 5.5.0 with django-esi 10 on
+Django 5.2; the AA 4.x leg resolves to Alliance Auth 4.13.x on Django 4.2.
+The `oauthlib` floor is a security floor: every 3.x release is affected by
+PYSEC-2026-4114 (timing side channel in the PKCE `code_verifier` comparison).
 
 ## Install
 
