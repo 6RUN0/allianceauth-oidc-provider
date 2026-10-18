@@ -1,7 +1,18 @@
 {
-  "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported": "Suite SKIPPED — the provider rejects request objects with request_not_supported (OIDC Core 1.0 s6.1, permitted behaviour); the suite fires 'test skipped' because request objects cannot be exercised against such a server. Implementing JAR would flip this to a real PASS.",
-
-  "oidcc-scope-address": "Suite SKIPPED — address scope not advertised in discovery; provider does not return address claims.",
-  "oidcc-scope-phone": "Suite SKIPPED — phone scope not advertised in discovery; provider does not return phone claims.",
-  "oidcc-scope-all": "Suite SKIPPED — depends on address/phone scopes which the provider does not implement."
+  "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported": {
+    "result": "SKIPPED",
+    "reason": "The provider rejects request objects with request_not_supported (OIDC Core 1.0 s6.1, permitted behaviour); the suite fires 'test skipped' because request objects cannot be exercised against such a server. Implementing JAR would flip this to a real PASS."
+  },
+  "oidcc-scope-address": {
+    "result": "SKIPPED",
+    "reason": "address scope not advertised in discovery; provider does not return address claims."
+  },
+  "oidcc-scope-phone": {
+    "result": "SKIPPED",
+    "reason": "phone scope not advertised in discovery; provider does not return phone claims."
+  },
+  "oidcc-scope-all": {
+    "result": "SKIPPED",
+    "reason": "depends on address/phone scopes which the provider does not implement."
+  }
 }

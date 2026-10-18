@@ -14,8 +14,8 @@ import sys
 from typing import TYPE_CHECKING
 
 from .config import (
+    NON_FAILURE_RESULTS,
     PASS_RESULTS,
-    TERMINAL_FAIL_RESULTS,
     WARN_RESULTS,
     ModuleResult,
 )
@@ -23,10 +23,12 @@ from .config import (
 if TYPE_CHECKING:
     import pathlib
 
+    from .filtering import ExpectedFailure
+
 
 def _bucket_results(
     results: list[ModuleResult],
-    expected_failures: dict[str, str],
+    expected_failures: dict[str, ExpectedFailure],
 ) -> tuple[
     list[ModuleResult],  # passed
     list[ModuleResult],  # warned
@@ -38,20 +40,22 @@ def _bucket_results(
     Split a result list into the five buckets the summary cares
     about. Single source of truth so ``emit_summary`` and
     ``write_summary_json`` count identically.
+
+    Every result outside ``NON_FAILURE_RESULTS`` is a failure; it is
+    an XFAIL only when the module's ledger entry pins that exact
+    result.
     """
     passed = [r for r in results if r.result in PASS_RESULTS]
     warned = [r for r in results if r.result in WARN_RESULTS]
-    failed_real = [
-        r
-        for r in results
-        if r.result in TERMINAL_FAIL_RESULTS
-        and r.name not in expected_failures
-    ]
+    failed = [r for r in results if r.result not in NON_FAILURE_RESULTS]
     xfail = [
         r
-        for r in results
-        if r.result in TERMINAL_FAIL_RESULTS and r.name in expected_failures
+        for r in failed
+        if r.name in expected_failures
+        and expected_failures[r.name].result == r.result
     ]
+    xfail_names = {r.name for r in xfail}
+    failed_real = [r for r in failed if r.name not in xfail_names]
     xpass = [r for r in passed if r.name in expected_failures]
     return passed, warned, failed_real, xfail, xpass
 
@@ -61,7 +65,7 @@ def emit_summary(
     *,
     skipped_filtered: list[str] | None = None,
     strict_warnings: bool,
-    expected_failures: dict[str, str] | None = None,
+    expected_failures: dict[str, ExpectedFailure] | None = None,
 ) -> int:
     """
     Print a one-line-per-module summary and return an exit code.
@@ -72,12 +76,13 @@ def emit_summary(
     run, but do NOT participate in the exit-code calculation: the
     suite never saw them.
 
-    ``expected_failures`` is a {name: reason} map of modules that are
-    known to fail (e.g. an upstream HtmlUnit NPE, or unimplemented
-    spec feature). A FAILED/TIMEOUT/ERROR module listed there is
-    re-bucketed as ``XFAIL`` and removed from the exit-code denylist;
-    a PASSED module listed there raises ``XPASS`` (unexpected pass)
-    — that means the file is stale and should be edited.
+    ``expected_failures`` maps modules that are known not to pass
+    (e.g. an unimplemented optional spec feature the suite SKIPs) to
+    the exact result acknowledged for them. A module finishing with
+    that result is re-bucketed as ``XFAIL`` and removed from the
+    exit-code denylist; any other non-passing result stays a real
+    failure. A PASSED module listed there raises ``XPASS``
+    (unexpected pass): the file is stale and should be edited.
     """
     skipped_filtered = skipped_filtered or []
     expected_failures = expected_failures or {}
@@ -117,7 +122,7 @@ def emit_summary(
             "them; they may have been fixed upstream:\n"
         )
         for r in xpass:
-            reason = expected_failures.get(r.name, "")
+            reason = expected_failures[r.name].reason
             sys.stdout.write(f"  {r.name}  ({reason})\n")
 
     # Copy-pasteable allowlist / denylist blocks. After a discovery
@@ -154,7 +159,7 @@ def write_summary_json(
     *,
     results: list[ModuleResult],
     skipped_filtered: list[str],
-    expected_failures: dict[str, str],
+    expected_failures: dict[str, ExpectedFailure],
     plan_name: str,
     plan_id: str,
 ) -> None:
@@ -190,7 +195,10 @@ def write_summary_json(
             for r in results
         ],
         "skipped_filtered": list(skipped_filtered),
-        "expected_failures": dict(expected_failures),
+        "expected_failures": {
+            name: {"result": entry.result, "reason": entry.reason}
+            for name, entry in expected_failures.items()
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))

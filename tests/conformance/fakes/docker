@@ -1,0 +1,5 @@
+#!/bin/sh
+# Test double for ``docker``: every compose lifecycle call succeeds
+# without starting containers, so run_per_module.sh can be exercised
+# by tests/test_conformance_runner.py without a docker daemon.
+exit 0

@@ -144,20 +144,35 @@ bucket — gitignored and dockerignored, separate from `dist/`
 
 For long-lived green CI you want known-broken modules acknowledged
 without polluting the run with red. Pass `--expected-failures
-FILE.json`:
+FILE.json`; every entry pins the exact result it acknowledges:
 
 ```json
 {
-  "oidcc-prompt-login": "prompt=login forced re-auth not implemented",
-  "oidcc-max-age-1": "max_age=1 forced re-auth not implemented"
+  "oidcc-scope-address": {
+    "result": "SKIPPED",
+    "reason": "address scope not advertised in discovery"
+  }
 }
 ```
 
-A FAILED/TIMEOUT/ERROR module listed there is re-bucketed as `XFAIL`
-and does NOT influence the exit code. A PASSED module listed there
-triggers an `XPASS` alarm — that means the entry is stale (the
-upstream issue was likely fixed) and should be edited out. Mirrors
-the upstream `run-test-plan.py --expected-failures-file` pattern.
+A listed module that finishes with exactly the pinned `result` is
+re-bucketed as `XFAIL` and does NOT influence the exit code. Any
+other non-passing result of that module (e.g. `FAILED` for an entry
+pinned to `SKIPPED`) stays a real failure, so an acknowledged skip
+cannot mask a regression. A PASSED module listed there triggers an
+`XPASS` alarm: the entry is stale and should be edited out. A
+plain-string value (`"module": "reason"`, the schema without a
+pinned result) is rejected with a `TypeError` at load time.
+
+`nox -s conformance` and `nox -s conformance_basic` apply the
+shipped `tests/conformance/expected_failures.json` unless you pass
+your own `--expected-failures`.
+
+Results are classified by allowlist: only `PASSED` / `REVIEW` (pass)
+and `WARNING` (warn) are non-failures. Everything else, including
+`UNKNOWN` / `INTERRUPTED` for a module the suite stopped before its
+verdict and any result code a future suite release adds, counts as
+a failure.
 
 ## Per-module restart loop
 
@@ -175,20 +190,29 @@ tests/conformance/run_per_module.sh \
   -- --exclude 'oidcc-userinfo-*'
 ```
 
-`--results-dir` defaults to `.artifacts/conformance/results`, so the
-flag is only needed when you want to keep multiple result sets side
-by side (e.g. `--results-dir .artifacts/conformance/results-aa4` for
-a matrix run).
+`--results-dir` defaults to `.artifacts/conformance/results`. Every
+run writes into its own fresh subdirectory `run-<UTC timestamp>/`
+under it (printed as `==> results: ...`), so a JSON left by an
+earlier run is never read.
 
 How it works:
 
 1. Brings the stack up once and calls `run_plan.py --list-modules`
-   to enumerate the plan; tears down.
-2. For each module: `compose up` → `run_plan.py --include MODULE
-   --summary-json results/MODULE.json` → `compose down -v`.
-3. Runs `aggregate_summaries.py results/` to produce the combined
-   summary in the same format `emit_summary` prints for a single
-   run.
+   to enumerate the plan into `RUN_DIR/modules.txt`; tears down.
+2. For each module: `compose up` -> `run_plan.py --include MODULE
+   --summary-json RUN_DIR/MODULE.json` -> `compose down -v`. The
+   loop continues past a failing module and records each
+   `run_plan.py` exit code in `RUN_DIR/exit_codes.tsv`.
+3. Runs `aggregate_summaries.py RUN_DIR --expected-modules
+   RUN_DIR/modules.txt --plan-name PLAN --exit-codes
+   RUN_DIR/exit_codes.tsv` to produce the combined summary in the
+   same format `emit_summary` prints for a single run.
+
+The aggregator accounts for every listed module: a missing,
+unreadable or result-less `MODULE.json`, a file written for another
+plan, and a `run_plan.py` exit code other than 0 or 1 (harness
+crash: argparse error, signal, OOM kill) are reported as `ERROR` for
+that module, with the reason on stderr, and fail the aggregate.
 
 Anything after `--` is forwarded verbatim to `run_plan.py`, so
 filters, `--strict-warnings`, `--expected-failures` and the like all
@@ -203,9 +227,9 @@ day-to-day iteration should stay on `nox -s conformance`.
 
 `tests/conformance/expected_failures.json` records the known status
 of every basic-cert module that does NOT pass cleanly today. All
-remaining entries are suite-side SKIPs (bucketed as failures by the
-runner unless acknowledged here, so a silent skip cannot masquerade
-as coverage):
+remaining entries pin `"result": "SKIPPED"` (bucketed as failures by
+the runner unless acknowledged here, so a silent skip cannot
+masquerade as coverage):
 
 1. `oidcc-unsigned-request-object-…-or-rejected-as-unsupported` —
    the provider rejects `request` / `request_uri` with the OIDC
@@ -249,9 +273,10 @@ positive-flow visits — see the browser-entry ordering rationale in
 `runner/plan_config.py` and the guard tests in
 `tests/test_conformance_runner.py`.
 
-`run_per_module.sh` automatically passes
+`run_per_module.sh` and the `conformance` / `conformance_basic` nox
+sessions automatically pass
 `--expected-failures tests/conformance/expected_failures.json` if
-the file exists and the operator did not override it. With the
+the operator did not override it. With the
 baseline in place, a default per-module run prints `xfail=N
 xpass=0` and exits 0 — green CI baseline, while any `XPASS` line is
 a loud alarm that an entry has gone stale and should be removed.

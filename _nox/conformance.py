@@ -18,6 +18,23 @@ import pathlib
 
 import nox
 
+# Acknowledged-result ledger shared with ``run_per_module.sh``. Without
+# it the suite-side SKIPs listed there turn every run red, so a real
+# regression would be indistinguishable from the baseline.
+EXPECTED_FAILURES = "tests/conformance/expected_failures.json"
+
+
+def with_default_expected_failures(posargs: list[str]) -> list[str]:
+    """
+    Return runner args with the shipped ledger unless one is given.
+
+    An operator-supplied ``--expected-failures`` wins, matching the
+    auto-injection in ``run_per_module.sh``.
+    """
+    if "--expected-failures" in posargs:
+        return list(posargs)
+    return [*posargs, "--expected-failures", EXPECTED_FAILURES]
+
 
 @nox.session
 def conformance(session: nox.Session) -> None:
@@ -32,6 +49,9 @@ def conformance(session: nox.Session) -> None:
 
         uv run nox -s conformance -- --plan oidcc-basic-certification-test-plan
         uv run nox -s conformance -- --strict-warnings
+
+    The shipped ``tests/conformance/expected_failures.json`` ledger is
+    applied unless the posargs carry their own ``--expected-failures``.
 
     ``conformance_basic`` is a convenience session that wraps this
     one with the Basic Certification plan pre-selected (~35 modules,
@@ -83,7 +103,7 @@ def conformance(session: nox.Session) -> None:
         session.run(
             "python",
             "tests/conformance/run_plan.py",
-            *session.posargs,
+            *with_default_expected_failures(list(session.posargs)),
         )
     finally:
         # ``-v`` wipes the named MongoDB volume so the next run starts

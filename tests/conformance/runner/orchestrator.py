@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     import pathlib
 
     from .config import ModuleResult
+    from .filtering import ExpectedFailure
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ def run_plan(
     isolated: bool = False,
     sleep_between_s: float = 5.0,
     export_dir: pathlib.Path | None = None,
-    expected_failures: dict[str, str] | None = None,
+    expected_failures: dict[str, ExpectedFailure] | None = None,
     summary_json: pathlib.Path | None = None,
 ) -> int:
     """

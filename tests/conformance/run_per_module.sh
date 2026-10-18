@@ -63,7 +63,16 @@ if [[ -f "$EXPECTED_FAILURES" && "$expected_failures_seen" -eq 0 ]]; then
     RUNNER_ARGS+=("--expected-failures" "$EXPECTED_FAILURES")
 fi
 
+# Each run writes into its own fresh directory: a JSON left by an
+# earlier run must never stand in for a module this run lost. ``mkdir``
+# without ``-p`` refuses an existing directory.
 mkdir -p "$RESULTS_DIR"
+RUN_DIR="$RESULTS_DIR/run-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir "$RUN_DIR"
+echo "==> results: $RUN_DIR"
+modules_file="$RUN_DIR/modules.txt"
+exit_codes_file="$RUN_DIR/exit_codes.tsv"
+: >"$exit_codes_file"
 
 cleanup() {
     docker compose -f "$COMPOSE_FILE" down -v >/dev/null 2>&1 || true
@@ -76,9 +85,8 @@ docker compose -f "$COMPOSE_FILE" up -d --wait --build
 # Capture the module list from the suite. ``--list-modules`` creates
 # a plan instance just to read its module array, prints names line
 # by line, exits 0. The plan instance lingers in MongoDB but the
-# down -v that follows wipes it.
-modules_file="$(mktemp)"
-trap 'rm -f "$modules_file"; cleanup' EXIT
+# down -v that follows wipes it. The list doubles as the aggregator's
+# expected-module set.
 uv run python tests/conformance/run_plan.py \
     --plan "$PLAN" --list-modules >"$modules_file"
 mapfile -t MODULES <"$modules_file"
@@ -94,21 +102,28 @@ for module in "${MODULES[@]}"; do
     echo
     echo "==> [$i/$total] $module"
     docker compose -f "$COMPOSE_FILE" up -d --wait
-    # ``|| true`` so a single module's non-zero exit (FAILED) does
-    # not break the loop; the JSON file captures the verdict anyway.
-    # ``${RUNNER_ARGS[@]+...}`` guards against ``set -u`` tripping
-    # on an empty array.
+    # ``|| rc=$?`` keeps the loop going past a failing module and
+    # records the exit code: the aggregator treats anything but 0/1
+    # as a harness crash. ``${RUNNER_ARGS[@]+...}`` guards against
+    # ``set -u`` tripping on an empty array.
+    rc=0
     uv run python tests/conformance/run_plan.py \
         --plan "$PLAN" \
         --include "$module" \
-        --summary-json "$RESULTS_DIR/$module.json" \
-        "${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}" || true
+        --summary-json "$RUN_DIR/$module.json" \
+        "${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}" || rc=$?
+    printf '%s\t%s\n' "$module" "$rc" >>"$exit_codes_file"
     docker compose -f "$COMPOSE_FILE" down -v >/dev/null
 done
 
 echo
 echo "==> [aggregate] combining ${total} per-module summaries"
-aggregate_args=("$RESULTS_DIR")
+aggregate_args=(
+    "$RUN_DIR"
+    --expected-modules "$modules_file"
+    --plan-name "$PLAN"
+    --exit-codes "$exit_codes_file"
+)
 if [[ -f "$EXPECTED_FAILURES" ]]; then
     aggregate_args+=("--expected-failures" "$EXPECTED_FAILURES")
 fi

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .config import module_name
@@ -77,34 +78,65 @@ def filter_modules(
     return selected, skipped, missing
 
 
-def load_expected_failures(path: pathlib.Path) -> dict[str, str]:
+@dataclass(frozen=True)
+class ExpectedFailure:
     """
-    Parse an expected-failures JSON file: name -> reason.
+    One acknowledged module outcome from the expected-failures file.
 
-    Modules listed there are treated as known-acknowledged: a
-    FAILED/TIMEOUT/ERROR does not influence the run's exit code, and
-    a PASSED triggers an UNEXPECTED-PASS alarm so an upstream fix
-    doesn't go unnoticed (the file is then stale and needs editing).
+    ``result`` is the exact suite result the entry acknowledges; any
+    other non-passing result of the module is a real failure.
+    """
+
+    result: str
+    reason: str
+
+
+def load_expected_failures(
+    path: pathlib.Path,
+) -> dict[str, ExpectedFailure]:
+    """
+    Parse an expected-failures JSON file: name -> pinned result.
+
+    A listed module that finishes with exactly the pinned result is
+    reported as XFAIL and does not influence the exit code; any other
+    non-passing result stays a real failure, so an acknowledged
+    SKIPPED cannot mask a later FAILED. A PASSED module triggers an
+    UNEXPECTED-PASS alarm so an upstream fix does not go unnoticed
+    (the file is then stale and needs editing).
 
     Format::
 
         {
-          "oidcc-userinfo-get":
-              "HtmlUnit 4.11.1 NPE in async XHR (upstream issue)",
-          "oidcc-prompt-login":
-              "RFC 6749 prompt= parameter not yet implemented"
+          "oidcc-scope-address": {
+            "result": "SKIPPED",
+            "reason": "address scope not advertised in discovery"
+          }
         }
 
-    Mirrors upstream ``run-test-plan.py --expected-failures-file``.
+    A plain-string value (the schema without a pinned result) is
+    rejected: it would acknowledge every failure mode of the module.
+    Raises ``TypeError`` on a malformed file; the caller (run_plan.py
+    CLI bootstrap) prints the message verbatim.
     """
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
-        # Type assertion on the deserialised JSON shape — TypeError per
-        # TRY004 ("if you check the type, raise TypeError"). The  # noqa: ERA001
-        # caller (run_plan.py CLI bootstrap) prints the message
-        # verbatim, so keep it descriptive.
         raise TypeError(
-            f"{path}: expected JSON object {{module: reason}}, "
-            f"got {type(data).__name__}"
+            f"{path}: expected JSON object "
+            f"{{module: {{result, reason}}}}, got {type(data).__name__}"
         )
-    return {str(k): str(v) for k, v in data.items()}
+    ledger: dict[str, ExpectedFailure] = {}
+    for name, entry in data.items():
+        if not (
+            isinstance(entry, dict)
+            and isinstance(entry.get("result"), str)
+            and entry["result"]
+            and isinstance(entry.get("reason"), str)
+        ):
+            raise TypeError(
+                f"{path}: entry {name!r} must be an object with "
+                f'string "result" and "reason", got {entry!r}'
+            )
+        ledger[str(name)] = ExpectedFailure(
+            result=entry["result"], reason=entry["reason"]
+        )
+    return ledger

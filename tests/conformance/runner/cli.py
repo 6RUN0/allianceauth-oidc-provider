@@ -159,13 +159,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="FILE",
         help=(
-            "JSON file mapping ``module-name`` -> reason. Modules "
-            "listed there are treated as known-acknowledged failures: "
-            "FAILED/TIMEOUT/ERROR are re-bucketed as XFAIL and do not "
-            "influence the exit code; PASSED triggers an XPASS alarm "
-            "so a stale entry doesn't go unnoticed. Mirrors the "
-            "upstream run-test-plan.py --expected-failures-file "
-            "pattern."
+            'JSON file mapping ``module-name`` -> {"result": ..., '
+            '"reason": ...}. A listed module finishing with exactly '
+            "the pinned result is re-bucketed as XFAIL and does not "
+            "influence the exit code; any other non-passing result "
+            "stays a failure; PASSED triggers an XPASS alarm so a "
+            "stale entry doesn't go unnoticed."
         ),
     )
     parser.add_argument(

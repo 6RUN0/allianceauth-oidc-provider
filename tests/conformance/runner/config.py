@@ -92,18 +92,17 @@ PLAN_VARIANT_DEFAULTS: dict[str, dict[str, str]] = {
 # Result codes the suite emits. See ConformanceTestResult.java.
 # ``ERROR`` is a runner-side pseudo-code emitted when the suite
 # refuses to start a module (typically variant mismatch returning a
-# 500 from POST /api/runner) — bucketed with FAIL so the operator
-# sees it in the denylist and the run exits non-zero.
+# 500 from POST /api/runner); ``TIMEOUT`` is the runner-side code for
+# a module that never left RUNNING within the poll deadline.
 PASS_RESULTS: frozenset[str] = frozenset({"PASSED", "REVIEW"})
 WARN_RESULTS: frozenset[str] = frozenset({"WARNING"})
 FAIL_RESULTS: frozenset[str] = frozenset({"FAILED", "SKIPPED", "ERROR"})
-# Failure classification used by the summary layer: ``FAIL_RESULTS``
-# plus the runner-side ``"TIMEOUT"`` pseudo-code emitted by
-# ``client.poll_module`` when a module never leaves the RUNNING state
-# within the deadline. Hoisted out of ``summary._bucket_results`` so
-# the value-set lives next to ``FAIL_RESULTS`` and is not rebuilt on
-# every summary call.
-TERMINAL_FAIL_RESULTS: frozenset[str] = FAIL_RESULTS | frozenset({"TIMEOUT"})
+# The summary classifies by this allowlist: every result outside it
+# is a failure. The suite reports ``UNKNOWN`` / ``INTERRUPTED`` for a
+# module stopped before its verdict (e.g. alias conflict), and a
+# future suite release may add codes; a denylist would let those
+# drop out of every counter and leave the run green.
+NON_FAILURE_RESULTS: frozenset[str] = PASS_RESULTS | WARN_RESULTS
 
 
 @dataclass

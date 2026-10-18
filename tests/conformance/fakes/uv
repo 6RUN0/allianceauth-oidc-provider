@@ -1,0 +1,15 @@
+#!/bin/sh
+# Test double for ``uv run python SCRIPT ARGS...``: run_plan.py is
+# routed to fake_run_plan.py next to this file, any other script to
+# the interpreter named by STUB_PYTHON.
+shift 2
+script=$1
+shift
+case $script in
+    */run_plan.py)
+        exec "$STUB_PYTHON" "$(dirname "$0")/fake_run_plan.py" "$@"
+        ;;
+    *)
+        exec "$STUB_PYTHON" "$script" "$@"
+        ;;
+esac
