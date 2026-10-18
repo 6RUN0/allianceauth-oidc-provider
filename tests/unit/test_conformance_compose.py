@@ -31,6 +31,7 @@ from __future__ import annotations
 import importlib
 import os
 import pathlib
+import re
 import unittest
 from unittest import mock
 
@@ -42,6 +43,15 @@ except ModuleNotFoundError:  # off-lock matrix venvs may lack PyYAML
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _COMPOSE = _REPO_ROOT / "tests" / "conformance" / "docker-compose.yml"
 _PREFIX = "CONFORMANCE_"
+# ``${NAME:-default}``: compose substitutes the host variable or the
+# default, so the default is what the container sees on a clean host.
+_INTERPOLATION = re.compile(r"^\$\{(?P<name>\w+):-(?P<default>.*)\}$")
+
+
+def _compose_default(value: object) -> str:
+    """Return the value compose uses when no host variable is set."""
+    match = _INTERPOLATION.match(str(value))
+    return match["default"] if match else str(value)
 
 
 def _runner_config_defaults() -> dict[str, str]:
@@ -75,7 +85,7 @@ class ComposeEnvMatchesRunnerDefaultsTests(unittest.TestCase):
             for key, value in environment.items()
             if key.startswith(_PREFIX)
             and key[len(_PREFIX) :] in defaults
-            and str(value) != defaults[key[len(_PREFIX) :]]
+            and _compose_default(value) != defaults[key[len(_PREFIX) :]]
         }
         self.assertEqual(
             {},
@@ -94,6 +104,45 @@ class ComposeEnvMatchesRunnerDefaultsTests(unittest.TestCase):
         defaults = _runner_config_defaults()
         for name in ("CLIENT_ID", "CLIENT_SECRET", "USERNAME", "PASSWORD"):
             self.assertIn(name, defaults)
+
+
+@unittest.skipIf(yaml is None, "PyYAML not installed in this venv")
+class ComposeIsolationTests(unittest.TestCase):
+    """Pin the stack's isolation from other checkouts and the network."""
+
+    def setUp(self) -> None:
+        with _COMPOSE.open(encoding="utf-8") as fh:
+            self.compose = yaml.safe_load(fh)
+
+    def test_project_name_is_pinned(self) -> None:
+        # A directory-derived ``conformance`` project lets ``down -v``
+        # remove another checkout's stack and Mongo volume.
+        self.assertEqual("allianceauth-oidc-conformance", self.compose["name"])
+
+    def test_published_ports_bind_to_loopback(self) -> None:
+        # The suite API runs unauthenticated (dev profile) and the
+        # provider seeds a known staff login.
+        published = [
+            (service, str(port))
+            for service, spec in self.compose["services"].items()
+            for port in spec.get("ports", [])
+        ]
+        self.assertTrue(published)
+        for service, port in published:
+            self.assertTrue(port.startswith("127.0.0.1:"), (service, port))
+
+    def test_issuer_follows_the_host_public_url(self) -> None:
+        # run_plan.py builds discoveryUrl from the host's
+        # CONFORMANCE_PUBLIC_URL; the issuer must take the same value.
+        env = self.compose["services"]["provider"]["environment"]
+        match = _INTERPOLATION.match(str(env["CONFORMANCE_PUBLIC_URL"]))
+        self.assertIsNotNone(match)
+        self.assertEqual("CONFORMANCE_PUBLIC_URL", match["name"])
+
+    def test_provider_healthcheck_allows_cold_start(self) -> None:
+        # migrate + seed on a cold runner can outlast retries x interval.
+        healthcheck = self.compose["services"]["provider"]["healthcheck"]
+        self.assertIn("start_period", healthcheck)
 
 
 if __name__ == "__main__":

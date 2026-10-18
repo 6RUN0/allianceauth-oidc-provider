@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from .config import (
     NON_FAILURE_RESULTS,
     PASS_RESULTS,
+    REVIEW_RESULTS,
     WARN_RESULTS,
     ModuleResult,
 )
@@ -31,21 +32,24 @@ def _bucket_results(
     expected_failures: dict[str, ExpectedFailure],
 ) -> tuple[
     list[ModuleResult],  # passed
+    list[ModuleResult],  # review
     list[ModuleResult],  # warned
     list[ModuleResult],  # failed_real
     list[ModuleResult],  # xfail
     list[ModuleResult],  # xpass
 ]:
     """
-    Split a result list into the five buckets the summary cares
+    Split a result list into the six buckets the summary cares
     about. Single source of truth so ``emit_summary`` and
     ``write_summary_json`` count identically.
 
     Every result outside ``NON_FAILURE_RESULTS`` is a failure; it is
     an XFAIL only when the module's ledger entry pins that exact
-    result.
+    result. A ledger module that did not fail (PASSED, REVIEW or
+    WARNING) is an XPASS: its entry is stale.
     """
     passed = [r for r in results if r.result in PASS_RESULTS]
+    review = [r for r in results if r.result in REVIEW_RESULTS]
     warned = [r for r in results if r.result in WARN_RESULTS]
     failed = [r for r in results if r.result not in NON_FAILURE_RESULTS]
     xfail = [
@@ -56,8 +60,36 @@ def _bucket_results(
     ]
     xfail_names = {r.name for r in xfail}
     failed_real = [r for r in failed if r.name not in xfail_names]
-    xpass = [r for r in passed if r.name in expected_failures]
-    return passed, warned, failed_real, xfail, xpass
+    xpass = [
+        r
+        for r in results
+        if r.result in NON_FAILURE_RESULTS and r.name in expected_failures
+    ]
+    return passed, review, warned, failed_real, xfail, xpass
+
+
+def _write_alarms(
+    xpass: list[ModuleResult],
+    review: list[ModuleResult],
+    expected_failures: dict[str, ExpectedFailure],
+) -> None:
+    """Print the UNEXPECTED PASS and NEEDS HUMAN REVIEW blocks."""
+    if xpass:
+        sys.stdout.write(
+            "\n!!! UNEXPECTED PASS - these modules are listed in "
+            "--expected-failures but did not fail. Edit the file to "
+            "drop them; they may have been fixed upstream:\n"
+        )
+        for r in xpass:
+            reason = expected_failures[r.name].reason
+            sys.stdout.write(f"  {r.name}  {r.result}  ({reason})\n")
+    if review:
+        sys.stdout.write(
+            "\n!!! NEEDS HUMAN REVIEW (not certification evidence) - "
+            "inspect the screenshot the suite attached to:\n"
+        )
+        for r in review:
+            sys.stdout.write(f"  {r.name}  ({r.test_id})\n")
 
 
 def emit_summary(
@@ -81,12 +113,18 @@ def emit_summary(
     the exact result acknowledged for them. A module finishing with
     that result is re-bucketed as ``XFAIL`` and removed from the
     exit-code denylist; any other non-passing result stays a real
-    failure. A PASSED module listed there raises ``XPASS``
-    (unexpected pass): the file is stale and should be edited.
+    failure. A listed module that did not fail raises ``XPASS``
+    (unexpected pass) and fails the run: the stale entry would
+    otherwise mask a later regression of that module.
+
+    ``REVIEW`` modules count separately from ``passed`` and are
+    listed under NEEDS HUMAN REVIEW; they do not change the exit
+    code. A run in which no module executed exits 1: nothing was
+    verified.
     """
     skipped_filtered = skipped_filtered or []
     expected_failures = expected_failures or {}
-    passed, warned, failed_real, xfail, xpass = _bucket_results(
+    passed, review, warned, failed_real, xfail, xpass = _bucket_results(
         results, expected_failures
     )
 
@@ -109,21 +147,14 @@ def emit_summary(
     for name in skipped_filtered:
         sys.stdout.write(f"{'FILTERED':<8} {name}\n")
     sys.stdout.write(
-        f"\npassed={len(passed)} warned={len(warned)} "
+        f"\npassed={len(passed)} review={len(review)} "
+        f"warned={len(warned)} "
         f"failed={len(failed_real)} xfail={len(xfail)} "
         f"xpass={len(xpass)} skipped={len(skipped_filtered)} "
         f"total={len(results) + len(skipped_filtered)}\n"
     )
 
-    if xpass:
-        sys.stdout.write(
-            "\n!!! UNEXPECTED PASS — these modules are listed in "
-            "--expected-failures but PASSED. Edit the file to drop "
-            "them; they may have been fixed upstream:\n"
-        )
-        for r in xpass:
-            reason = expected_failures[r.name].reason
-            sys.stdout.write(f"  {r.name}  ({reason})\n")
+    _write_alarms(xpass, review, expected_failures)
 
     # Copy-pasteable allowlist / denylist blocks. After a discovery
     # run (e.g. ``--isolated`` against a full plan) the operator wants
@@ -131,23 +162,25 @@ def emit_summary(
     # blocks make that a one-shot copy. Only emitted when both halves
     # are non-empty — a fully-green or fully-red run does not need
     # the bucketing.
-    pass_names = sorted(r.name for r in (passed + warned))
+    pass_names = sorted(r.name for r in (passed + review + warned))
     fail_names = sorted(r.name for r in (failed_real + xfail))
     if pass_names and fail_names:
         sys.stdout.write("\n=== Module groups ===\n")
         sys.stdout.write(
-            "# Allowlist (PASSED + WARNING) — paste into --include:\n"
+            "# Allowlist (PASSED + REVIEW + WARNING) - paste into --include:\n"
         )
         for name in pass_names:
             sys.stdout.write(f"{name}\n")
         sys.stdout.write(
-            "\n# Denylist (FAILED + TIMEOUT) — paste into "
-            "--exclude or --expected-failures:\n"
+            "\n# Denylist (every other result) - paste into --exclude:\n"
         )
         for name in fail_names:
             sys.stdout.write(f"{name}\n")
 
-    if failed_real:
+    if not results:
+        sys.stdout.write("\n!!! NO MODULE EXECUTED - nothing verified\n")
+        return 1
+    if failed_real or xpass:
         return 1
     if warned and strict_warnings:
         return 1
@@ -169,9 +202,9 @@ def write_summary_json(
     The schema is intentionally flat so a downstream aggregator
     (``aggregate_summaries.py``) can concatenate per-module files
     from a per-module restart loop into one combined view. Counts
-    use the same five-bucket breakdown as ``emit_summary``.
+    use the same six-bucket breakdown as ``emit_summary``.
     """
-    passed, warned, failed_real, xfail, xpass = _bucket_results(
+    passed, review, warned, failed_real, xfail, xpass = _bucket_results(
         results, expected_failures
     )
     payload = {
@@ -179,6 +212,7 @@ def write_summary_json(
         "plan_id": plan_id,
         "summary": {
             "passed": len(passed),
+            "review": len(review),
             "warned": len(warned),
             "failed": len(failed_real),
             "xfail": len(xfail),

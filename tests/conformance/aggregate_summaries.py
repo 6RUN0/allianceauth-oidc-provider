@@ -29,6 +29,7 @@ import argparse
 import json
 import pathlib
 import sys
+from typing import Any
 
 from tests.conformance.runner.config import ModuleResult
 from tests.conformance.runner.filtering import load_expected_failures
@@ -43,7 +44,7 @@ _RUNNER_VERDICT_EXIT_CODES = frozenset({0, 1})
 
 def _load_summary(
     path: pathlib.Path, plan_name: str | None
-) -> tuple[dict | None, str]:
+) -> tuple[dict[str, Any] | None, str]:
     """
     Load one per-module summary file for this run's plan.
 
@@ -83,7 +84,12 @@ def _read_module_result(
     data, problem = _load_summary(path, plan_name)
     if data is None:
         return None, False, problem
-    for entry in data.get("results", []):
+    results = data.get("results")
+    skipped = data.get("skipped_filtered")
+    # A string here would turn ``in`` into a substring test.
+    if not isinstance(results, list) or not isinstance(skipped, list):
+        return None, False, f"summary file {path} has a malformed schema"
+    for entry in results:
         if isinstance(entry, dict) and entry.get("name") == module:
             result = ModuleResult(
                 name=module,
@@ -91,18 +97,29 @@ def _read_module_result(
                 result=str(entry.get("result", "")),
             )
             return result, False, ""
-    filtered = module in data.get("skipped_filtered", [])
+    filtered = module in skipped
     return None, filtered, f"summary file {path} holds no result for it"
 
 
 def _read_exit_codes(path: pathlib.Path) -> dict[str, int]:
-    """Parse the tab-separated module / exit-code lines of the loop."""
+    """
+    Parse the tab-separated module / exit-code lines of the loop.
+
+    Raises ``ValueError`` naming the file and line for a line that is
+    not ``<module><TAB><integer>``.
+    """
     codes: dict[str, int] = {}
-    for line in path.read_text().splitlines():
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
         module, _, code = line.partition("\t")
-        codes[module] = int(code)
+        try:
+            codes[module] = int(code)
+        except ValueError:
+            raise ValueError(
+                f"{path}:{lineno}: expected '<module>\\t<exit code>', "
+                f"got {line!r}"
+            ) from None
     return codes
 
 
@@ -213,22 +230,30 @@ def main(argv: list[str] | None = None) -> int:
             "nothing to aggregate\n"
         )
         return 2
-    exit_codes = (
-        _read_exit_codes(args.exit_codes)
-        if args.exit_codes is not None
-        else {}
-    )
+    try:
+        exit_codes = (
+            _read_exit_codes(args.exit_codes)
+            if args.exit_codes is not None
+            else {}
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
     results, skipped_filtered = _collect_results(
         args.results_dir,
         expected_modules=expected_modules,
         plan_name=args.plan_name,
         exit_codes=exit_codes,
     )
-    expected_failures = (
-        load_expected_failures(args.expected_failures)
-        if args.expected_failures is not None
-        else None
-    )
+    try:
+        expected_failures = (
+            load_expected_failures(args.expected_failures)
+            if args.expected_failures is not None
+            else None
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        sys.stderr.write(f"--expected-failures: {exc}\n")
+        return 2
     return emit_summary(
         results,
         skipped_filtered=skipped_filtered,

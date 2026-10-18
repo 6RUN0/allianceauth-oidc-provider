@@ -96,11 +96,11 @@ OAUTH2_PROVIDER["REFRESH_TOKEN_EXPIRE_SECONDS"] = 24 * 3600
 # logout confirm in production keep the default True.
 OAUTH2_PROVIDER["OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT"] = False
 
-# The conformance suite POSTs to /account/login/ with a normal Django
-# session cookie. Production AA sets Secure on the session cookie; the
-# suite-facing httpd terminates TLS and forwards plain HTTP, so we
-# leave the Secure flag off here. This is *only* the conformance
-# settings module — production AA settings are unaffected.
+# Production AA sets Secure on the session and CSRF cookies. gunicorn
+# serves TLS itself (entrypoint.sh), so Secure cookies would reach the
+# suite's browser too, but no conformance plan has been run with them:
+# flipping these to True needs one live ``conformance_basic`` pass.
+# This is *only* the conformance settings module.
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 

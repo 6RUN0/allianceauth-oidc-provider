@@ -140,9 +140,12 @@ def poll_module(
     """
     Wait for a module to leave the RUNNING state and return its result.
 
-    Returns one of the strings in PASS_RESULTS / WARN_RESULTS /
-    FAIL_RESULTS, or "TIMEOUT" if the module didn't finish in
-    ``timeout_s`` seconds. Queries ``/api/info/{id}``: that endpoint
+    Returns the suite's ``result`` field verbatim (PASSED / WARNING /
+    REVIEW / FAILED / SKIPPED / UNKNOWN / ...), the terminal ``status``
+    when no result was set (e.g. INTERRUPTED), or "TIMEOUT" if the
+    module didn't finish in ``timeout_s`` seconds; the summary treats
+    every string outside its allowlist as a failure. Queries
+    ``/api/info/{id}``: that endpoint
     carries the ``status`` (CREATED / WAITING / RUNNING / FINISHED /
     INTERRUPTED) and ``result`` (PASSED / FAILED / WARNING /
     SKIPPED) fields. ``/api/runner/{id}`` returns a different shape
@@ -246,6 +249,15 @@ def run_module(
         return ModuleResult(name=module_name, test_id="", result="ERROR")
     logger.info("started %s -> %s", module_name, module_id)
     result = poll_module(session, module_id=module_id)
+    if result == "TIMEOUT":
+        # A module left RUNNING keeps the plan alias; the next module of
+        # a shared plan would then be interrupted by an alias conflict.
+        try:
+            session.delete(
+                f"{SUITE_URL}/api/runner/{module_id}", timeout=30
+            ).raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("could not stop timed-out %s: %s", module_name, exc)
     return ModuleResult(name=module_name, test_id=module_id, result=result)
 
 

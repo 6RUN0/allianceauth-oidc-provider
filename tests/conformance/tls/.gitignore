@@ -1,5 +1,5 @@
-# Generated key/cert files — re-created on demand by
-# ``_nox.conformance._generate_tls_certs`` when ``ca.crt`` is absent.
+# Generated key/cert files, re-created by ``_nox.conformance`` when
+# any is missing or a cert is close to expiry.
 ca.crt
 ca.key
 provider.crt

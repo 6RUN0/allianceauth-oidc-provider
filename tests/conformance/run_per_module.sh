@@ -23,9 +23,20 @@
 #                                       [-- <runner args>]
 #
 #   Anything after ``--`` is forwarded verbatim to run_plan.py
-#   (e.g. ``-- --exclude 'oidcc-userinfo-*'`` to skip a family).
+#   (e.g. ``-- --exclude 'oidcc-userinfo-*'`` to skip a family), also
+#   to the discovery call; ``--strict-warnings`` and the
+#   ``--expected-failures`` ledger also reach the aggregator.
+#   Run from the repository root.
 
 set -euo pipefail
+
+# Every path below is repository-relative; from another directory the
+# baseline ledger check would be silently false.
+repo_root=$(cd "$(dirname "$0")/../.." && pwd -P)
+if [[ "$(pwd -P)" != "$repo_root" ]]; then
+    echo "run from the repository root: cd $repo_root" >&2
+    exit 2
+fi
 
 PLAN="oidcc-basic-certification-test-plan"
 # ``.artifacts/`` is the project-wide convention for ephemeral
@@ -54,13 +65,23 @@ done
 # Auto-inject the baseline expected-failures file so default
 # invocation produces a green CI run (XFAIL on known issues, XPASS
 # alarm if anything was fixed upstream). Operator can override by
-# passing their own ``--expected-failures`` after ``--``.
-expected_failures_seen=0
+# passing their own ``--expected-failures`` after ``--``. The ledger
+# and ``--strict-warnings`` actually given to run_plan.py are the ones
+# the aggregator recomputes the verdict with.
+ledger=""
+strict_warnings=0
+prev_arg=""
 for arg in "${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}"; do
-    [[ "$arg" == "--expected-failures" ]] && expected_failures_seen=1
+    case "$arg" in
+        --expected-failures=*) ledger="${arg#--expected-failures=}" ;;
+        --strict-warnings) strict_warnings=1 ;;
+    esac
+    [[ "$prev_arg" == "--expected-failures" ]] && ledger="$arg"
+    prev_arg="$arg"
 done
-if [[ -f "$EXPECTED_FAILURES" && "$expected_failures_seen" -eq 0 ]]; then
-    RUNNER_ARGS+=("--expected-failures" "$EXPECTED_FAILURES")
+if [[ -z "$ledger" && -f "$EXPECTED_FAILURES" ]]; then
+    ledger="$EXPECTED_FAILURES"
+    RUNNER_ARGS+=("--expected-failures" "$ledger")
 fi
 
 # Each run writes into its own fresh directory: a JSON left by an
@@ -86,9 +107,11 @@ docker compose -f "$COMPOSE_FILE" up -d --wait --build
 # a plan instance just to read its module array, prints names line
 # by line, exits 0. The plan instance lingers in MongoDB but the
 # down -v that follows wipes it. The list doubles as the aggregator's
-# expected-module set.
+# expected-module set. The runner args go along so the plan variant
+# matches the loop and a broken ledger fails here, not per module.
 uv run python tests/conformance/run_plan.py \
-    --plan "$PLAN" --list-modules >"$modules_file"
+    --plan "$PLAN" --list-modules \
+    "${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}" >"$modules_file"
 mapfile -t MODULES <"$modules_file"
 echo "==> [discovery] found ${#MODULES[@]} modules"
 
@@ -124,8 +147,11 @@ aggregate_args=(
     --plan-name "$PLAN"
     --exit-codes "$exit_codes_file"
 )
-if [[ -f "$EXPECTED_FAILURES" ]]; then
-    aggregate_args+=("--expected-failures" "$EXPECTED_FAILURES")
+if [[ -n "$ledger" ]]; then
+    aggregate_args+=("--expected-failures" "$ledger")
+fi
+if [[ "$strict_warnings" -eq 1 ]]; then
+    aggregate_args+=("--strict-warnings")
 fi
 uv run python tests/conformance/aggregate_summaries.py \
     "${aggregate_args[@]}"

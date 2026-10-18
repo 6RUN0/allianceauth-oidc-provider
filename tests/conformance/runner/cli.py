@@ -45,14 +45,17 @@ def _decode_json_arg(
 
 def main(argv: list[str] | None = None) -> int:
     """Parse argv and dispatch to ``run_plan``. Returns exit code."""
+    # No prefix matching: wrappers detect an operator-supplied
+    # ``--expected-failures`` by its full spelling before injecting theirs.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description=(
             "Drive an OIDC Conformance Suite plan via the suite's "
             "REST API. Submits a test plan, kicks off every module "
             "in it, polls until each finishes, then prints an "
             "aggregate summary and exits non-zero if any module "
             "FAILED."
-        )
+        ),
     )
     parser.add_argument(
         "--plan",
@@ -211,11 +214,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     include = set(args.include) if args.include else None
     exclude = set(args.exclude) if args.exclude else None
-    expected_failures = (
-        load_expected_failures(args.expected_failures)
-        if args.expected_failures is not None
-        else None
-    )
+    expected_failures = None
+    if args.expected_failures is not None:
+        try:
+            expected_failures = load_expected_failures(args.expected_failures)
+        except (OSError, ValueError, TypeError) as exc:
+            parser.error(f"--expected-failures: {exc}")
     if args.list_modules:
         # Discovery-only mode: create a plan, print module names,
         # exit. No modules are kicked off, so the suite stack can be

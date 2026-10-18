@@ -11,7 +11,7 @@
 #
 # Networking notes:
 # - All four services share the default compose bridge network so the
-#   suite reaches our provider via Docker DNS at ``http://provider:8080``.
+#   suite reaches our provider via Docker DNS at ``https://provider:8443``.
 #   ``run_plan.py`` ships that URL as ``discoveryUrl`` in the plan
 #   config; the suite (Java code) and its embedded headless browser
 #   both resolve it the same way.
@@ -22,8 +22,14 @@
 #
 # Pinned to a specific release for reproducibility; flip ``IMAGE_TAG``
 # to ``latest`` to track master.
+#
+# ``name`` pins the compose project: derived from the directory it
+# would be ``conformance``, and ``down -v`` would remove another
+# checkout's stack and volume of that name. Published ports bind to
+# loopback because the suite runs with ``SPRING_PROFILES_ACTIVE=dev``
+# (unauthenticated API) and the provider seeds a known staff login.
 
-x-conformance-image: &conformance_image_tag "release-v5.1.45"
+name: allianceauth-oidc-conformance
 
 services:
   mongodb:
@@ -59,7 +65,7 @@ services:
         aliases:
           - localhost.emobix.co.uk
     ports:
-      - "8443:8443"
+      - "127.0.0.1:8443:8443"
     depends_on:
       - server
     logging:
@@ -112,8 +118,10 @@ services:
       DJANGO_SETTINGS_MODULE: tests.conformance.conformance_settings
       # Suite-side reach to provider is via Docker DNS over HTTPS; the
       # suite enforces ``https://`` for OIDC discovery. The cert is
-      # signed by the CA mounted into the suite container above.
-      CONFORMANCE_PUBLIC_URL: https://provider:8443/o
+      # signed by the CA mounted into the suite container above. Same
+      # host variable run_plan.py reads, so discoveryUrl and issuer move
+      # together.
+      CONFORMANCE_PUBLIC_URL: ${CONFORMANCE_PUBLIC_URL:-https://provider:8443/o}
       # Client credentials are deliberately NOT set here. seed.py
       # (in-container) and run_plan.py (host, no compose env) both
       # fall back to the defaults in ``runner/config.py`` — the single
@@ -133,7 +141,7 @@ services:
     # ``curl --cacert tls/ca.crt https://localhost:8444/o/...`` while
     # a plan is running. Internal Docker DNS still uses ``provider:8443``.
     ports:
-      - "8444:8443"
+      - "127.0.0.1:8444:8443"
     healthcheck:
       # ``ssl=False`` not used here: the provider serves a self-signed
       # cert, but we have the CA on disk inside the image (copied at
@@ -150,6 +158,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+      start_period: 120s
     logging:
       driver: "json-file"
       options:

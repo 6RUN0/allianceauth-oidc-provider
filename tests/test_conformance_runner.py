@@ -291,10 +291,7 @@ class TestExpectedFailurePinsResult(unittest.TestCase):
             self._load({"m1": {"reason": "no result"}})
 
     def test_shipped_ledger_pins_a_failure_result(self) -> None:
-        from tests.conformance.runner.config import (
-            PASS_RESULTS,
-            WARN_RESULTS,
-        )
+        from tests.conformance.runner.config import NON_FAILURE_RESULTS
         from tests.conformance.runner.filtering import (
             load_expected_failures,
         )
@@ -304,8 +301,27 @@ class TestExpectedFailurePinsResult(unittest.TestCase):
         )
         self.assertTrue(ledger)
         for name, entry in ledger.items():
-            self.assertNotIn(entry.result, PASS_RESULTS | WARN_RESULTS, name)
+            self.assertNotIn(entry.result, NON_FAILURE_RESULTS, name)
             self.assertTrue(entry.reason, name)
+
+    def test_non_failure_pinned_result_is_rejected(self) -> None:
+        # Such an entry can never become an XFAIL, so it would only sit
+        # in the ledger looking like an acknowledged failure.
+        for result in ("PASSED", "REVIEW", "WARNING"):
+            with self.subTest(result=result), self.assertRaises(ValueError):
+                self._load({"m1": {"result": result, "reason": "r"}})
+
+    def test_bad_ledger_is_a_usage_error(self) -> None:
+        from tests.conformance.runner.cli import main
+
+        path = _write_json(self.tmp / "bad.json", {"m1": "plain string"})
+        with (
+            redirect_stderr(io.StringIO()) as err,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main(["--expected-failures", str(path)])
+        self.assertEqual(2, ctx.exception.code)
+        self.assertIn("--expected-failures", err.getvalue())
 
 
 _CONFORMANCE_DIR = pathlib.Path(__file__).resolve().parent / "conformance"
@@ -522,3 +538,380 @@ class TestNoxSessionLedgerDefault(unittest.TestCase):
 
         args = ["--expected-failures", "mine.json"]
         self.assertEqual(args, with_default_expected_failures(args))
+
+
+class TestReviewCounter(unittest.TestCase):
+    """
+    Pin REVIEW as its own bucket, outside ``passed``.
+
+    REVIEW means the suite's automated checks passed but a screenshot
+    awaits a human; counting it as ``passed`` made a module that
+    slipped from PASSED to REVIEW invisible in the totals.
+    """
+
+    def test_review_is_counted_separately_and_does_not_fail(self) -> None:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = _emit_summary(
+                [
+                    ModuleResult(name="m1", test_id="id1", result="PASSED"),
+                    ModuleResult(name="m2", test_id="id2", result="REVIEW"),
+                ],
+                strict_warnings=True,
+            )
+        out = buf.getvalue()
+        self.assertEqual(0, code)
+        self.assertIn("passed=1 review=1 ", out)
+        self.assertIn("NEEDS HUMAN REVIEW", out)
+        self.assertRegex(out, r"(?m)^  m2  \(id2\)$")
+
+    def test_summary_json_counts_review(self) -> None:
+        from tests.conformance.runner.summary import write_summary_json
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = pathlib.Path(tmp.name) / "s.json"
+        write_summary_json(
+            path,
+            results=[ModuleResult(name="m1", test_id="t", result="REVIEW")],
+            skipped_filtered=[],
+            expected_failures={},
+            plan_name=_PLAN,
+            plan_id="p",
+        )
+        summary = json.loads(path.read_text(encoding="utf-8"))["summary"]
+        self.assertEqual(0, summary["passed"])
+        self.assertEqual(1, summary["review"])
+
+
+class TestUnexpectedPassFails(unittest.TestCase):
+    """
+    Pin that a stale ledger entry turns the run red.
+
+    An entry for a module that no longer fails would mask its next
+    regression; printing a banner with exit 0 left it in place.
+    """
+
+    def _summary(self, result: str) -> tuple[int, str]:
+        from tests.conformance.runner.filtering import ExpectedFailure
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = _emit_summary(
+                [ModuleResult(name="m1", test_id="id1", result=result)],
+                strict_warnings=False,
+                expected_failures={
+                    "m1": ExpectedFailure(result="SKIPPED", reason="r")
+                },
+            )
+        return code, buf.getvalue()
+
+    def test_passed_ledger_module_fails_the_run(self) -> None:
+        code, out = self._summary("PASSED")
+        self.assertEqual(1, code)
+        self.assertIn("xpass=1", out)
+
+    def test_warning_ledger_module_is_an_unexpected_pass(self) -> None:
+        code, out = self._summary("WARNING")
+        self.assertEqual(1, code)
+        self.assertIn("xpass=1", out)
+        self.assertIn("UNEXPECTED PASS", out)
+
+
+class TestNothingExecutedFails(unittest.TestCase):
+    """Pin that a run in which no module executed is not green."""
+
+    def test_empty_results_return_nonzero(self) -> None:
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(1, _emit_summary([], strict_warnings=False))
+
+    def test_all_filtered_returns_nonzero(self) -> None:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = _emit_summary(
+                [], skipped_filtered=["m1", "m2"], strict_warnings=False
+            )
+        self.assertEqual(1, code)
+        self.assertIn("NO MODULE EXECUTED", buf.getvalue())
+
+
+class TestOrchestratorRefusesMissingInclude(unittest.TestCase):
+    """
+    Pin that an ``--include`` pattern matching no module stops the run.
+
+    Logging a warning instead would let a typo run the rest (or
+    nothing) with exit 0.
+    """
+
+    def test_missing_include_returns_two_without_running(self) -> None:
+        from unittest import mock
+
+        from tests.conformance.runner import orchestrator
+
+        catalogue = {"id": "p1", "modules": [{"testModule": "oidcc-server"}]}
+        with (
+            mock.patch.object(orchestrator, "make_suite_session"),
+            mock.patch.object(orchestrator, "wait_for_suite_ready"),
+            mock.patch.object(
+                orchestrator, "create_plan", return_value=catalogue
+            ),
+            mock.patch.object(orchestrator, "run_module") as run_module,
+            self.assertLogs(orchestrator.logger, "ERROR"),
+        ):
+            code = orchestrator.run_plan(
+                _PLAN, include={"oidcc-server", "oidcc-sever"}
+            )
+        self.assertEqual(2, code)
+        run_module.assert_not_called()
+
+
+class TestTimeoutStopsModule(unittest.TestCase):
+    """
+    Pin that a timed-out module is stopped on the suite.
+
+    A module left RUNNING keeps the shared plan alias, so the next
+    module would be interrupted by an alias conflict.
+    """
+
+    def _run(self, verdict: str) -> object:
+        from unittest import mock
+
+        from tests.conformance.runner import client
+
+        session = mock.Mock()
+        session.post.return_value.json.return_value = {"id": "mod-1"}
+        with mock.patch.object(client, "poll_module", return_value=verdict):
+            result = client.run_module(
+                session, plan_id="p1", module_name="m1", module_variant={}
+            )
+        self.assertEqual(verdict, result.result)
+        return session
+
+    def test_timeout_deletes_the_runner(self) -> None:
+        from tests.conformance.runner.config import SUITE_URL
+
+        session = self._run("TIMEOUT")
+        session.delete.assert_called_once()
+        self.assertEqual(
+            f"{SUITE_URL}/api/runner/mod-1", session.delete.call_args.args[0]
+        )
+
+    def test_finished_module_is_not_deleted(self) -> None:
+        session = self._run("PASSED")
+        session.delete.assert_not_called()
+
+
+class TestAggregatorSchemaAndFilter(unittest.TestCase):
+    """Pin aggregator handling of filtered modules and malformed input."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.run_dir = pathlib.Path(tmp.name)
+        self.modules_file = self.run_dir / "modules.txt"
+        self.modules_file.write_text("m1\nm2\n", encoding="utf-8")
+        _write_json(
+            self.run_dir / "m1.json", _summary_payload(("m1", "PASSED"))
+        )
+
+    def _aggregate(self, *extra: str) -> tuple[int, str]:
+        from tests.conformance.aggregate_summaries import main
+
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+            code = main(
+                [
+                    str(self.run_dir),
+                    "--expected-modules",
+                    str(self.modules_file),
+                    "--plan-name",
+                    _PLAN,
+                    *extra,
+                ]
+            )
+        return code, buf.getvalue()
+
+    def test_operator_filtered_module_is_reported_filtered(self) -> None:
+        payload = _summary_payload()
+        payload["skipped_filtered"] = ["m2"]
+        _write_json(self.run_dir / "m2.json", payload)
+        code, out = self._aggregate()
+        self.assertEqual(0, code)
+        self.assertRegex(out, r"FILTERED\s+m2")
+
+    def test_string_skipped_filtered_is_error_not_substring(self) -> None:
+        # ``"m2" in "m2-other"`` is a substring hit, not membership.
+        payload = _summary_payload()
+        payload["skipped_filtered"] = "m2-other"
+        _write_json(self.run_dir / "m2.json", payload)
+        code, out = self._aggregate()
+        self.assertEqual(1, code)
+        self.assertRegex(out, r"ERROR\s+m2")
+
+    def test_malformed_exit_code_line_is_usage_error(self) -> None:
+        _write_json(
+            self.run_dir / "m2.json", _summary_payload(("m2", "PASSED"))
+        )
+        exit_codes = self.run_dir / "exit_codes.tsv"
+        exit_codes.write_text("m1 0\n", encoding="utf-8")
+        code, _ = self._aggregate("--exit-codes", str(exit_codes))
+        self.assertEqual(2, code)
+
+    def test_malformed_ledger_is_usage_error(self) -> None:
+        """A bad ledger is exit 2 like the runner, not a traceback."""
+        ledger = _write_json(self.run_dir / "ledger.json", {"m1": "x"})
+        for path in (ledger, self.run_dir / "absent.json"):
+            with self.subTest(path=path.name):
+                code, _ = self._aggregate("--expected-failures", str(path))
+                self.assertEqual(2, code)
+
+
+@unittest.skipIf(shutil.which("bash") is None, "bash not installed")
+class TestRunPerModuleRunnerArgs(unittest.TestCase):
+    """
+    Pin that runner args after ``--`` shape the aggregate verdict too.
+
+    The aggregator recomputes the verdict, so ``--strict-warnings``
+    and the operator's ledger must reach it; the discovery call gets
+    the args as well so a broken ledger fails before the loop.
+    """
+
+    def _run(
+        self, modules: str, *runner_args: str, cwd: pathlib.Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fakes = _CONFORMANCE_DIR / "fakes"
+        env = {
+            **os.environ,
+            "PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}",
+            "PYTHONPATH": str(_CONFORMANCE_DIR.parents[1]),
+            "STUB_PYTHON": sys.executable,
+            "STUB_MODULES": modules,
+        }
+        return subprocess.run(
+            [
+                "bash",
+                str(_CONFORMANCE_DIR / "run_per_module.sh"),
+                "--plan",
+                _PLAN,
+                "--results-dir",
+                tmp.name,
+                "--",
+                *runner_args,
+            ],
+            cwd=cwd or _CONFORMANCE_DIR.parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    def _ledger(self, payload: object) -> str:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return str(_write_json(pathlib.Path(tmp.name) / "l.json", payload))
+
+    def test_strict_warnings_reaches_the_aggregator(self) -> None:
+        proc = self._run("pass-a,warn-b", "--strict-warnings")
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("warned=1", proc.stdout)
+
+    def test_operator_ledger_replaces_the_shipped_one(self) -> None:
+        empty = self._ledger({})
+        for form in (
+            ["--expected-failures", empty],
+            [f"--expected-failures={empty}"],
+        ):
+            with self.subTest(form=form[0][:22]):
+                # Pinned SKIPPED only in the shipped ledger.
+                proc = self._run("pass-a,oidcc-scope-address", *form)
+                self.assertEqual(1, proc.returncode, proc.stdout)
+                self.assertIn("failed=1", proc.stdout)
+
+    def test_broken_ledger_fails_before_the_loop(self) -> None:
+        proc = self._run(
+            "pass-a", "--expected-failures", self._ledger({"m": "x"})
+        )
+        # The fake runner exits 1 on a bad ledger; the real cli's exit 2
+        # is pinned by test_bad_ledger_is_a_usage_error.
+        self.assertNotEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertNotIn("[1/", proc.stdout)
+
+    def test_refuses_to_run_outside_the_repository_root(self) -> None:
+        proc = self._run("pass-a", cwd=_CONFORMANCE_DIR)
+        self.assertEqual(2, proc.returncode)
+        self.assertIn("repository root", proc.stderr)
+
+
+@unittest.skipIf(importlib.util.find_spec("nox") is None, "nox not installed")
+class TestNoxSessionLedgerEqualsForm(unittest.TestCase):
+    """Pin that ``--expected-failures=FILE`` counts as an override."""
+
+    def test_equals_form_is_kept(self) -> None:
+        from _nox.conformance import with_default_expected_failures
+
+        args = ["--expected-failures=mine.json"]
+        self.assertEqual(args, with_default_expected_failures(args))
+
+
+@unittest.skipIf(importlib.util.find_spec("nox") is None, "nox not installed")
+@unittest.skipIf(shutil.which("openssl") is None, "openssl not installed")
+class TestTlsCertRegeneration(unittest.TestCase):
+    """
+    Pin when the nox session regenerates the conformance TLS files.
+
+    Checking for ``ca.crt`` alone would let a partial generation or
+    an expired provider cert break the stack with no hint at the
+    cause.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tls = pathlib.Path(tmp.name)
+
+    def _cert(self, stem: str, days: int) -> None:
+        subprocess.run(  # nosec B603 B607
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                str(self.tls / f"{stem}.key"),
+                "-out",
+                str(self.tls / f"{stem}.crt"),
+                "-days",
+                str(days),
+                "-subj",
+                f"/CN={stem}",
+            ],
+            capture_output=True,
+            check=True,
+        )
+
+    def test_complete_valid_set_is_kept(self) -> None:
+        from _nox.conformance import tls_certs_need_generation
+
+        self._cert("ca", 3650)
+        self._cert("provider", 825)
+        self.assertFalse(tls_certs_need_generation(self.tls))
+
+    def test_missing_provider_key_regenerates(self) -> None:
+        from _nox.conformance import tls_certs_need_generation
+
+        self._cert("ca", 3650)
+        self._cert("provider", 825)
+        (self.tls / "provider.key").unlink()
+        self.assertTrue(tls_certs_need_generation(self.tls))
+
+    def test_cert_close_to_expiry_regenerates(self) -> None:
+        from _nox.conformance import tls_certs_need_generation
+
+        self._cert("ca", 3650)
+        self._cert("provider", 1)
+        self.assertTrue(tls_certs_need_generation(self.tls))

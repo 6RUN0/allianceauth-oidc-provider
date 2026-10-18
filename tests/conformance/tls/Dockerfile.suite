@@ -20,19 +20,17 @@ COPY ca.crt /usr/local/share/ca-certificates/conformance-provider-ca.crt
 #    document, JWKS, and so on. ``changeit`` is the immutable JDK
 #    default password. The stable alias makes the import idempotent —
 #    keytool refuses duplicates by default, hence the
-#    cleanup-on-conflict wrapper.
-# 2. The suite's headless Chromium (driven by Selenium for
-#    browser-required modules: login form fill, consent click) uses
-#    the **Linux** trust store, not Java's. ``update-ca-certificates``
-#    folds the cert from ``/usr/local/share/ca-certificates/`` into
-#    ``/etc/ssl/certs/ca-certificates.crt``; without this step
-#    Chromium hits the provider's self-signed cert as untrusted and
-#    sits on the browser's interstitial-error page until the
-#    per-module 5-minute poll timeout fires.
+#    cleanup-on-conflict wrapper. The braces scope ``|| true`` to that
+#    delete; ungrouped it would also swallow update-ca-certificates.
+# 2. The system trust store (``/etc/ssl/certs/ca-certificates.crt``),
+#    which ``update-ca-certificates`` rebuilds from
+#    ``/usr/local/share/ca-certificates/``, for any suite-side client
+#    that reads the OS bundle instead of Java's keystore; the
+#    browser-driven modules run in the suite's in-JVM HtmlUnit.
 RUN update-ca-certificates \
-    && keytool -delete -alias allianceauth-oidc-provider-ca \
+    && { keytool -delete -alias allianceauth-oidc-provider-ca \
         -keystore "$JAVA_HOME/lib/security/cacerts" \
-        -storepass changeit 2>/dev/null || true \
+        -storepass changeit 2>/dev/null || true; } \
     && keytool -import -trustcacerts \
         -alias allianceauth-oidc-provider-ca \
         -file /usr/local/share/ca-certificates/conformance-provider-ca.crt \

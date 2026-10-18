@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .config import module_name
+from .config import NON_FAILURE_RESULTS, module_name
 
 if TYPE_CHECKING:
     import pathlib
@@ -51,9 +51,9 @@ def filter_modules(
     Returns ``(selected, skipped, missing)`` where ``selected`` is the
     subset of plan entries to run, ``skipped`` lists names that were
     filtered out (for the summary), and ``missing`` lists ``include``
-    entries that did not match any plan module. ``missing`` is
-    surfaced as a warning so a typo (or stale glob) in ``--include``
-    does not silently produce an empty run.
+    entries that did not match any plan module. ``run_plan`` refuses
+    to run when ``missing`` is non-empty so a typo (or stale glob) in
+    ``--include`` cannot silently shrink the run.
     """
     plan_names = {module_name(entry) for entry in modules}
     selected: list[dict[str, Any]] = []
@@ -100,9 +100,9 @@ def load_expected_failures(
     A listed module that finishes with exactly the pinned result is
     reported as XFAIL and does not influence the exit code; any other
     non-passing result stays a real failure, so an acknowledged
-    SKIPPED cannot mask a later FAILED. A PASSED module triggers an
-    UNEXPECTED-PASS alarm so an upstream fix does not go unnoticed
-    (the file is then stale and needs editing).
+    SKIPPED cannot mask a later FAILED. A listed module that does not
+    fail triggers an UNEXPECTED-PASS alarm so an upstream fix does not
+    go unnoticed (the file is then stale and needs editing).
 
     Format::
 
@@ -115,8 +115,9 @@ def load_expected_failures(
 
     A plain-string value (the schema without a pinned result) is
     rejected: it would acknowledge every failure mode of the module.
-    Raises ``TypeError`` on a malformed file; the caller (run_plan.py
-    CLI bootstrap) prints the message verbatim.
+    Raises ``TypeError`` on a malformed file and ``ValueError`` when
+    an entry pins a non-failure result (it could never be an XFAIL);
+    ``cli.main`` reports either as a usage error.
     """
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
@@ -135,6 +136,12 @@ def load_expected_failures(
             raise TypeError(
                 f"{path}: entry {name!r} must be an object with "
                 f'string "result" and "reason", got {entry!r}'
+            )
+        if entry["result"] in NON_FAILURE_RESULTS:
+            raise ValueError(
+                f"{path}: entry {name!r} pins non-failure result "
+                f"{entry['result']!r}; only a failing result can be "
+                "acknowledged"
             )
         ledger[str(name)] = ExpectedFailure(
             result=entry["result"], reason=entry["reason"]

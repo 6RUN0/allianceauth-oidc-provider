@@ -126,5 +126,26 @@ class ConformanceImageSliceTests(unittest.TestCase):
         self.assertIn("tests/conformance/runner/config.py", needed)
 
 
+class SuiteDockerfileTests(unittest.TestCase):
+    """``Dockerfile.suite`` must not swallow a failed trust-store step."""
+
+    def test_or_true_is_scoped_to_a_brace_group(self) -> None:
+        # ``a && b || true && c`` parses as ``((a && b) || true) && c``:
+        # a failed ``update-ca-certificates`` would build a suite image
+        # that rejects the provider's certificate.
+        source = (_DOCKERFILE.parent / "tls" / "Dockerfile.suite").read_text(
+            encoding="utf-8"
+        )
+        text = "\n".join(
+            line
+            for line in source.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        occurrences = re.findall(r"\|\| true(.{0,3})", text)
+        self.assertTrue(occurrences)
+        for tail in occurrences:
+            self.assertRegex(tail, r"^;\s*\}")
+
+
 if __name__ == "__main__":
     unittest.main()

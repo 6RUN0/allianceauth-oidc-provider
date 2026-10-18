@@ -15,6 +15,8 @@ Imported from ``noxfile.py`` for session registration side effects.
 from __future__ import annotations
 
 import pathlib
+import shutil
+import subprocess  # nosec B404
 
 import nox
 
@@ -28,12 +30,55 @@ def with_default_expected_failures(posargs: list[str]) -> list[str]:
     """
     Return runner args with the shipped ledger unless one is given.
 
-    An operator-supplied ``--expected-failures`` wins, matching the
-    auto-injection in ``run_per_module.sh``.
+    An operator-supplied ``--expected-failures`` (``FILE`` or
+    ``=FILE`` form) wins, matching the auto-injection in
+    ``run_per_module.sh``; the runner rejects abbreviated flags.
     """
-    if "--expected-failures" in posargs:
+    if any(
+        arg == "--expected-failures" or arg.startswith("--expected-failures=")
+        for arg in posargs
+    ):
         return list(posargs)
     return [*posargs, "--expected-failures", EXPECTED_FAILURES]
+
+
+# Regenerate a month ahead of expiry so a run never starts on a cert
+# that lapses mid-plan.
+_TLS_MIN_VALIDITY_S = 30 * 24 * 3600
+_TLS_FILES = ("ca.crt", "ca.key", "provider.crt", "provider.key")
+
+
+def tls_certs_need_generation(tls_dir: pathlib.Path) -> bool:
+    """
+    Return True unless every TLS file exists and both certs stay valid.
+
+    A partially failed generation (``ca.crt`` without ``provider.key``)
+    or an expired ``provider.crt`` (825-day lifetime) would otherwise
+    surface as a failed image ``COPY`` or a healthcheck that never
+    passes, with no hint at the cause.
+    """
+    if not all((tls_dir / name).is_file() for name in _TLS_FILES):
+        return True
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        return True
+    return any(
+        subprocess.run(  # nosec B603
+            [
+                openssl,
+                "x509",
+                "-checkend",
+                str(_TLS_MIN_VALIDITY_S),
+                "-noout",
+                "-in",
+                str(tls_dir / cert),
+            ],
+            capture_output=True,
+            check=False,
+        ).returncode
+        != 0
+        for cert in ("ca.crt", "provider.crt")
+    )
 
 
 @nox.session
@@ -69,14 +114,14 @@ def conformance(session: nox.Session) -> None:
     """
     compose_file = "tests/conformance/docker-compose.yml"
     tls_dir = pathlib.Path("tests/conformance/tls")
-    ca_crt = tls_dir / "ca.crt"
-    # Generate the self-signed CA + provider cert if missing. The
-    # conformance suite enforces ``https://`` for OIDC discovery, so
+    # Generate the self-signed CA + provider cert if missing, partial
+    # or close to expiry. The conformance suite enforces ``https://``
+    # for OIDC discovery, so
     # the provider container serves TLS via ``runsslserver`` and the
     # suite container imports the CA cert into its Java truststore on
     # startup. Certs are gitignored — re-running is safe (overwrites).
     # See ``tests/conformance/tls/`` for details.
-    if not ca_crt.is_file():
+    if tls_certs_need_generation(tls_dir):
         _generate_tls_certs(session, tls_dir)
     try:
         # ``--build`` forces a rebuild on every invocation so a stale

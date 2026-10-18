@@ -21,7 +21,8 @@ a release and after any change to the protocol surface.
 - ~2 GB free disk for the suite + MongoDB images (pulled from
   `registry.gitlab.com/openid/conformance-suite{,/nginx}`; pinned to
   release-v5.1.45 by default)
-- Ports 8443 (suite) and 8080 (provider) free on the host
+- Ports 8443 (suite) and 8444 (provider) free on the host loopback
+  (both are published on `127.0.0.1` only)
 - `/etc/hosts` entry `127.0.0.1 localhost.emobix.co.uk` (the public
   DNS record points there too, so this is usually only needed when
   your network resolver blocks the lookup)
@@ -34,14 +35,18 @@ uv run nox -s conformance
 
 The session:
 
-1. `docker compose -f tests/conformance/docker-compose.yml up -d --wait`
-   — brings up all three services and blocks on health checks.
-2. `python tests/conformance/run_plan.py` — submits the full
-   `oidcc-basic-certification-test-plan` (~80 modules), polls each,
-   exits non-zero if any FAIL.
-3. `docker compose down` — tears the stack down.
+1. Generates the TLS files under `tests/conformance/tls/` when any of
+   the four is missing or a certificate expires within 30 days.
+2. `docker compose -f tests/conformance/docker-compose.yml up -d --wait`
+   - brings up the stack (compose project `allianceauth-oidc-conformance`)
+   and blocks on health checks.
+3. `python tests/conformance/run_plan.py` - submits the default
+   `oidcc-config-certification-test-plan` (1 module; `nox -s
+   conformance_basic` runs `oidcc-basic-certification-test-plan`, ~35
+   modules), polls each, exits non-zero if any module fails.
+4. `docker compose down -v` - tears the stack down.
 
-A complete run takes 10–15 minutes on a developer laptop.
+The Config plan takes about 2 minutes, the Basic plan 10-30 minutes.
 
 ## Manual / iterative use
 
@@ -96,8 +101,10 @@ single known-broken module while still running the rest. If you mix
 first, then the exclude denylist.
 
 A typo in `--include` (a name no module in the plan carries) is
-logged as `WARNING --include names not present in plan (typo?): …`
-so an empty run does not silently masquerade as success.
+logged as `ERROR --include names not present in plan (typo?): ...`
+and the runner exits 2 before running any module. A run in which no
+module executed (everything filtered out) exits 1 with
+`!!! NO MODULE EXECUTED`.
 
 `--include` and `--exclude` both accept `fnmatch` glob patterns:
 
@@ -159,20 +166,34 @@ A listed module that finishes with exactly the pinned `result` is
 re-bucketed as `XFAIL` and does NOT influence the exit code. Any
 other non-passing result of that module (e.g. `FAILED` for an entry
 pinned to `SKIPPED`) stays a real failure, so an acknowledged skip
-cannot mask a regression. A PASSED module listed there triggers an
-`XPASS` alarm: the entry is stale and should be edited out. A
-plain-string value (`"module": "reason"`, the schema without a
-pinned result) is rejected with a `TypeError` at load time.
+cannot mask a regression. A listed module that does not fail
+(`PASSED`, `REVIEW` or `WARNING`) is an `XPASS` and fails the run
+(exit 1): the stale entry would mask the module's next regression,
+so edit it out. A plain-string value (`"module": "reason"`, the
+schema without a pinned result) and an entry pinning a non-failure
+result are rejected at load time; `run_plan.py` exits 2 with the
+reason.
 
 `nox -s conformance` and `nox -s conformance_basic` apply the
 shipped `tests/conformance/expected_failures.json` unless you pass
-your own `--expected-failures`.
+your own `--expected-failures FILE` or `--expected-failures=FILE`.
+The runner does not accept abbreviated flags.
 
-Results are classified by allowlist: only `PASSED` / `REVIEW` (pass)
-and `WARNING` (warn) are non-failures. Everything else, including
-`UNKNOWN` / `INTERRUPTED` for a module the suite stopped before its
-verdict and any result code a future suite release adds, counts as
-a failure.
+Results are classified by allowlist: only `PASSED` (counted as
+`passed`), `REVIEW` (`review`) and `WARNING` (`warned`) are
+non-failures. Everything else, including `UNKNOWN` / `INTERRUPTED`
+for a module the suite stopped before its verdict and any result
+code a future suite release adds, counts as a failure.
+
+`REVIEW` means the module's automated checks passed but the suite
+attached a screenshot a human must inspect. It does not change the
+exit code, but it is not certification evidence: the summary lists
+those modules under `!!! NEEDS HUMAN REVIEW`.
+
+A module still running when the 360 s poll deadline expires is
+reported as `TIMEOUT` and stopped on the suite (`DELETE
+/api/runner/{id}`), so it does not keep the plan alias for the next
+module.
 
 ## Per-module restart loop
 
@@ -214,9 +235,12 @@ plan, and a `run_plan.py` exit code other than 0 or 1 (harness
 crash: argparse error, signal, OOM kill) are reported as `ERROR` for
 that module, with the reason on stderr, and fail the aggregate.
 
-Anything after `--` is forwarded verbatim to `run_plan.py`, so
-filters, `--strict-warnings`, `--expected-failures` and the like all
-work the same way.
+Anything after `--` is forwarded verbatim to `run_plan.py` (the
+discovery call included, so a broken ledger fails before the loop),
+so filters, `--strict-warnings`, `--expected-failures` and the like
+all work the same way; `--strict-warnings` and the ledger that
+reached `run_plan.py` are also passed to the aggregator. Run the
+script from the repository root; elsewhere it exits 2.
 
 **Cost**: ~30s of compose lifecycle × N modules. For the basic-cert
 plan (~35 modules) the run is ~70-80 minutes versus ~30-50 minutes
@@ -278,8 +302,8 @@ sessions automatically pass
 `--expected-failures tests/conformance/expected_failures.json` if
 the operator did not override it. With the
 baseline in place, a default per-module run prints `xfail=N
-xpass=0` and exits 0 — green CI baseline, while any `XPASS` line is
-a loud alarm that an entry has gone stale and should be removed.
+xpass=0` and exits 0 - green CI baseline, while any `XPASS` fails
+the run: an entry has gone stale and should be removed.
 
 ## Discovery: which modules pass on this machine?
 
@@ -298,16 +322,16 @@ Cost: ~1-2 seconds of plan-creation overhead per module, negligible
 on a ~30-minute basic-cert run. After a mixed run (some PASS, some
 FAIL), the summary prints copy-pasteable groups:
 
-```
+```text
 === Module groups ===
-# Allowlist (PASSED + WARNING) — paste into --include:
+# Allowlist (PASSED + REVIEW + WARNING) - paste into --include:
 oidcc-server
 oidcc-userinfo-get
-…
+...
 
-# Denylist (FAILED + TIMEOUT) — paste into --exclude:
+# Denylist (every other result) - paste into --exclude:
 oidcc-id-token-bad-sig
-…
+...
 ```
 
 The next run can be locked to the discovered allowlist with
@@ -315,15 +339,18 @@ The next run can be locked to the discovered allowlist with
 
 ## Configuration
 
-`run_plan.py` reads from environment variables that are pre-set by
-docker-compose; override them when targeting another deployment:
+`run_plan.py` reads these environment variables on the host and
+falls back to the defaults in `runner/config.py`; override them when
+targeting another deployment. Compose passes only
+`CONFORMANCE_PUBLIC_URL` through to the provider (as its issuer), so
+any other override must also reach `seed.py` in the container:
 
 | Variable                    | Default                                                       | What it controls                            |
 |-----------------------------|---------------------------------------------------------------|---------------------------------------------|
 | `CONFORMANCE_SUITE_URL`     | `https://localhost.emobix.co.uk:8443`                         | Suite REST endpoint (driven by run_plan.py) |
-| `CONFORMANCE_PUBLIC_URL`    | `http://provider:8080`                                        | discoveryUrl + iss; Docker-DNS by default   |
+| `CONFORMANCE_PUBLIC_URL`    | `https://provider:8443/o`                                     | discoveryUrl + iss; Docker-DNS by default   |
 | `CONFORMANCE_CLIENT_ID`     | `conformance-client`                                          | Pre-registered client_id                    |
-| `CONFORMANCE_CLIENT_SECRET` | `conformance-secret`                                          | Pre-registered client_secret                |
+| `CONFORMANCE_CLIENT_SECRET` | `conformance-secret-conformance-secret-pad` (>= 32 bytes for HS256) | Pre-registered client_secret          |
 | `CONFORMANCE_USERNAME`      | `conformance`                                                 | Test user the suite logs in as              |
 | `CONFORMANCE_PASSWORD`      | `conformance-pass`                                            | Test user password                          |
 | `CONFORMANCE_REDIRECT_URI`  | `https://localhost.emobix.co.uk:8443/test/a/conformance/callback` | Pre-registered redirect_uri             |
@@ -342,7 +369,7 @@ flowchart LR
     subgraph compose [docker-compose bridge network]
         nginx["nginx<br/>(TLS, :8443)"]
         server["server<br/>(suite Java)"]
-        provider["provider<br/>(:8080)"]
+        provider["provider<br/>(TLS, :8443)"]
         mongo["mongodb"]
     end
 
@@ -355,13 +382,14 @@ flowchart LR
 
 - The suite (Java service) and its embedded headless browser both
   reach our provider via the Docker DNS name ``provider`` on port
-  8080.
+  8443 (gunicorn serves TLS with the CA-signed `tls/provider.crt`).
 - ``CONFORMANCE_PUBLIC_URL`` defaults to that same URL so ``iss`` in
   the discovery doc / id_token validates from the suite's view.
 - The host's web browser opens the suite UI at
   ``https://localhost.emobix.co.uk:8443/`` (TLS terminated by the
   suite's own nginx). It does NOT touch our provider directly except
-  to debug — port 8080 is published to the host for that purpose.
+  to debug - the provider is published on `127.0.0.1:8444` for that
+  purpose.
 
 ## Troubleshooting
 
@@ -379,28 +407,8 @@ flowchart LR
   AA wants Redis on startup — fakeredis is enabled via
   `AA_USE_FAKE_REDIS=1`, which the entrypoint script sets.
 
-## Known conformance findings
-
-A first run of this scaffolding against the provider surfaced these
-issues. They are *real* spec violations from the suite's perspective;
-fix priority is up to you. The pipeline gates on all of them, so a
-green run requires addressing each one.
-
-| Module                             | Failure                                                      | Root cause                                                                                                                                |
-|------------------------------------|--------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| `oidcc-discovery-endpoint-verification` | `discoveryUrl is missing '/.well-known/openid-configuration'` | Django's `APPEND_SLASH` redirects `/.../openid-configuration` → `/.../openid-configuration/`; the suite doesn't follow. Add a no-slash route or disable `APPEND_SLASH` for this path. |
-| `oidcc-discovery-endpoint-verification` | `Expected https protocol for *_endpoint`                      | All endpoints in the discovery doc are advertised as `http://` because the docker-compose serves the provider on plain HTTP. Add a TLS-terminating sidecar (e.g. nginx with self-signed cert) or proxy through the suite's nginx. |
-
-Fixing both requires touching product code (URL conf for the
-no-slash redirect, plus a deployment/networking change for HTTPS) —
-out of scope for the scaffolding commit. The suite makes a clean
-target for an iterative "fix one, re-run" loop.
-
 ## Known limitations
 
-- This harness is a *scaffold*. The first run will likely surface
-  conformance failures or warnings the unit tests don't catch — that
-  is the entire point. Triage and fix per module.
 - No Selenium grid: the suite uses its bundled headless browser. If
   the AA login template changes drastically, hand-edit
   `browser.tasks` in `runner/plan_config.py`.

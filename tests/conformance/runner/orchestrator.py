@@ -150,9 +150,11 @@ def run_plan(
     developer laptop. Set to 0 to disable.
 
     Returns 0 if every module passed (and warnings are tolerated
-    unless ``strict_warnings``); 1 otherwise. Filtered-out modules
-    are reported in the summary but do NOT influence the exit code —
-    they were never executed.
+    unless ``strict_warnings``); 1 otherwise, including a run in
+    which no module executed. Filtered-out modules are reported in
+    the summary but do NOT influence the exit code - they were never
+    executed. An ``include`` pattern matching no plan module returns
+    2 before any module runs.
     """
     session = make_suite_session()
     # Wait for Spring Boot to finish warming up — docker-compose's
@@ -177,12 +179,13 @@ def run_plan(
         modules, include=include, exclude=exclude
     )
     if missing:
-        # A typo in --include would otherwise silently produce an
-        # empty run with exit 0 ("nothing failed"). Surface it loudly.
-        logger.warning(
+        # A typo in --include would otherwise run fewer modules than
+        # asked and still exit 0; refuse before running anything.
+        logger.error(
             "--include names not present in plan (typo?): %s",
             ", ".join(missing),
         )
+        return 2
     if skipped_filtered:
         logger.info(
             "filter applied: %d module(s) skipped, %d to run",

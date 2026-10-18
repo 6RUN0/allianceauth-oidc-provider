@@ -166,8 +166,10 @@ def _ensure_app(
     # requests without ``code_challenge`` for non-PKCE plans). The
     # model default is ``True`` per RFC 9700 — appropriate for real
     # apps but blocks every basic-cert module that does not opt into
-    # PKCE. The suite has its own dedicated ``oidcc-pkce-*`` plans
-    # for verifying PKCE behaviour.
+    # PKCE. The suite exercises only the S256 happy path
+    # (``oidcc-ensure-request-with-valid-pkce-succeeds``); the negative
+    # PKCE branches are covered by ``tests/test_conformance.py``
+    # ``TestPKCEFlow``, not by any conformance plan.
     # ``post_logout_redirect_uris`` mirrors the conformance suite's
     # post-logout callback path so the RP-Initiated Logout plan can
     # validate the AS accepts a registered URI. The suite derives the

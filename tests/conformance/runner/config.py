@@ -9,7 +9,7 @@ Splits two concerns:
   env when running against another stack.
 - Suite protocol vocabulary (``DEFAULT_VARIANT``,
   ``PLAN_VARIANT_DEFAULTS``, ``PASS_RESULTS`` / ``WARN_RESULTS`` /
-  ``FAIL_RESULTS``, ``ModuleResult``). These are tied to the
+  ``REVIEW_RESULTS``, ``ModuleResult``). These are tied to the
   conformance-suite REST API shape, not to our deployment.
 
 Other modules import from here rather than restating the constants.
@@ -94,15 +94,20 @@ PLAN_VARIANT_DEFAULTS: dict[str, dict[str, str]] = {
 # refuses to start a module (typically variant mismatch returning a
 # 500 from POST /api/runner); ``TIMEOUT`` is the runner-side code for
 # a module that never left RUNNING within the poll deadline.
-PASS_RESULTS: frozenset[str] = frozenset({"PASSED", "REVIEW"})
+PASS_RESULTS: frozenset[str] = frozenset({"PASSED"})
 WARN_RESULTS: frozenset[str] = frozenset({"WARNING"})
-FAIL_RESULTS: frozenset[str] = frozenset({"FAILED", "SKIPPED", "ERROR"})
+# REVIEW: the automated checks passed but the suite attached a
+# screenshot a human must inspect. Not a failure (CI cannot close it),
+# yet not certification evidence either, so it gets its own counter.
+REVIEW_RESULTS: frozenset[str] = frozenset({"REVIEW"})
 # The summary classifies by this allowlist: every result outside it
 # is a failure. The suite reports ``UNKNOWN`` / ``INTERRUPTED`` for a
 # module stopped before its verdict (e.g. alias conflict), and a
 # future suite release may add codes; a denylist would let those
 # drop out of every counter and leave the run green.
-NON_FAILURE_RESULTS: frozenset[str] = PASS_RESULTS | WARN_RESULTS
+NON_FAILURE_RESULTS: frozenset[str] = (
+    PASS_RESULTS | WARN_RESULTS | REVIEW_RESULTS
+)
 
 
 @dataclass
