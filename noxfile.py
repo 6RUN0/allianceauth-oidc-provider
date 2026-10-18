@@ -237,15 +237,24 @@ def audit(session: nox.Session) -> None:
       the provider's own signing runs on ``jwcrypto``/``cryptography``.
       Falls away together with PYSEC-2025-185 when django-esi drops
       python-jose.
+
+    * PYSEC-2026-4298 - ``python-jose`` HMAC key confusion through a
+      DER-encoded public key; 3.5.0 is the last release and is
+      affected. A forged HS256 token passes only when ``jwt.decode``
+      leaves ``algorithms`` unrestricted, and django-esi passes
+      ``algorithms=jwk_set["alg"]`` (CCP's RS256). Same chain and same
+      exit as PYSEC-2025-185.
     """
-    # TODO(2026-Q4): drop both suppressions once django-esi migrates
-    # off python-jose (python-jose is the sole consumer of ecdsa too);
-    # revisit upstream status next quarter.
+    # TODO(2026-Q4): drop all three suppressions once django-esi
+    # migrates off python-jose (python-jose is the sole consumer of
+    # ecdsa too); revisit upstream status next quarter.
     ignored = [
         "--ignore-vuln",
         "PYSEC-2025-185",
         "--ignore-vuln",
         "PYSEC-2026-1325",
+        "--ignore-vuln",
+        "PYSEC-2026-4298",
     ]
     session.run("pip-audit", *ignored, *session.posargs)
 
