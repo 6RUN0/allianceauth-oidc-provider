@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from typing import Any, Final
 
 from oauth2_provider.oauth2_validators import OAuth2Validator
@@ -70,6 +71,15 @@ _ID_TOKEN_RESERVED_CLAIMS: Final[frozenset[str]] = frozenset(
         "c_hash",
         "jti",
     }
+)
+
+
+# RFC 7636 s4.1: code_verifier is 43..128 unreserved characters. Checked
+# before oauthlib compares it: on oauthlib 4.0.0 the ``plain`` method
+# hands the raw str to ``hmac.compare_digest``, which raises TypeError
+# (HTTP 500) on non-ASCII input.
+_PKCE_CODE_VERIFIER_RE: Final[re.Pattern[str]] = re.compile(
+    r"[A-Za-z0-9\-._~]{43,128}"
 )
 
 
@@ -438,6 +448,10 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
         earlier, so any tokens still in flight are revoked here.
         DOT's MUST half (return ``invalid_grant``) survives the
         defence-in-depth wrap.
+
+        A ``code_verifier`` outside RFC 7636 s4.1 (43..128 unreserved
+        characters) is refused here as ``invalid_grant`` for every
+        challenge method, before oauthlib compares it.
         """
         if not super().validate_code(
             client_id, code, client, request, *args, **kwargs
@@ -456,6 +470,14 @@ class AllianceAuthOAuth2Validator(OAuth2Validator):
                     "OIDC: code-reuse detection failed; "
                     "invalid_grant still returned"
                 )
+            return False
+        code_verifier = getattr(request, "code_verifier", None)
+        if (
+            code_verifier is not None
+            and _PKCE_CODE_VERIFIER_RE.fullmatch(code_verifier) is None
+        ):
+            # oauthlib turns False into ``invalid_grant``, the same
+            # answer a well-formed but wrong verifier gets.
             return False
         return self._enforce_policy(request, client, stage="validate_code")
 

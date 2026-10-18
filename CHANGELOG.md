@@ -41,6 +41,18 @@ is preserved in `git log`; this file documents fork-specific changes only.
   Auth 4.13.x on Django 4.2. The supported Alliance Auth and Django ranges
   are unchanged.
 
+### Fixed
+
+- A token request whose PKCE `code_verifier` breaks RFC 7636 section 4.1
+  (characters outside `A-Z a-z 0-9 - . _ ~`, or fewer than 43 or more
+  than 128 characters) is refused with 400 `invalid_grant`, the answer a
+  wrong verifier gets, for both `plain` and `S256`. On oauthlib 4.0.0 a
+  non-ASCII verifier under `plain` returned 500 Internal Server Error:
+  oauthlib passes the raw string to `hmac.compare_digest`, which raises
+  `TypeError`. An RP that sent an out-of-spec verifier that happened to
+  match its own challenge was accepted before and now gets
+  `invalid_grant`.
+
 ## [0.6.1] - 2026-09-19
 
 ### Fixed

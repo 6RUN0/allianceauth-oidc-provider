@@ -41,6 +41,18 @@
   Alliance Auth 4.13.x на Django 4.2. Поддерживаемые диапазоны Alliance
   Auth и Django не меняются.
 
+### Исправлено
+
+- Token-запрос, у которого PKCE `code_verifier` нарушает RFC 7636, раздел
+  4.1 (символы вне `A-Z a-z 0-9 - . _ ~`, длина меньше 43 или больше 128),
+  отклоняется с 400 `invalid_grant` - тем же ответом, что и неверный
+  verifier, для `plain` и `S256` одинаково. На oauthlib 4.0.0 не-ASCII
+  verifier при методе `plain` давал 500 Internal Server Error: oauthlib
+  передаёт строку как есть в `hmac.compare_digest`, а тот бросает
+  `TypeError`. RP, отправлявший verifier вне спецификации, который
+  совпадал с его собственным challenge, раньше проходил, теперь получает
+  `invalid_grant`.
+
 ## [0.6.1] - 2026-09-19
 
 ### Исправлено

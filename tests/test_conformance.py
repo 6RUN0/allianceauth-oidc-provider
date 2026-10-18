@@ -14,10 +14,11 @@ matrix, locale negotiation, and public-client policy.
 """
 
 import base64
+import hashlib
 import html
 import os
 import re
-import unittest
+import string
 from typing import Any
 
 from ._factories import make_app
@@ -360,13 +361,20 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
         self.assertEqual("invalid_grant", body.get("error"))
 
     def _strict_exchange(
-        self, *, state: str, verifier_of, method: str = "S256"
+        self,
+        *,
+        state: str,
+        verifier_of,
+        method: str = "S256",
+        genuine: str | None = None,
     ) -> Any:
         """
         Run a PKCE code flow on a ``pkce_required=True`` app.
 
         ``verifier_of`` maps the genuine verifier to the one sent at
-        the exchange (``None`` omits the parameter).
+        the exchange (``None`` omits the parameter). ``genuine``
+        replaces the random 43-character verifier, so a test can bind
+        a malformed verifier to a challenge that it does match.
         """
         from urllib.parse import parse_qs, urlparse
 
@@ -374,6 +382,11 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
             owner=self.user1, pkce_required=True, skip_authorization=True
         )
         verifier, challenge = self.make_pkce_pair()
+        if genuine is not None:
+            verifier = genuine
+            challenge = _b64url(
+                hashlib.sha256(genuine.encode("utf-8")).digest()
+            )
         if method == "plain":
             challenge = verifier
         resp = self.authorize_get_default(
@@ -445,9 +458,6 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
         body = self.json_body(resp, expected_status=400)
         self.assertEqual("invalid_grant", body.get("error"))
 
-    # Known defect on oauthlib 4.0.0: the 500 below is real (the test
-    # passes on 3.3.1). Unexpected success means the defect is gone.
-    @unittest.expectedFailure
     def test_strict_app_non_ascii_plain_verifier_is_rejected_not_500(self):
         """
         A non-ASCII verifier under ``plain`` is refused, never a 500.
@@ -463,6 +473,68 @@ class TestPerAppPkceRequired(GrantedOIDCTestCase):
         self.assertLess(resp.status_code, 500)
         body = self.json_body(resp, expected_status=400)
         self.assertEqual("invalid_grant", body.get("error"))
+
+    def test_strict_app_forbidden_ascii_verifier_is_invalid_grant(self):
+        """
+        A verifier outside RFC 7636 s4.1 unreserved characters: 400.
+
+        The challenge is derived from the malformed verifier itself,
+        so the comparison alone would accept it; only the charset rule
+        refuses it, for ``plain`` and ``S256`` alike.
+        """
+        base = "a" * 42
+        for method in ("plain", "S256"):
+            for bad in (" ", "+", "/", "="):
+                with self.subTest(method=method, char=bad):
+                    resp = self._strict_exchange(
+                        state="strict-charset",
+                        verifier_of=lambda v: v,
+                        method=method,
+                        genuine=base + bad,
+                    )
+                    body = self.json_body(resp, expected_status=400)
+                    self.assertEqual("invalid_grant", body.get("error"))
+
+    def test_strict_app_verifier_length_outside_43_128_is_invalid_grant(
+        self,
+    ):
+        """
+        RFC 7636 s4.1 bounds the verifier to 43..128 characters.
+
+        Each verifier matches its own challenge, so a 400 here comes
+        from the length rule, not from the comparison.
+        """
+        for method in ("plain", "S256"):
+            for length in (42, 129):
+                with self.subTest(method=method, length=length):
+                    resp = self._strict_exchange(
+                        state="strict-length",
+                        verifier_of=lambda v: v,
+                        method=method,
+                        genuine="A" * length,
+                    )
+                    body = self.json_body(resp, expected_status=400)
+                    self.assertEqual("invalid_grant", body.get("error"))
+
+    def test_strict_app_verifier_at_43_and_128_chars_issues_tokens(self):
+        """
+        Both RFC 7636 s4.1 length bounds and the full unreserved
+        alphabet pass; the conformance suite sends 128 characters
+        with ``.`` and ``~``.
+        """
+        alphabet = string.ascii_letters + string.digits + "-._~"
+        for method in ("plain", "S256"):
+            for length in (43, 128):
+                with self.subTest(method=method, length=length):
+                    genuine = (alphabet * 2)[:length]
+                    resp = self._strict_exchange(
+                        state="strict-bounds",
+                        verifier_of=lambda v: v,
+                        method=method,
+                        genuine=genuine,
+                    )
+                    body = self.json_body(resp, expected_status=200)
+                    self.assertIn("access_token", body)
 
 
 class TestClaimsRequestParameterHTTP(GrantedOIDCTestCase):
